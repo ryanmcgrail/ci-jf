@@ -45,26 +45,10 @@ import tempfile
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from cwe_root_pillars import WEAKNESS_TO_ROOT_PILLAR
+
 # ─── matching (port of is_duplicate.py) ──────────────────────────────────────
 
-CWE_FAMILY_MAP = {
-    "89": "SQLI", "564": "SQLI", "943": "SQLI",
-    "78": "CMDI", "77": "CMDI", "88": "CMDI",
-    "79": "XSS", "80": "XSS", "83": "XSS",
-    "22": "PATH_TRAVERSAL", "23": "PATH_TRAVERSAL", "36": "PATH_TRAVERSAL", "73": "PATH_TRAVERSAL", "434": "PATH_TRAVERSAL",
-    "94": "CODE_INJECTION", "95": "CODE_INJECTION", "96": "CODE_INJECTION", "470": "CODE_INJECTION",
-    "611": "XXE", "776": "XXE",
-    "918": "SSRF",
-    "502": "DESERIALIZATION",
-    "347": "JWT_SIGNATURE_BYPASS",
-    "613": "SESSION_EXPIRATION",
-    "327": "WEAK_CRYPTO", "328": "WEAK_CRYPTO", "326": "WEAK_CRYPTO",
-    "798": "HARDCODED_SECRET", "259": "HARDCODED_SECRET", "321": "HARDCODED_SECRET",
-    # authz/authn siblings the scanner alternates between on the same lines (IDOR / missing
-    # authz / missing authn / mass assignment); line overlap is still required.
-    "284": "ACCESS_CONTROL", "285": "ACCESS_CONTROL", "639": "ACCESS_CONTROL", "862": "ACCESS_CONTROL",
-    "863": "ACCESS_CONTROL", "306": "ACCESS_CONTROL", "915": "ACCESS_CONTROL",
-}
 GITHUB_MARKER_RE = re.compile(r"<!--\s*cm-dedup:v1:(\{.*?\})\s*-->", re.DOTALL)
 ACTIVE = {"OPEN", "REOPENED", "VERIFIED", ""}
 RESOLVED = {"FIXED", "CLOSED"}
@@ -90,11 +74,12 @@ def norm_rel_path(file_path: str, repo_root: str = "") -> str:
     return p.lstrip("./").lower()
 
 
-def norm_cwe_family(f: dict) -> str:
+def norm_cwe(f: dict) -> str:
     combined = " ".join(str(f.get(k) or "") for k in ("vuln_id", "VulnID", "vuln_type", "VulnType", "title", "Title", "description"))
     m = re.search(r"CWE-(\d+)", combined, re.IGNORECASE)
     if m:
-        return CWE_FAMILY_MAP.get(m.group(1), f"CWE-{m.group(1)}")
+        cwe_id = int(m.group(1))
+        return f"CWE-{WEAKNESS_TO_ROOT_PILLAR.get(cwe_id, cwe_id)}"
     raw = str(f.get("vuln_type") or f.get("VulnType") or f.get("vuln_id") or "UNKNOWN")
     return re.sub(r"\s+", "_", raw.strip().upper())
 
@@ -115,7 +100,7 @@ def _int(v: Any, default: int = 0) -> int:
 def is_duplicate(a: dict, b: dict, repo_root: str = "") -> bool:
     fa = norm_rel_path(a.get("file_path") or a.get("FilePath") or "", repo_root)
     fb = norm_rel_path(b.get("file_path") or b.get("FilePath") or "", repo_root)
-    if not fa or fa != fb or norm_cwe_family(a) != norm_cwe_family(b):
+    if not fa or fa != fb or norm_cwe(a) != norm_cwe(b):
         return False
     sla = _int(a.get("start_line") or a.get("StartLine")); ela = max(_int(a.get("end_line") or a.get("EndLine"), sla), sla)
     slb = _int(b.get("start_line") or b.get("StartLine")); elb = max(_int(b.get("end_line") or b.get("EndLine"), slb), slb)
@@ -129,7 +114,7 @@ def is_duplicate(a: dict, b: dict, repo_root: str = "") -> bool:
 def make_github_marker(f: dict, repo_root: str = "") -> str:
     payload = {
         "file_path": norm_rel_path(f.get("file_path") or f.get("FilePath") or "", repo_root),
-        "vuln_type": norm_cwe_family(f),
+        "vuln_type": norm_cwe(f),
         "start_line": _int(f.get("start_line") or f.get("StartLine")),
         "end_line": _int(f.get("end_line") or f.get("EndLine")),
         "raw_lines": sorted(code_lines(f.get("snippet") or f.get("Snippet") or "")),
