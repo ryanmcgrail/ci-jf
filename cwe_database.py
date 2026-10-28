@@ -83,6 +83,7 @@ class CWEDatabase:
 
     def __init__(self, weaknesses: dict[int, Weakness]) -> None:
         self.weaknesses: dict[int, Weakness] = weaknesses
+        self._distance_cache: dict[tuple[int, bool], dict[int, int]] = {}
         # Directed edges from (parent_id, child_id) -> set of relationship labels
         self._edge_natures: dict[tuple[int, int], set[str]] = {}
         for w in self.weaknesses.values():
@@ -192,26 +193,23 @@ class CWEDatabase:
         strict_hierarchy_only: bool = False,
     ) -> int | None:
         """Return the minimum number of parent -> child steps from parent_id to child_id."""
-        if parent_id == child_id:
-            return 0
-
-        queue: deque[tuple[int, int]] = deque([(parent_id, 0)])
-        visited: set[int] = {parent_id}
-
-        while queue:
-            curr_id, dist = queue.popleft()
-            curr = self.weaknesses.get(curr_id)
-            if curr is None:
-                continue
-            next_ids = curr.parent_of if strict_hierarchy_only else curr.children
-            for next_id in next_ids:
-                if next_id == child_id:
-                    return dist + 1
-                if next_id not in visited:
-                    visited.add(next_id)
-                    queue.append((next_id, dist + 1))
-
-        return None
+        cache_key = (parent_id, strict_hierarchy_only)
+        distances = self._distance_cache.get(cache_key)
+        if distances is None:
+            distances = {parent_id: 0}
+            queue: deque[tuple[int, int]] = deque([(parent_id, 0)])
+            while queue:
+                curr_id, dist = queue.popleft()
+                curr = self.weaknesses.get(curr_id)
+                if curr is None:
+                    continue
+                next_ids = curr.parent_of if strict_hierarchy_only else curr.children
+                for next_id in next_ids:
+                    if next_id not in distances:
+                        distances[next_id] = dist + 1
+                        queue.append((next_id, dist + 1))
+            self._distance_cache[cache_key] = distances
+        return distances.get(child_id)
 
     def find_parent(
         self, cwe_a: int | str | Mapping[str, Any], cwe_b: int | str | Mapping[str, Any]

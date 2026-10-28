@@ -158,6 +158,15 @@ class TestCWEDatabase(unittest.TestCase):
         """Verify identical CWEs return themselves and unrelated/unknown CWEs return None."""
         self.assertEqual(self.db.find_parent(cwe_a, cwe_b), expected_parent)
 
+    def test_all_cwe_pairs_do_not_lock_up_or_error(self) -> None:
+        """Exhaustively test every pair of Weaknesses in the catalog for termination and validity."""
+        all_ids = sorted(self.db.weaknesses.keys())
+        for cwe_a in all_ids:
+            for cwe_b in all_ids:
+                result = self.db.find_parent(cwe_a, cwe_b)
+                if result is not None:
+                    self.assertIn(result, (cwe_a, cwe_b))
+
 
 if __name__ == "__main__":
     unittest.main()
