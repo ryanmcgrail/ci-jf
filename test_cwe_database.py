@@ -127,6 +127,8 @@ class TestCWEDatabase(unittest.TestCase):
             (129, 125, 129),
             (276, 732, 732),
             (732, 276, 732),
+            (94, 829, 829),
+            (829, 94, 829),
         ]
     )
     def test_ford_cases(
@@ -135,7 +137,7 @@ class TestCWEDatabase(unittest.TestCase):
         cwe_b: int | str,
         expected_parent: int,
     ) -> None:
-        """Verify Ford CWE pairs (125/129 -> 129, 276/732 -> 732) return the expected parent."""
+        """Verify Ford CWE pairs (125/129 -> 129, 276/732 -> 732, 94/829 -> 829) return the expected parent."""
         self.assertEqual(self.db.find_parent(cwe_a, cwe_b), expected_parent)
 
     @parameterized(
