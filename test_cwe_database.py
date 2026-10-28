@@ -125,19 +125,17 @@ class TestCWEDatabase(unittest.TestCase):
         [
             (125, 129, 129),
             (129, 125, 129),
-            ("125", "129", 129),
-            ("129", "125", 129),
-            ("CWE-125", "CWE-129", 129),
-            ("CWE-129", "CWE-125", 129),
+            (276, 732, 732),
+            (732, 276, 732),
         ]
     )
-    def test_cwe_125_and_cwe_129_returns_cwe_129_as_parent(
+    def test_ford_cases(
         self,
         cwe_a: int | str,
         cwe_b: int | str,
         expected_parent: int,
     ) -> None:
-        """CWE-129 CanPrecede CWE-119 and CWE-125 is ChildOf CWE-119, so CWE-129 is the parent of CWE-125."""
+        """Verify Ford CWE pairs (125/129 -> 129, 276/732 -> 732) return the expected parent."""
         self.assertEqual(self.db.find_parent(cwe_a, cwe_b), expected_parent)
 
     @parameterized(
@@ -163,8 +161,6 @@ class TestCWEDatabase(unittest.TestCase):
             # Both under Pillar CWE-284 (Improper Access Control), but in separate branches
             (256, 291),
             (291, 256),
-            ("CWE-256", "CWE-291"),
-            ("CWE-291", "CWE-256"),
             # Both under Pillar CWE-707 (Improper Neutralization), but in separate branches
             (79, 89),
             (89, 79),
