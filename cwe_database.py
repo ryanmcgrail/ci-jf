@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import argparse
 from collections import deque
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import re
+from typing import Any
 import xml.etree.ElementTree as ET
 
 DEFAULT_XML_PATH = Path(__file__).resolve().parent / "cwec_v4.20.xml"
@@ -29,15 +31,30 @@ def _extract_namespace(tag: str) -> str:
     return ""
 
 
-def parse_cwe_id(value: int | str) -> int | None:
-    """Normalize an int or string (e.g. 79, '79', 'CWE-79') into an integer CWE ID."""
+def parse_cwe_id(value: int | str | Mapping[str, Any]) -> int | None:
+    """Normalize an int, string (e.g. 79, '79', 'CWE-79'), or finding dict into an integer CWE ID."""
     if isinstance(value, int) and not isinstance(value, bool):
         return value
+    if isinstance(value, Mapping):
+        combined = " ".join(
+            str(value.get(k) or "")
+            for k in (
+                "vuln_id",
+                "VulnID",
+                "vuln_type",
+                "VulnType",
+                "title",
+                "Title",
+                "description",
+            )
+        )
+        match = re.search(r"CWE-(\d+)", combined, re.IGNORECASE)
+        return int(match.group(1)) if match else None
     if isinstance(value, str):
         text = value.strip()
         if text.isdigit():
             return int(text)
-        match = re.fullmatch(r"CWE-(\d+)", text, re.IGNORECASE)
+        match = re.search(r"CWE-(\d+)", text, re.IGNORECASE)
         if match:
             return int(match.group(1))
     return None
@@ -196,7 +213,9 @@ class CWEDatabase:
 
         return None
 
-    def find_parent(self, cwe_a: int | str, cwe_b: int | str) -> int | None:
+    def find_parent(
+        self, cwe_a: int | str | Mapping[str, Any], cwe_b: int | str | Mapping[str, Any]
+    ) -> int | None:
         """Determine if cwe_a and cwe_b are related and return whichever is the parent.
 
         A Weakness P is considered the parent of C if there is a directed chain of one or

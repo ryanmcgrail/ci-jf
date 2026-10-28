@@ -45,10 +45,11 @@ import tempfile
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from cwe_root_pillars import WEAKNESS_TO_ROOT_PILLAR
+from cwe_database import load_cwe_database, parse_cwe_id
 
 # ─── matching (port of is_duplicate.py) ──────────────────────────────────────
 
+CWE_DB = load_cwe_database()
 GITHUB_MARKER_RE = re.compile(r"<!--\s*cm-dedup:v1:(\{.*?\})\s*-->", re.DOTALL)
 ACTIVE = {"OPEN", "REOPENED", "VERIFIED", ""}
 RESOLVED = {"FIXED", "CLOSED"}
@@ -74,16 +75,6 @@ def norm_rel_path(file_path: str, repo_root: str = "") -> str:
     return p.lstrip("./").lower()
 
 
-def norm_cwe(f: dict) -> str:
-    combined = " ".join(str(f.get(k) or "") for k in ("vuln_id", "VulnID", "vuln_type", "VulnType", "title", "Title", "description"))
-    m = re.search(r"CWE-(\d+)", combined, re.IGNORECASE)
-    if m:
-        cwe_id = int(m.group(1))
-        return f"CWE-{WEAKNESS_TO_ROOT_PILLAR.get(cwe_id, cwe_id)}"
-    raw = str(f.get("vuln_type") or f.get("VulnType") or f.get("vuln_id") or "UNKNOWN")
-    return re.sub(r"\s+", "_", raw.strip().upper())
-
-
 def code_lines(snippet: str) -> set:
     raw = (snippet or "").replace("\\r\\n", "\n").replace("\\n", "\n").splitlines()
     return {re.sub(r"\s+", " ", ln.strip()) for ln in raw
@@ -100,7 +91,7 @@ def _int(v: Any, default: int = 0) -> int:
 def is_duplicate(a: dict, b: dict, repo_root: str = "") -> bool:
     fa = norm_rel_path(a.get("file_path") or a.get("FilePath") or "", repo_root)
     fb = norm_rel_path(b.get("file_path") or b.get("FilePath") or "", repo_root)
-    if not fa or fa != fb or norm_cwe(a) != norm_cwe(b):
+    if not fa or fa != fb or CWE_DB.find_parent(a, b) is None:
         return False
     sla = _int(a.get("start_line") or a.get("StartLine")); ela = max(_int(a.get("end_line") or a.get("EndLine"), sla), sla)
     slb = _int(b.get("start_line") or b.get("StartLine")); elb = max(_int(b.get("end_line") or b.get("EndLine"), slb), slb)
@@ -112,9 +103,11 @@ def is_duplicate(a: dict, b: dict, repo_root: str = "") -> bool:
 
 
 def make_github_marker(f: dict, repo_root: str = "") -> str:
+    cwe_id = parse_cwe_id(f)
+    vuln_type = f"CWE-{cwe_id}" if cwe_id is not None else str(f.get("vuln_type") or f.get("VulnType") or f.get("vuln_id") or "UNKNOWN")
     payload = {
         "file_path": norm_rel_path(f.get("file_path") or f.get("FilePath") or "", repo_root),
-        "vuln_type": norm_cwe(f),
+        "vuln_type": vuln_type,
         "start_line": _int(f.get("start_line") or f.get("StartLine")),
         "end_line": _int(f.get("end_line") or f.get("EndLine")),
         "raw_lines": sorted(code_lines(f.get("snippet") or f.get("Snippet") or "")),
