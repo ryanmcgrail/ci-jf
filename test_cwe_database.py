@@ -158,6 +158,26 @@ class TestCWEDatabase(unittest.TestCase):
         """Verify identical CWEs return themselves and unrelated/unknown CWEs return None."""
         self.assertEqual(self.db.find_parent(cwe_a, cwe_b), expected_parent)
 
+    @parameterized(
+        [
+            # Both under Pillar CWE-284 (Improper Access Control), but in separate branches
+            (256, 291),
+            (291, 256),
+            ("CWE-256", "CWE-291"),
+            ("CWE-291", "CWE-256"),
+            # Both under Pillar CWE-707 (Improper Neutralization), but in separate branches
+            (79, 89),
+            (89, 79),
+        ]
+    )
+    def test_unrelated_weaknesses_in_same_pillar_return_none(
+        self,
+        cwe_a: int | str,
+        cwe_b: int | str,
+    ) -> None:
+        """Verify unrelated Weaknesses that share a Root Pillar are not treated as parent/child."""
+        self.assertIsNone(self.db.find_parent(cwe_a, cwe_b))
+
     def test_all_cwe_pairs_do_not_lock_up_or_error(self) -> None:
         """Exhaustively test every pair of Weaknesses in the catalog for termination and validity."""
         all_ids = sorted(self.db.weaknesses.keys())
