@@ -174,6 +174,34 @@ class TestCWEDatabase(unittest.TestCase):
         """Verify unrelated Weaknesses that share a Root Pillar are not treated as parent/child."""
         self.assertIsNone(self.db.find_parent(cwe_a, cwe_b))
 
+    @parameterized(
+        [
+            (125, 129, 129),
+            ("125", "129", 129),
+            (" 125 ", " 129 ", 129),
+            ("CWE-125", "CWE-129", 129),
+            ("cwe-125", "cwe-129", 129),
+            ("CWE-125: Out-of-bounds Read", "CWE-129: Improper Validation of Array Index", 129),
+            ({"vuln_id": "CWE-125"}, {"vuln_id": "CWE-129"}, 129),
+            ({"VulnID": "CWE-125"}, {"VulnID": "CWE-129"}, 129),
+            ({"vuln_type": "CWE-125"}, {"vuln_type": "CWE-129"}, 129),
+            ({"VulnType": "CWE-125"}, {"VulnType": "CWE-129"}, 129),
+            ({"title": "Issue (CWE-125)"}, {"Title": "Issue (CWE-129)"}, 129),
+            ({"description": "Details: CWE-125"}, 129, 129),
+            (True, 129, None),
+            ("UNKNOWN", 129, None),
+            ({}, 129, None),
+        ]
+    )
+    def test_supported_id_formats(
+        self,
+        cwe_a: Any,
+        cwe_b: Any,
+        expected_parent: int | None,
+    ) -> None:
+        """Verify find_parent supports int, numeric str, CWE-prefixed str, and finding dicts."""
+        self.assertEqual(self.db.find_parent(cwe_a, cwe_b), expected_parent)
+
     def test_all_cwe_pairs_do_not_lock_up_or_error(self) -> None:
         """Exhaustively test every pair of Weaknesses in the catalog for termination and validity."""
         all_ids = sorted(self.db.weaknesses.keys())
