@@ -178,6 +178,33 @@ class TestCWEDatabase(unittest.TestCase):
 
     @parameterized(
         [
+            # Pillar 707 (XSS: 79) vs Pillar 284 (Improper Authentication: 287)
+            (79, 287),
+            (287, 79),
+            # Pillar 707 (SQLi: 89) vs Pillar 693 (CSRF: 352)
+            (89, 352),
+            (352, 89),
+            # Pillar 664 (Out-of-bounds Read: 125) vs Pillar 284 (Incorrect Default Permissions: 276)
+            (125, 276),
+            (276, 125),
+            # Pillar 664 (Path Traversal: 22) vs Pillar 707 (SQLi: 89)
+            (22, 89),
+            (89, 22),
+            # Pillar 664 (Use After Free: 416 vs Deserialization: 502) in separate subtrees
+            (416, 502),
+            (502, 416),
+        ]
+    )
+    def test_unrelated_weaknesses_in_different_branches_return_none(
+        self,
+        cwe_a: int | str,
+        cwe_b: int | str,
+    ) -> None:
+        """Verify Weaknesses in different hierarchy branches return None."""
+        self.assertIsNone(self.db.find_parent(cwe_a, cwe_b))
+
+    @parameterized(
+        [
             (125, 129, 129),
             ("125", "129", 129),
             (" 125 ", " 129 ", 129),
