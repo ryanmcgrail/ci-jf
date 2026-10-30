@@ -1,0 +1,589 @@
+cm-ci: config check — /Users/ryanmcgrail/.codemender/config.yaml
+project_paths   MISSING
+    cm fix/verify resolve the real repo root (no nested temp repo)
+reset           MISSING
+    vcs.commands.reset="true" — no 'git checkout HEAD -- . && git clean -fd' before each fix
+exclude_dirs    MISSING
+    scan.exclude_dirs lists venv/.venv (cm's default list has neither)
+
+Add to /Users/ryanmcgrail/.codemender/config.yaml:
+
+project_paths: ["/Users/ryanmcgrail/juice-shop"]
+vcs:
+  type: git
+  commands:
+    reset: "true"
+scan:
+  exclude_dirs: ["venv", ".venv", "env", "site-packages", "__pycache__", "node_modules", "vendor", "dist", "bin", "target", "obj", "build", ".gradle"]
+
+cm-ci: cm find . --deep --deep-workers=16
+🔍 Discovering files in /Users/ryanmcgrail/juice-shop...
+
+════════════════════════════════════════════════════════════
+🔍 Deep Scan: Concurrent File-by-File Vulnerability Audit...
+════════════════════════════════════════════════════════════
+🔍 Deep Scan Sifter: 678 total files discovered
+   Tier 0 Pruner: 265 safe files pruned (tests, docs, DTOs, generated, lockfiles) at 0 token cost
+   Tier 1 Sifter: 413 candidate files in 413 batches to scan with 16 workers
+[1/413 batches] ✅ data/static/codefixes/accessLogDisclosureChallenge_1_correct.ts (4.7s) | 4.0k tok - 0 vulnerabilities
+[2/413 batches] ✅ eslint.config.mjs (4.8s) | 4.6k tok - 0 vulnerabilities
+[3/413 batches] ✅ cypress.config.ts (5.9s) | 5.0k tok - 0 vulnerabilities
+[4/413 batches] ✅ data/mongodb.ts (5.8s) | 4.2k tok - 0 vulnerabilities
+[5/413 batches] ✅ data/types.ts (5.7s) | 4.3k tok - 0 vulnerabilities
+[6/413 batches] ✅ app.ts (7.1s) | 4.1k tok - 0 vulnerabilities
+[7/413 batches] ✅ data/static/codefixes/adminSectionChallenge_1_correct.ts (8.3s) | 6.6k tok - 0 vulnerabilities
+[8/413 batches] ✅ data/datacache.ts (9s) | 4.9k tok - 0 vulnerabilities
+[9/413 batches] ✅ data/datacreator.ts (16.5s) | 33.9k tok - 0 vulnerabilities
+[10/413 batches] ✅ data/staticData.ts (16.6s) | 16.8k tok - 0 vulnerabilities
+[11/413 batches] ✅ data/static/codefixes/adminSectionChallenge_2.ts (25.7s) | 34.9k tok - 0 vulnerabilities
+[12/413 batches] ✅ data/static/codefixes/adminSectionChallenge_3.ts (30.8s) | 41.3k tok - 0 vulnerabilities
+[13/413 batches] ✅ data/static/codefixes/accessLogDisclosureChallenge_4.ts (31.6s) | 28.8k tok - 0 vulnerabilities
+[14/413 batches] ✅ data/static/codefixes/changeProductChallenge_1.ts (27.9s) | 43.9k tok - 0 vulnerabilities
+[15/413 batches] ✅ data/static/codefixes/changeProductChallenge_3_correct.ts (28s) | 34.1k tok - 0 vulnerabilities
+[16/413 batches] ✅ data/static/codefixes/adminSectionChallenge_4.ts (29.4s) | 37.9k tok - 0 vulnerabilities
+[17/413 batches] ✅ data/static/codefixes/accessLogDisclosureChallenge_2.ts (37.9s) | 34.2k tok - 0 vulnerabilities
+[18/413 batches] ✅ data/static/codefixes/changeProductChallenge_2.ts (31.7s) | 46.8k tok - 0 vulnerabilities
+[19/413 batches] ✅ data/static/codefixes/chatbotGreedyInjectionChallenge_2_correct.ts (38s) | 64.5k tok - 0 vulnerabilities
+[20/413 batches] 🚨 data/static/codefixes/chatbotPromptInjectionChallenge_1.ts (37.2s) | 45.3k tok - 1 vulnerabilities
+[21/413 batches] ✅ data/static/codefixes/accessLogDisclosureChallenge_3.ts (58s) | 39.8k tok - 0 vulnerabilities
+[22/413 batches] 🚨 data/static/codefixes/chatbotGreedyInjectionChallenge_3.ts (52.8s) | 92.0k tok - 1 vulnerabilities
+[23/413 batches] 🚨 data/static/codefixes/dbSchemaChallenge_1.ts (29.7s) | 16.4k tok - 1 vulnerabilities
+[24/413 batches] ✅ data/static/codefixes/directoryListingChallenge_1_correct.ts (25.7s) | 24.5k tok - 0 vulnerabilities
+[25/413 batches] ✅ data/static/codefixes/dbSchemaChallenge_2_correct.ts (29.5s) | 26.4k tok - 0 vulnerabilities
+[26/413 batches] 🚨 data/static/codefixes/changeProductChallenge_4.ts (1m5.3s) | 73.5k tok - 1 vulnerabilities
+[27/413 batches] ✅ data/static/codefixes/directoryListingChallenge_3.ts (25.7s) | 31.5k tok - 0 vulnerabilities
+[28/413 batches] ✅ data/static/codefixes/exposedMetricsChallenge_3_correct.ts (11.1s) | 5.6k tok - 0 vulnerabilities
+[29/413 batches] 🚨 data/static/codefixes/chatbotGreedyInjectionChallenge_1.ts (1m8.3s) | 69.8k tok - 1 vulnerabilities
+[30/413 batches] ✅ data/static/codefixes/chatbotPromptInjectionChallenge_2_correct.ts (54s) | 49.6k tok - 0 vulnerabilities
+[31/413 batches] 🚨 data/static/codefixes/chatbotGreedyInjectionChallenge_4.ts (1m5.8s) | 65.2k tok - 1 vulnerabilities
+[32/413 batches] 🚨 server.ts (1m23.9s) | 243.5k tok - 4 vulnerabilities
+[33/413 batches] 🚨 data/static/codefixes/chatbotPromptInjectionChallenge_4.ts (53s) | 51.6k tok - 1 vulnerabilities
+[34/413 batches] ✅ data/static/codefixes/iacLeakedKeyChallenge_3_correct.tf (9.1s) | 8.0k tok - 0 vulnerabilities
+[35/413 batches] ✅ data/static/codefixes/directoryListingChallenge_4.ts (33.1s) | 40.6k tok - 0 vulnerabilities
+[36/413 batches] ✅ data/static/codefixes/exposedMetricsChallenge_1.ts (34.5s) | 39.3k tok - 0 vulnerabilities
+[37/413 batches] ✅ data/static/codefixes/iacLeakedKeyChallenge_1.tf (27.4s) | 49.9k tok - 0 vulnerabilities
+[38/413 batches] ✅ data/static/codefixes/forgedReviewChallenge_2_correct.ts (36.4s) | 38.5k tok - 0 vulnerabilities
+[39/413 batches] ✅ data/static/codefixes/chatbotPromptInjectionChallenge_3.ts (1m14.1s) | 53.3k tok - 0 vulnerabilities
+[40/413 batches] ✅ data/static/codefixes/localXssChallenge_4.ts (28.2s) | 28.7k tok - 0 vulnerabilities
+[41/413 batches] ✅ data/static/codefixes/localXssChallenge_1.ts (35s) | 44.1k tok - 0 vulnerabilities
+[42/413 batches] ✅ data/static/codefixes/directoryListingChallenge_2.ts (1m21.2s) | 42.5k tok - 0 vulnerabilities
+[43/413 batches] 🚨 data/static/codefixes/forgedReviewChallenge_1.ts (56.3s) | 65.2k tok - 2 vulnerabilities
+[44/413 batches] 🚨 data/static/codefixes/exposedMetricsChallenge_2.ts (58.5s) | 47.4k tok - 1 vulnerabilities
+[45/413 batches] 🚨 data/static/codefixes/iacLeakedKeyChallenge_2.tf (45.7s) | 54.6k tok - 1 vulnerabilities
+[46/413 batches] ✅ data/static/codefixes/localXssChallenge_2_correct.ts (39.2s) | 16.4k tok - 0 vulnerabilities
+[47/413 batches] ✅ data/static/codefixes/loginAdminChallenge_3.ts (30.9s) | 34.9k tok - 0 vulnerabilities
+[48/413 batches] ✅ data/static/codefixes/dbSchemaChallenge_3.ts (1m29s) | 57.9k tok - 0 vulnerabilities
+[49/413 batches] ✅ data/static/codefixes/loginAdminChallenge_4_correct.ts (27.2s) | 8.0k tok - 0 vulnerabilities
+[50/413 batches] 🚨 data/static/codefixes/forgedReviewChallenge_3.ts (58s) | 51.7k tok - 1 vulnerabilities
+[51/413 batches] ✅ data/static/codefixes/loginBenderChallenge_2_correct.ts (24.6s) | 19.3k tok - 0 vulnerabilities
+[52/413 batches] 🚨 data/static/codefixes/loginAdminChallenge_1.ts (54.3s) | 46.4k tok - 1 vulnerabilities
+[53/413 batches] 🚨 data/static/codefixes/loginJimChallenge_2.ts (22.5s) | 15.2k tok - 1 vulnerabilities
+[54/413 batches] 🚨 data/static/codefixes/localXssChallenge_3.ts (1m0s) | 65.6k tok - 1 vulnerabilities
+[55/413 batches] 🚨 data/static/codefixes/loginAdminChallenge_2.ts (57.9s) | 52.9k tok - 1 vulnerabilities
+[56/413 batches] ✅ data/static/codefixes/loginJimChallenge_1_correct.ts (28.8s) | 26.6k tok - 0 vulnerabilities
+[57/413 batches] 🚨 data/static/codefixes/loginBenderChallenge_4.ts (32.9s) | 16.7k tok - 1 vulnerabilities
+[58/413 batches] ✅ data/static/codefixes/nftMintChallenge_4_correct.sol (34.5s) | 34.8k tok - 0 vulnerabilities
+[59/413 batches] 🚨 data/static/codefixes/nftMintChallenge_1.sol (42.1s) | 44.8k tok - 1 vulnerabilities
+[60/413 batches] ✅ data/static/codefixes/nftUnlockChallenge_2_correct.sol (38.2s) | 33.2k tok - 0 vulnerabilities
+[61/413 batches] ✅ data/static/codefixes/nftUnlockChallenge_1.sol (38.8s) | 62.7k tok - 0 vulnerabilities
+[62/413 batches] 🚨 data/static/codefixes/loginBenderChallenge_1.ts (1m8.9s) | 37.1k tok - 1 vulnerabilities
+[63/413 batches] ✅ data/static/codefixes/nftMintChallenge_3.sol (46.4s) | 44.3k tok - 0 vulnerabilities
+[64/413 batches] ✅ data/static/codefixes/loginJimChallenge_3.ts (50.4s) | 58.4k tok - 0 vulnerabilities
+[65/413 batches] 🚨 data/static/codefixes/loginJimChallenge_4.ts (52.5s) | 52.8k tok - 1 vulnerabilities
+[66/413 batches] ✅ data/static/codefixes/redirectChallenge_4_correct.ts (8.3s) | 5.0k tok - 0 vulnerabilities
+[67/413 batches] ✅ data/static/codefixes/nftUnlockChallenge_4.sol (34.5s) | 39.8k tok - 0 vulnerabilities
+[68/413 batches] 🚨 data/static/codefixes/redirectChallenge_3.ts (15.4s) | 12.6k tok - 1 vulnerabilities
+[69/413 batches] ✅ data/static/codefixes/loginBenderChallenge_3.ts (1m12.6s) | 38.0k tok - 0 vulnerabilities
+[70/413 batches] ✅ data/static/codefixes/redirectChallenge_2.ts (25.8s) | 28.8k tok - 0 vulnerabilities
+[71/413 batches] 🚨 data/static/codefixes/nftMintChallenge_2.sol (1m5.6s) | 54.1k tok - 1 vulnerabilities
+[72/413 batches] 🚨 data/static/codefixes/redirectChallenge_1.ts (40s) | 49.6k tok - 1 vulnerabilities
+[73/413 batches] 🚨 data/static/codefixes/redirectCryptoCurrencyChallenge_2.ts (26.4s) | 25.7k tok - 1 vulnerabilities
+[74/413 batches] 🚨 data/static/codefixes/noSqlReviewsChallenge_3_correct.ts (56.1s) | 50.8k tok - 1 vulnerabilities
+[75/413 batches] ✅ data/static/codefixes/registerAdminChallenge_2.ts (30.1s) | 26.2k tok - 0 vulnerabilities
+[76/413 batches] 🚨 data/static/codefixes/redirectCryptoCurrencyChallenge_1.ts (39.2s) | 40.8k tok - 1 vulnerabilities
+[77/413 batches] ✅ data/static/codefixes/nftUnlockChallenge_3.sol (1m11.1s) | 54.1k tok - 0 vulnerabilities
+[78/413 batches] ✅ data/static/codefixes/redirectCryptoCurrencyChallenge_3_correct.ts (41.2s) | 39.5k tok - 0 vulnerabilities
+[79/413 batches] 🚨 data/static/codefixes/noSqlReviewsChallenge_1.ts (1m9.1s) | 72.7k tok - 2 vulnerabilities
+[80/413 batches] ✅ data/static/codefixes/registerAdminChallenge_3_correct.ts (35.3s) | 31.8k tok - 0 vulnerabilities
+[81/413 batches] 🚨 data/static/codefixes/redirectCryptoCurrencyChallenge_4.ts (42.7s) | 40.2k tok - 1 vulnerabilities
+[82/413 batches] ✅ data/static/codefixes/resetPasswordMortyChallenge_1.ts (33.5s) | 21.8k tok - 0 vulnerabilities
+[83/413 batches] ✅ data/static/codefixes/restfulXssChallenge_1_correct.ts (23s) | 7.2k tok - 0 vulnerabilities
+[84/413 batches] ✅ data/static/codefixes/scoreBoardChallenge_1_correct.ts (13.1s) | 7.0k tok - 0 vulnerabilities
+[85/413 batches] 🚨 data/static/codefixes/noSqlReviewsChallenge_2.ts (1m19.5s) | 69.3k tok - 2 vulnerabilities
+[86/413 batches] 🚨 data/static/codefixes/registerAdminChallenge_1.ts (55.6s) | 64.1k tok - 1 vulnerabilities
+[87/413 batches] ✅ data/static/codefixes/resetPasswordMortyChallenge_4_correct.ts (40.7s) | 21.5k tok - 0 vulnerabilities
+[88/413 batches] ✅ data/static/codefixes/tokenSaleChallenge_1.ts (17.2s) | 13.3k tok - 0 vulnerabilities
+[89/413 batches] ✅ data/static/codefixes/scoreBoardChallenge_2.ts (19.4s) | 21.2k tok - 0 vulnerabilities
+[90/413 batches] ✅ data/static/codefixes/tokenSaleChallenge_3_correct.ts (12.2s) | 5.7k tok - 0 vulnerabilities
+[91/413 batches] ✅ data/static/codefixes/tokenSaleChallenge_2.ts (18.1s) | 18.2k tok - 0 vulnerabilities
+[92/413 batches] ✅ data/static/codefixes/scoreBoardChallenge_3.ts (25.1s) | 27.6k tok - 0 vulnerabilities
+[93/413 batches] ✅ data/static/codefixes/resetPasswordMortyChallenge_3.ts (51.2s) | 35.7k tok - 0 vulnerabilities
+[94/413 batches] 🚨 data/static/codefixes/resetPasswordMortyChallenge_2.ts (54s) | 51.9k tok - 1 vulnerabilities
+[95/413 batches] ✅ data/static/codefixes/weakPasswordChallenge_2.ts (15s) | 5.7k tok - 0 vulnerabilities
+[96/413 batches] 🚨 data/static/codefixes/unionSqlInjectionChallenge_1.ts (25.5s) | 15.4k tok - 1 vulnerabilities
+[97/413 batches] 🚨 data/static/codefixes/restfulXssChallenge_3.ts (39.1s) | 41.2k tok - 1 vulnerabilities
+[98/413 batches] ✅ data/static/codefixes/weakPasswordChallenge_1_correct.ts (21.8s) | 6.9k tok - 0 vulnerabilities
+[99/413 batches] ✅ data/static/codefixes/unionSqlInjectionChallenge_3.ts (26.7s) | 8.1k tok - 0 vulnerabilities
+[100/413 batches] ✅ data/static/codefixes/web3SandboxChallenge_1_correct.ts (21.7s) | 8.6k tok - 0 vulnerabilities
+[101/413 batches] 🚨 data/static/codefixes/web3WalletChallenge_2.sol (11.4s) | 11.0k tok - 1 vulnerabilities
+[102/413 batches] ✅ data/static/codefixes/weakPasswordChallenge_3.ts (25.1s) | 25.1k tok - 0 vulnerabilities
+[103/413 batches] ✅ data/static/codefixes/xssBonusChallenge_1_correct.ts (8.6s) | 4.8k tok - 0 vulnerabilities
+[104/413 batches] ✅ data/static/codefixes/web3SandboxChallenge_2.ts (26.3s) | 43.1k tok - 0 vulnerabilities
+[105/413 batches] ✅ data/static/codefixes/unionSqlInjectionChallenge_2_correct.ts (33.9s) | 208.1k tok - 0 vulnerabilities
+[106/413 batches] ✅ data/static/contractABIs.ts (10.4s) | 9.3k tok - 0 vulnerabilities
+[107/413 batches] ✅ data/static/codefixes/web3SandboxChallenge_3.ts (29.5s) | 37.2k tok - 0 vulnerabilities
+[108/413 batches] 🚨 data/static/codefixes/web3WalletChallenge_1.sol (29.4s) | 17.9k tok - 1 vulnerabilities
+[109/413 batches] 🚨 data/static/codefixes/registerAdminChallenge_4.ts (1m30.9s) | 90.2k tok - 1 vulnerabilities
+[110/413 batches] ✅ data/static/codefixes/web3WalletChallenge_3_correct.sol (26.3s) | 15.1k tok - 0 vulnerabilities
+[111/413 batches] ✅ frontend/eslint.config.mjs (5.3s) | 4.8k tok - 0 vulnerabilities
+[112/413 batches] ✅ frontend/src/app/Models/product.model.ts (5.5s) | 4.2k tok - 0 vulnerabilities
+[113/413 batches] ✅ frontend/src/app/Models/review.model.ts (11.5s) | 5.1k tok - 0 vulnerabilities
+[114/413 batches] 🚨 data/static/codefixes/restfulXssChallenge_4.ts (1m17.1s) | 59.6k tok - 1 vulnerabilities
+[115/413 batches] ✅ frontend/stylelint-plugin-spacing-fixer.mjs (17.5s) | 7.4k tok - 0 vulnerabilities
+[116/413 batches] ✅ frontend/src/app/Services/address.service.ts (13.1s) | 5.8k tok - 0 vulnerabilities
+[117/413 batches] ✅ data/static/codefixes/restfulXssChallenge_2.ts (1m28.4s) | 34.9k tok - 0 vulnerabilities
+[118/413 batches] ✅ frontend/stylelint.config.mjs (21.5s) | 6.9k tok - 0 vulnerabilities
+[119/413 batches] ✅ frontend/src/app/Services/administration.service.ts (8.9s) | 4.6k tok - 0 vulnerabilities
+[120/413 batches] ✅ frontend/src/app/Services/captcha.service.ts (7s) | 4.6k tok - 0 vulnerabilities
+[121/413 batches] ✅ data/static/codefixes/weakPasswordChallenge_4.ts (1m6.9s) | 33.4k tok - 0 vulnerabilities
+[122/413 batches] ✅ frontend/src/app/Services/basket.service.ts (12.1s) | 7.8k tok - 0 vulnerabilities
+[123/413 batches] ✅ data/static/codefixes/xssBonusChallenge_3.ts (46.9s) | 46.0k tok - 0 vulnerabilities
+[124/413 batches] ✅ frontend/src/app/Services/code-fixes.service.ts (8.5s) | 4.9k tok - 0 vulnerabilities
+[125/413 batches] ✅ data/static/web3-snippets/BEEToken.sol (48.8s) | 48.4k tok - 0 vulnerabilities
+[126/413 batches] ✅ frontend/src/app/Services/code-snippet.service.ts (9.4s) | 4.8k tok - 0 vulnerabilities
+[127/413 batches] 🚨 data/static/codefixes/web3WalletChallenge_4.sol (1m0.5s) | 53.9k tok - 2 vulnerabilities
+[128/413 batches] ✅ frontend/src/app/Services/country-mapping.service.ts (7s) | 4.7k tok - 0 vulnerabilities
+[129/413 batches] ✅ frontend/src/app/Services/challenge.service.ts (14.7s) | 6.9k tok - 0 vulnerabilities
+[130/413 batches] ✅ frontend/src/app/Services/complaint.service.ts (13.9s) | 5.8k tok - 0 vulnerabilities
+[131/413 batches] ✅ frontend/src/app/Services/conversation-storage.service.ts (10.9s) | 5.6k tok - 0 vulnerabilities
+[132/413 batches] ✅ frontend/src/app/Services/configuration.service.ts (14.5s) | 6.8k tok - 0 vulnerabilities
+[133/413 batches] ✅ data/static/codefixes/xssBonusChallenge_4.ts (1m0.5s) | 43.9k tok - 0 vulnerabilities
+[134/413 batches] ✅ frontend/src/app/Services/delivery.service.ts (8.7s) | 5.0k tok - 0 vulnerabilities
+[135/413 batches] ✅ frontend/src/app/Services/feedback.service.ts (8.1s) | 4.9k tok - 0 vulnerabilities
+[136/413 batches] ✅ frontend/src/app/Services/hint.service.ts (8.9s) | 4.9k tok - 0 vulnerabilities
+[137/413 batches] 🚨 data/static/codefixes/xssBonusChallenge_2.ts (1m12s) | 50.7k tok - 1 vulnerabilities
+[138/413 batches] ✅ frontend/src/app/Services/payment.service.ts (8.8s) | 5.2k tok - 0 vulnerabilities
+[139/413 batches] ✅ frontend/src/app/Services/image-captcha.service.ts (18.4s) | 6.7k tok - 0 vulnerabilities
+[140/413 batches] ✅ frontend/src/app/Services/product-review.service.ts (9.3s) | 5.5k tok - 0 vulnerabilities
+[141/413 batches] ✅ frontend/src/app/Services/chat.service.ts (32.5s) | 9.9k tok - 0 vulnerabilities
+[142/413 batches] ✅ frontend/src/app/Services/photo-wall.service.ts (11.1s) | 5.3k tok - 0 vulnerabilities
+[143/413 batches] ✅ frontend/src/app/Services/languages.service.ts (17.1s) | 6.0k tok - 0 vulnerabilities
+[144/413 batches] ✅ frontend/src/app/Services/keys.service.ts (17.9s) | 7.3k tok - 0 vulnerabilities
+[145/413 batches] 🚨 data/static/web3-snippets/HoneyPotNFT.sol (1m9.9s) | 64.3k tok - 1 vulnerabilities
+[146/413 batches] ✅ frontend/src/app/Services/quantity.service.ts (7.4s) | 4.7k tok - 0 vulnerabilities
+[147/413 batches] 🚨 data/static/web3-snippets/ETHWalletBank.sol (1m14.9s) | 32.6k tok - 1 vulnerabilities
+[148/413 batches] ✅ frontend/src/app/Services/product.service.ts (10.5s) | 5.3k tok - 0 vulnerabilities
+[149/413 batches] ✅ frontend/src/app/Services/track-order.service.ts (7.2s) | 4.7k tok - 0 vulnerabilities
+[150/413 batches] ✅ frontend/src/app/Services/snack-bar-helper.service.ts (8.5s) | 5.1k tok - 0 vulnerabilities
+[151/413 batches] ✅ frontend/src/app/Services/security-question.service.ts (9.2s) | 5.3k tok - 0 vulnerabilities
+[152/413 batches] ✅ frontend/src/app/Services/order-history.service.ts (22.7s) | 7.4k tok - 0 vulnerabilities
+[153/413 batches] ✅ frontend/src/app/Services/ctf-system-wide-notification.service.ts (35s) | 30.9k tok - 0 vulnerabilities
+[154/413 batches] ✅ frontend/src/app/Services/socket-io.service.ts (11.2s) | 5.1k tok - 0 vulnerabilities
+[155/413 batches] ✅ frontend/src/app/Services/data-subject.service.ts (34.6s) | 8.7k tok - 0 vulnerabilities
+[156/413 batches] ✅ frontend/src/app/Services/security-answer.service.ts (20.3s) | 6.7k tok - 0 vulnerabilities
+[157/413 batches] ✅ frontend/src/app/Services/window-ref.service.ts (10.6s) | 5.0k tok - 0 vulnerabilities
+[158/413 batches] 🚨 data/static/web3-snippets/BeeFaucet.sol (1m35.3s) | 54.7k tok - 1 vulnerabilities
+[159/413 batches] 🚨 data/static/web3-snippets/JuiceShopSBT.sol (1m25.4s) | 213.7k tok - 1 vulnerabilities
+[160/413 batches] ✅ frontend/src/app/Services/two-factor-auth-service.ts (21.4s) | 8.1k tok - 0 vulnerabilities
+[161/413 batches] ✅ frontend/src/app/app.component.ts (7.5s) | 4.7k tok - 0 vulnerabilities
+[162/413 batches] ✅ frontend/src/app/address/address.component.ts (19.1s) | 14.2k tok - 0 vulnerabilities
+[163/413 batches] ✅ frontend/src/app/Services/vuln-lines.service.ts (22.6s) | 7.2k tok - 0 vulnerabilities
+[164/413 batches] ✅ frontend/src/app/roles.ts (4.9s) | 4.0k tok - 0 vulnerabilities
+[165/413 batches] ✅ frontend/src/app/Services/wallet.service.ts (22.1s) | 7.0k tok - 0 vulnerabilities
+[166/413 batches] ✅ frontend/src/app/Services/recycle.service.ts (33.7s) | 9.0k tok - 0 vulnerabilities
+[167/413 batches] ✅ frontend/src/app/Services/request.interceptor.ts (36.5s) | 77.1k tok - 0 vulnerabilities
+[168/413 batches] ✅ frontend/src/app/address-select/address-select.component.ts (22.7s) | 7.0k tok - 0 vulnerabilities
+[169/413 batches] ✅ frontend/src/app/accounting/accounting.component.ts (30.6s) | 50.7k tok - 0 vulnerabilities
+[170/413 batches] ✅ frontend/src/app/challenge-status-badge/challenge-status-badge.component.ts (22s) | 7.7k tok - 0 vulnerabilities
+[171/413 batches] 🚨 frontend/src/app/about/about.component.ts (43.6s) | 58.3k tok - 1 vulnerabilities
+[172/413 batches] ✅ frontend/src/app/basket/basket.component.ts (26.7s) | 8.7k tok - 0 vulnerabilities
+[173/413 batches] ✅ frontend/src/app/Services/local-backup.service.ts (1m10.4s) | 50.0k tok - 0 vulnerabilities
+[174/413 batches] ✅ frontend/src/app/Services/user.service.ts (49.7s) | 69.7k tok - 0 vulnerabilities
+[175/413 batches] ✅ frontend/src/app/chatbot/chatbot.component.ts (20.5s) | 6.9k tok - 0 vulnerabilities
+[176/413 batches] ✅ frontend/src/app/change-password/change-password.component.ts (30.6s) | 10.1k tok - 0 vulnerabilities
+[177/413 batches] ✅ frontend/src/app/chatbot/chat-welcome-page/chat-welcome-page.component.ts (27.3s) | 7.7k tok - 0 vulnerabilities
+[178/413 batches] ✅ frontend/src/app/challenge-solved-notification/challenge-solved-notification.component.ts (32.9s) | 67.9k tok - 0 vulnerabilities
+[179/413 batches] ✅ frontend/src/app/coding-challenge-page/coding-challenge-page.component.ts (15.8s) | 6.8k tok - 0 vulnerabilities
+[180/413 batches] ✅ frontend/src/app/chatbot/chat-input-box/chat-input-box.component.ts (39.2s) | 9.6k tok - 0 vulnerabilities
+[181/413 batches] ✅ frontend/src/app/chatbot/chat-conversation/chat-conversation.component.ts (45.9s) | 52.5k tok - 0 vulnerabilities
+[182/413 batches] ✅ frontend/src/app/coding-challenge-page/components/coding-challenge-find-it/format-selected-lines.ts (23.1s) | 6.7k tok - 0 vulnerabilities
+[183/413 batches] ✅ frontend/src/app/coding-challenge-page/components/coding-challenge-section/coding-challenge-section.component.ts (22.2s) | 7.7k tok - 0 vulnerabilities
+[184/413 batches] ✅ frontend/src/app/address-create/address-create.component.ts (1m7s) | 46.5k tok - 0 vulnerabilities
+[185/413 batches] ✅ frontend/src/app/coding-challenge-page/components/coding-challenge-fix-it/coding-challenge-fix-it.component.ts (23.3s) | 9.3k tok - 0 vulnerabilities
+[186/413 batches] ✅ frontend/src/app/ctf-system-wide-notification/ctf-system-wide-notification.component.ts (19.4s) | 17.2k tok - 0 vulnerabilities
+[187/413 batches] ✅ frontend/src/app/app.guard.ts (1m1.1s) | 36.7k tok - 0 vulnerabilities
+[188/413 batches] ✅ frontend/src/app/feedback-details/feedback-details.component.ts (7.9s) | 4.9k tok - 0 vulnerabilities
+[189/413 batches] 🚨 frontend/src/app/administration/administration.component.ts (1m10.9s) | 99.3k tok - 2 vulnerabilities
+[190/413 batches] ✅ frontend/src/app/coding-challenge-page/helpers/handle-verdict.ts (28.1s) | 8.9k tok - 0 vulnerabilities
+[191/413 batches] ✅ frontend/src/app/delivery-method/delivery-method.component.ts (18.8s) | 7.7k tok - 0 vulnerabilities
+[192/413 batches] 🚨 frontend/src/app/app.routing.ts (1m8.3s) | 92.4k tok - 1 vulnerabilities
+[193/413 batches] ✅ frontend/src/app/coding-challenge-page/components/coding-challenge-find-it/coding-challenge-find-it.component.ts (40s) | 14.7k tok - 0 vulnerabilities
+[194/413 batches] ✅ frontend/src/app/faucet/faucet.component.ts (14.8s) | 9.4k tok - 0 vulnerabilities
+[195/413 batches] ✅ frontend/src/app/chatbot/chat-welcome-screen/chat-welcome-screen.component.ts (1m1.6s) | 14.1k tok - 0 vulnerabilities
+[196/413 batches] ✅ frontend/src/app/faucet/faucet.module.ts (23.2s) | 7.3k tok - 0 vulnerabilities
+[197/413 batches] ✅ frontend/src/app/complaint/complaint.component.ts (41.5s) | 49.8k tok - 0 vulnerabilities
+[198/413 batches] ✅ frontend/src/app/error-page/error-page.component.ts (28.6s) | 32.9k tok - 0 vulnerabilities
+[199/413 batches] ✅ frontend/src/app/mat-search-bar/abstract-value-accessor.ts (20.1s) | 7.0k tok - 0 vulnerabilities
+[200/413 batches] ✅ frontend/src/app/nft-unlock/nft-unlock.component.ts (18.9s) | 21.1k tok - 0 vulnerabilities
+[201/413 batches] ✅ frontend/src/app/forgot-password/forgot-password.component.ts (31.6s) | 50.8k tok - 0 vulnerabilities
+[202/413 batches] ✅ frontend/src/app/mat-search-bar/mat-search-bar.component.ts (24.4s) | 8.1k tok - 0 vulnerabilities
+[203/413 batches] ✅ frontend/src/app/photo-wall/mime-type.validator.ts (11.2s) | 5.5k tok - 0 vulnerabilities
+[204/413 batches] ✅ frontend/src/app/password-strength-info/password-strength-info.component.ts (23s) | 7.4k tok - 0 vulnerabilities
+[205/413 batches] ✅ frontend/src/app/order-summary/order-summary.component.ts (28s) | 31.1k tok - 0 vulnerabilities
+[206/413 batches] 🚨 frontend/src/app/last-login-ip/last-login-ip.component.ts (47.7s) | 49.1k tok - 1 vulnerabilities
+[207/413 batches] ✅ frontend/src/app/order-history/order-history.component.ts (35.5s) | 59.6k tok - 0 vulnerabilities
+[208/413 batches] ✅ frontend/src/app/contact/contact.component.ts (1m12.7s) | 78.2k tok - 0 vulnerabilities
+[209/413 batches] ✅ frontend/src/app/privacy-security/privacy-security.component.ts (7.1s) | 4.6k tok - 0 vulnerabilities
+[210/413 batches] ✅ frontend/src/app/order-completion/order-completion.component.ts (46.4s) | 83.3k tok - 0 vulnerabilities
+[211/413 batches] ✅ frontend/src/app/password-strength/password-strength.component.ts (35.8s) | 9.7k tok - 0 vulnerabilities
+[212/413 batches] ✅ frontend/src/app/navbar/navbar.component.ts (52.6s) | 67.3k tok - 0 vulnerabilities
+[213/413 batches] 🚨 frontend/src/app/data-export/data-export.component.ts (1m14.8s) | 71.1k tok - 1 vulnerabilities
+[214/413 batches] ✅ frontend/src/app/privacy-policy/privacy-policy.component.ts (17.4s) | 13.5k tok - 0 vulnerabilities
+[215/413 batches] ✅ frontend/src/app/product-review-edit/product-review-edit.component.ts (10.4s) | 6.1k tok - 0 vulnerabilities
+[216/413 batches] ✅ frontend/src/app/product/product.component.ts (14.3s) | 13.6k tok - 0 vulnerabilities
+[217/413 batches] ✅ frontend/src/app/saved-address/saved-address.component.ts (5.7s) | 4.2k tok - 0 vulnerabilities
+[218/413 batches] ✅ frontend/src/app/score-board/components/coding-challenge-progress-score-card/coding-challenge-progress-score-card.component.ts (7.6s) | 5.1k tok - 0 vulnerabilities
+[219/413 batches] ✅ frontend/src/app/saved-payment-methods/saved-payment-methods.component.ts (9.6s) | 5.0k tok - 0 vulnerabilities
+[220/413 batches] ✅ frontend/src/app/score-board/components/challenges-unavailable-warning/challenges-unavailable-warning.component.ts (9.3s) | 5.3k tok - 0 vulnerabilities
+[221/413 batches] ✅ frontend/src/app/score-board/components/challenge-card/challenge-card.component.ts (12.7s) | 7.0k tok - 0 vulnerabilities
+[222/413 batches] ✅ frontend/src/app/register/register.component.ts (17.6s) | 16.4k tok - 0 vulnerabilities
+[223/413 batches] ✅ frontend/src/app/photo-wall/photo-wall.component.ts (44.6s) | 45.6k tok - 0 vulnerabilities
+[224/413 batches] ✅ frontend/src/app/qr-code/qr-code.component.ts (21.5s) | 26.0k tok - 0 vulnerabilities
+[225/413 batches] ✅ frontend/src/app/purchase-basket/purchase-basket.component.ts (24.8s) | 26.0k tok - 0 vulnerabilities
+[226/413 batches] ✅ frontend/src/app/payment-method/payment-method.component.ts (50.9s) | 65.4k tok - 0 vulnerabilities
+[227/413 batches] ✅ frontend/src/app/payment/payment.component.ts (52.3s) | 80.7k tok - 0 vulnerabilities
+[228/413 batches] ✅ frontend/src/app/score-board/components/filter-settings/components/score-board-additional-settings-dialog/score-board-additional-settings-dialog.component.ts (7.9s) | 4.9k tok - 0 vulnerabilities
+[229/413 batches] ✅ frontend/src/app/score-board/components/filter-settings/components/category-filter/category-filter.component.ts (9.4s) | 5.8k tok - 0 vulnerabilities
+[230/413 batches] 🚨 frontend/src/app/oauth/oauth.component.ts (1m12.9s) | 49.7k tok - 1 vulnerabilities
+[231/413 batches] ✅ frontend/src/app/score-board/components/tutorial-mode-warning/tutorial-mode-warning.component.ts (7s) | 4.8k tok - 0 vulnerabilities
+[232/413 batches] ✅ frontend/src/app/score-board/components/hacking-challenge-progress-score-card/hacking-challenge-progress-score-card.component.ts (8.9s) | 4.9k tok - 0 vulnerabilities
+[233/413 batches] ✅ frontend/src/app/score-board/components/difficulty-stars/difficulty-stars.component.ts (17.5s) | 6.6k tok - 0 vulnerabilities
+[234/413 batches] ✅ frontend/src/app/recycle/recycle.component.ts (32.7s) | 56.8k tok - 0 vulnerabilities
+[235/413 batches] ✅ frontend/src/app/score-board/components/filter-settings/filter-settings.component.ts (17.6s) | 7.7k tok - 0 vulnerabilities
+[236/413 batches] ✅ frontend/src/app/score-board/components/difficulty-overview-score-card/difficulty-overview-score-card.component.ts (28.7s) | 10.2k tok - 0 vulnerabilities
+[237/413 batches] ✅ frontend/src/app/score-board/components/score-card/score-card.component.ts (18.8s) | 6.6k tok - 0 vulnerabilities
+[238/413 batches] ✅ frontend/src/app/score-board/components/filter-settings/pipes/difficulty-selection-summary.pipe.ts (19.9s) | 7.1k tok - 0 vulnerabilities
+[239/413 batches] ✅ frontend/src/app/score-board/components/warning-card/warning-card.component.ts (17.3s) | 5.6k tok - 0 vulnerabilities
+[240/413 batches] ✅ frontend/src/app/score-board/filter-settings/FilterSetting.ts (17.2s) | 6.5k tok - 0 vulnerabilities
+[241/413 batches] ✅ frontend/src/app/server-started-notification/server-started-notification.component.ts (8.7s) | 11.2k tok - 0 vulnerabilities
+[242/413 batches] ✅ frontend/src/app/shared/codemirror-theme.ts (6.1s) | 5.4k tok - 0 vulnerabilities
+[243/413 batches] ✅ frontend/src/app/product-details/product-details.component.ts (49s) | 44.8k tok - 0 vulnerabilities
+[244/413 batches] ✅ frontend/src/app/score-board/filter-settings/query-params-converters.ts (20.6s) | 7.6k tok - 0 vulnerabilities
+[245/413 batches] ✅ frontend/src/app/score-board/helpers/challenge-sorting.ts (17.9s) | 6.6k tok - 0 vulnerabilities
+[246/413 batches] ✅ frontend/src/app/user-details/user-details.component.ts (9.1s) | 5.4k tok - 0 vulnerabilities
+[247/413 batches] 🚨 frontend/src/app/login/login.component.ts (1m49.6s) | 81.3k tok - 1 vulnerabilities
+[248/413 batches] ✅ frontend/src/app/token-sale/token-sale.component.ts (18.5s) | 13.9k tok - 0 vulnerabilities
+[249/413 batches] ✅ frontend/src/app/shared/codemirror-extensions.ts (24.1s) | 7.5k tok - 0 vulnerabilities
+[250/413 batches] ✅ frontend/src/app/score-board/helpers/challenge-filtering.ts (34.9s) | 10.4k tok - 0 vulnerabilities
+[251/413 batches] ✅ frontend/src/app/two-factor-auth-enter/two-factor-auth-enter.component.ts (19.8s) | 13.6k tok - 0 vulnerabilities
+[252/413 batches] ✅ frontend/src/app/web3-sandbox/web3-sandbox.module.ts (10.9s) | 5.4k tok - 0 vulnerabilities
+[253/413 batches] ✅ frontend/src/app/wallet-web3/wallet-web3.module.ts (22s) | 7.2k tok - 0 vulnerabilities
+[254/413 batches] ✅ frontend/src/assets/private/EffectComposer.js (7.1s) | 6.0k tok - 0 vulnerabilities
+[255/413 batches] ✅ frontend/src/app/sidenav/sidenav.component.ts (31.4s) | 40.2k tok - 0 vulnerabilities
+[256/413 batches] ✅ frontend/src/assets/private/CopyShader.js (17.6s) | 6.4k tok - 0 vulnerabilities
+[257/413 batches] ✅ frontend/src/assets/private/MaskPass.js (15.6s) | 6.5k tok - 0 vulnerabilities
+[258/413 batches] ✅ frontend/src/assets/private/RenderPass.js (10.2s) | 5.1k tok - 0 vulnerabilities
+[259/413 batches] ✅ frontend/src/assets/private/OrbitControls.js (16.6s) | 13.7k tok - 0 vulnerabilities
+[260/413 batches] ✅ frontend/src/app/welcome/welcome.component.ts (23.2s) | 7.4k tok - 0 vulnerabilities
+[261/413 batches] 🚨 frontend/src/app/track-result/track-result.component.ts (44.6s) | 56.6k tok - 1 vulnerabilities
+[262/413 batches] ✅ frontend/src/assets/public/ContractABIs.ts (7.4s) | 15.6k tok - 0 vulnerabilities
+[263/413 batches] ✅ frontend/src/hacking-instructor/challenges/adminSection.ts (5.8s) | 5.5k tok - 0 vulnerabilities
+[264/413 batches] ✅ frontend/src/app/wallet/wallet.component.ts (44.1s) | 37.6k tok - 0 vulnerabilities
+[265/413 batches] ✅ frontend/src/environments/environment.ts (8.7s) | 4.8k tok - 0 vulnerabilities
+[266/413 batches] ✅ frontend/src/app/web3-sandbox/web3-sandbox.component.ts (42.3s) | 69.6k tok - 0 vulnerabilities
+[267/413 batches] ✅ frontend/src/assets/private/ShaderPass.js (22.9s) | 8.0k tok - 0 vulnerabilities
+[268/413 batches] ✅ frontend/src/hacking-instructor/challenges/domXss.ts (7.1s) | 6.1k tok - 0 vulnerabilities
+[269/413 batches] 🚨 frontend/src/app/search-result/search-result.component.ts (1m3.3s) | 139.9k tok - 2 vulnerabilities
+[270/413 batches] ✅ frontend/src/hacking-instructor/challenges/loginAdmin.ts (7.1s) | 6.1k tok - 0 vulnerabilities
+[271/413 batches] ✅ frontend/src/hacking-instructor/challenges/codingChallenges.ts (11.9s) | 6.5k tok - 0 vulnerabilities
+[272/413 batches] ✅ frontend/src/app/score-board/score-board.component.ts (1m8.4s) | 67.8k tok - 0 vulnerabilities
+[273/413 batches] ✅ frontend/src/hacking-instructor/challenges/loginBender.ts (8.9s) | 6.1k tok - 0 vulnerabilities
+[274/413 batches] ✅ frontend/src/hacking-instructor/challenges/loginJim.ts (7.5s) | 5.9k tok - 0 vulnerabilities
+[275/413 batches] ✅ frontend/src/app/welcome-banner/welcome-banner.component.ts (39.6s) | 35.6k tok - 0 vulnerabilities
+[276/413 batches] ✅ frontend/src/hacking-instructor/challenges/exposedCredentials.ts (14.2s) | 6.6k tok - 0 vulnerabilities
+[277/413 batches] ✅ frontend/src/assets/private/three.js (30.4s) | 304.7k tok - 0 vulnerabilities
+[278/413 batches] ✅ frontend/src/hacking-instructor/challenges/reflectedXss.ts (7s) | 5.6k tok - 0 vulnerabilities
+[279/413 batches] 🚨 frontend/src/app/deluxe-user/deluxe-user.component.ts (2m46.8s) | 60.3k tok - 1 vulnerabilities
+[280/413 batches] ✅ frontend/src/hacking-instructor/challenges/scoreBoard.ts (8.5s) | 5.4k tok - 0 vulnerabilities
+[281/413 batches] ✅ frontend/src/hacking-instructor/tutorialUnavailable.ts (7.2s) | 4.9k tok - 0 vulnerabilities
+[282/413 batches] ✅ frontend/src/hacking-instructor/challenges/forgedFeedback.ts (23.6s) | 8.7k tok - 0 vulnerabilities
+[283/413 batches] ✅ frontend/src/hacking-instructor/challenges/bonusPayload.ts (28.6s) | 8.7k tok - 0 vulnerabilities
+[284/413 batches] ✅ infrastructure/terraform/outputs.tf (6s) | 4.3k tok - 0 vulnerabilities
+[285/413 batches] ✅ frontend/src/hacking-instructor/challenges/passwordStrength.ts (21.5s) | 8.2k tok - 0 vulnerabilities
+[286/413 batches] ✅ infrastructure/terraform/variables.tf (11.5s) | 5.9k tok - 0 vulnerabilities
+[287/413 batches] ✅ frontend/src/hacking-instructor/challenges/privacyPolicy.ts (26s) | 7.8k tok - 0 vulnerabilities
+[288/413 batches] ✅ frontend/src/hacking-instructor/challenges/viewBasket.ts (22.4s) | 8.5k tok - 0 vulnerabilities
+[289/413 batches] ✅ frontend/src/confetti/index.ts (43.6s) | 10.5k tok - 0 vulnerabilities
+[290/413 batches] ✅ frontend/src/main.ts (21.1s) | 8.5k tok - 0 vulnerabilities
+[291/413 batches] ✅ frontend/src/app/wallet-web3/wallet-web3.component.ts (1m20.4s) | 81.1k tok - 0 vulnerabilities
+[292/413 batches] ✅ lib/config.schema.ts (9.4s) | 7.6k tok - 0 vulnerabilities
+[293/413 batches] ✅ frontend/src/hacking-instructor/index.ts (30.6s) | 42.4k tok - 0 vulnerabilities
+[294/413 batches] ✅ lib/logger.ts (11.6s) | 5.2k tok - 0 vulnerabilities
+[295/413 batches] ✅ lib/is-heroku.ts (14.3s) | 5.5k tok - 0 vulnerabilities
+[296/413 batches] ✅ lib/is-windows.ts (13.7s) | 5.3k tok - 0 vulnerabilities
+[297/413 batches] ✅ frontend/src/app/two-factor-auth/two-factor-auth.component.ts (1m37.7s) | 51.8k tok - 0 vulnerabilities
+[298/413 batches] 🚨 infrastructure/terraform/networking.tf (37.5s) | 25.8k tok - 1 vulnerabilities
+[299/413 batches] ✅ lib/is-docker.ts (20.2s) | 6.5k tok - 0 vulnerabilities
+[300/413 batches] ✅ lib/accuracy.ts (34.5s) | 33.6k tok - 0 vulnerabilities
+[301/413 batches] ✅ lib/scripts/lintConfig.ts (9s) | 5.5k tok - 0 vulnerabilities
+[302/413 batches] ✅ infrastructure/terraform/main.tf (43.4s) | 71.2k tok - 0 vulnerabilities
+[303/413 batches] ✅ lib/antiCheat.ts (35.7s) | 41.6k tok - 0 vulnerabilities
+[304/413 batches] ✅ lib/webhook.ts (17.2s) | 21.3k tok - 0 vulnerabilities
+[305/413 batches] ✅ lib/startup/validateConfig.ts (7.2s) | 7.2k tok - 0 vulnerabilities
+[306/413 batches] ✅ lib/codingChallenges.ts (41.7s) | 43.2k tok - 0 vulnerabilities
+[307/413 batches] ✅ lib/noUpdate.ts (32.1s) | 36.4k tok - 0 vulnerabilities
+[308/413 batches] ✅ lib/challengeUtils.ts (46.8s) | 70.7k tok - 0 vulnerabilities
+[309/413 batches] ✅ lib/startup/cleanupFtpFolder.ts (22.5s) | 6.8k tok - 0 vulnerabilities
+[310/413 batches] ✅ lib/utils.ts (36.7s) | 44.9k tok - 0 vulnerabilities
+[311/413 batches] ✅ models/basket.ts (7.8s) | 4.7k tok - 0 vulnerabilities
+[312/413 batches] ✅ frontend/src/hacking-instructor/helpers/helpers.ts (1m4.5s) | 55.9k tok - 0 vulnerabilities
+[313/413 batches] ✅ lib/startup/validateDependencies.ts (17.1s) | 14.7k tok - 0 vulnerabilities
+[314/413 batches] ✅ models/captcha.ts (5.6s) | 4.1k tok - 0 vulnerabilities
+[315/413 batches] ✅ models/challengeDependency.ts (5.6s) | 4.4k tok - 0 vulnerabilities
+[316/413 batches] ✅ lib/startup/restoreOverwrittenFilesWithOriginals.ts (27.5s) | 8.9k tok - 0 vulnerabilities
+[317/413 batches] ✅ models/delivery.ts (6.9s) | 4.5k tok - 0 vulnerabilities
+[318/413 batches] ✅ models/basketitem.ts (14.3s) | 5.6k tok - 0 vulnerabilities
+[319/413 batches] ✅ lib/startup/validatePreconditions.ts (24.6s) | 36.4k tok - 0 vulnerabilities
+[320/413 batches] ✅ lib/startup/validateDependenciesBasic.ts (26.8s) | 7.9k tok - 0 vulnerabilities
+[321/413 batches] ✅ models/address.ts (21.1s) | 6.8k tok - 0 vulnerabilities
+[322/413 batches] ✅ lib/startup/customizeApplication.ts (34.9s) | 40.1k tok - 0 vulnerabilities
+[323/413 batches] ✅ models/imageCaptcha.ts (6s) | 4.6k tok - 0 vulnerabilities
+[324/413 batches] ✅ models/privacyRequests.ts (6.2s) | 4.7k tok - 0 vulnerabilities
+[325/413 batches] ✅ models/challenge.ts (17.3s) | 8.2k tok - 0 vulnerabilities
+[326/413 batches] ✅ models/memory.ts (7.7s) | 4.2k tok - 0 vulnerabilities
+[327/413 batches] ✅ lib/startup/customizeEasterEgg.ts (39.3s) | 34.3k tok - 0 vulnerabilities
+[328/413 batches] ✅ models/quantity.ts (7.2s) | 4.9k tok - 0 vulnerabilities
+[329/413 batches] 🚨 lib/xml.ts (47.9s) | 57.1k tok - 1 vulnerabilities
+[330/413 batches] ✅ models/recycle.ts (7.1s) | 4.7k tok - 0 vulnerabilities
+[331/413 batches] ✅ models/complaint.ts (19.6s) | 6.8k tok - 0 vulnerabilities
+[332/413 batches] ✅ models/card.ts (24.1s) | 14.7k tok - 0 vulnerabilities
+[333/413 batches] ✅ models/securityQuestion.ts (7.5s) | 4.5k tok - 0 vulnerabilities
+[334/413 batches] ✅ models/wallet.ts (9.4s) | 5.0k tok - 0 vulnerabilities
+[335/413 batches] ✅ routes/appVersion.ts (7.3s) | 4.5k tok - 0 vulnerabilities
+[336/413 batches] ✅ models/hint.ts (22.5s) | 7.5k tok - 0 vulnerabilities
+[337/413 batches] ✅ lib/startup/registerWebsocketEvents.ts (50.1s) | 46.5k tok - 0 vulnerabilities
+[338/413 batches] ✅ models/index.ts (22.9s) | 8.5k tok - 0 vulnerabilities
+[339/413 batches] ✅ models/relations.ts (23.4s) | 8.2k tok - 0 vulnerabilities
+[340/413 batches] ✅ models/securityAnswer.ts (22s) | 17.5k tok - 0 vulnerabilities
+[341/413 batches] ✅ routes/angular.ts (25.4s) | 20.7k tok - 0 vulnerabilities
+[342/413 batches] 🚨 models/feedback.ts (56.6s) | 54.9k tok - 1 vulnerabilities
+[343/413 batches] 🚨 routes/appConfiguration.ts (40.7s) | 40.9k tok - 1 vulnerabilities
+[344/413 batches] 🚨 routes/captcha.ts (43.1s) | 87.2k tok - 2 vulnerabilities
+[345/413 batches] 🚨 routes/b2bOrder.ts (46s) | 50.8k tok - 1 vulnerabilities
+[346/413 batches] ✅ routes/address.ts (54.5s) | 37.7k tok - 0 vulnerabilities
+[347/413 batches] 🚨 lib/insecurity.ts (1m59.2s) | 114.5k tok - 2 vulnerabilities
+[348/413 batches] 🚨 models/product.ts (1m6.7s) | 58.6k tok - 1 vulnerabilities
+[349/413 batches] 🚨 models/user.ts (1m9.3s) | 64.2k tok - 1 vulnerabilities
+[350/413 batches] ✅ routes/checkKeys.ts (49s) | 34.2k tok - 0 vulnerabilities
+[351/413 batches] ✅ routes/2fa.ts (1m11.1s) | 60.6k tok - 0 vulnerabilities
+[352/413 batches] ✅ routes/countryMapping.ts (32.5s) | 26.2k tok - 0 vulnerabilities
+[353/413 batches] 🚨 routes/authenticatedUsers.ts (1m8.2s) | 60.8k tok - 1 vulnerabilities
+[354/413 batches] ✅ routes/easterEgg.ts (7.2s) | 4.5k tok - 0 vulnerabilities
+[355/413 batches] ✅ routes/continueCode.ts (51.8s) | 48.2k tok - 0 vulnerabilities
+[356/413 batches] 🚨 routes/changePassword.ts (1m13.7s) | 64.9k tok - 1 vulnerabilities
+[357/413 batches] 🚨 routes/basketItems.ts (1m16.8s) | 67.4k tok - 1 vulnerabilities
+[358/413 batches] 🚨 routes/basket.ts (1m21.7s) | 31.7k tok - 1 vulnerabilities
+[359/413 batches] ✅ routes/delivery.ts (35.2s) | 37.1k tok - 0 vulnerabilities
+[360/413 batches] 🚨 routes/coupon.ts (56.6s) | 48.9k tok - 1 vulnerabilities
+[361/413 batches] ✅ routes/languages.ts (20.7s) | 7.6k tok - 0 vulnerabilities
+[362/413 batches] 🚨 routes/createProductReviews.ts (54.7s) | 51.1k tok - 1 vulnerabilities
+[363/413 batches] 🚨 routes/login.ts (24.2s) | 17.9k tok - 1 vulnerabilities
+[364/413 batches] 🚨 routes/deluxe.ts (48s) | 43.7k tok - 1 vulnerabilities
+[365/413 batches] 🚨 routes/fileServer.ts (54.4s) | 56.2k tok - 1 vulnerabilities
+[366/413 batches] 🚨 routes/dataExport.ts (1m11.4s) | 74.4k tok - 2 vulnerabilities
+[367/413 batches] 🚨 routes/currentUser.ts (1m16.3s) | 73.3k tok - 2 vulnerabilities
+[368/413 batches] 🚨 routes/chat.ts (1m54.2s) | 126.0k tok - 2 vulnerabilities
+[369/413 batches] ✅ routes/privacyPolicyProof.ts (7.2s) | 4.4k tok - 0 vulnerabilities
+[370/413 batches] 🚨 routes/dataErasure.ts (1m25.6s) | 58.2k tok - 1 vulnerabilities
+[371/413 batches] ✅ routes/nftMint.ts (43.4s) | 132.4k tok - 0 vulnerabilities
+[372/413 batches] 🚨 routes/fileUpload.ts (1m13.4s) | 85.6k tok - 1 vulnerabilities
+[373/413 batches] 🚨 routes/keyServer.ts (1m9.1s) | 47.6k tok - 1 vulnerabilities
+[374/413 batches] 🚨 routes/memory.ts (52.1s) | 47.2k tok - 1 vulnerabilities
+[375/413 batches] 🚨 routes/imageCaptcha.ts (1m18s) | 72.2k tok - 2 vulnerabilities
+[376/413 batches] 🚨 routes/logfileServer.ts (1m6.4s) | 49.3k tok - 1 vulnerabilities
+[377/413 batches] 🚨 routes/profileImageUrlUpload.ts (27.8s) | 17.1k tok - 1 vulnerabilities
+[378/413 batches] ✅ routes/payment.ts (59.4s) | 64.0k tok - 0 vulnerabilities
+[379/413 batches] 🚨 routes/metrics.ts (1m22.6s) | 94.5k tok - 2 vulnerabilities
+[380/413 batches] 🚨 routes/likeProductReviews.ts (1m38.8s) | 58.9k tok - 1 vulnerabilities
+[381/413 batches] 🚨 routes/order.ts (1m17.9s) | 84.1k tok - 1 vulnerabilities
+[382/413 batches] 🚨 routes/orderHistory.ts (1m11.4s) | 60.8k tok - 1 vulnerabilities
+[383/413 batches] ✅ routes/repeatNotification.ts (42.8s) | 41.0k tok - 0 vulnerabilities
+[384/413 batches] 🚨 routes/redirect.ts (45.9s) | 51.1k tok - 1 vulnerabilities
+[385/413 batches] 🚨 routes/quarantineServer.ts (54s) | 50.5k tok - 1 vulnerabilities
+[386/413 batches] ✅ routes/securityQuestion.ts (35.2s) | 32.2k tok - 0 vulnerabilities
+[387/413 batches] 🚨 routes/saveLoginIp.ts (46.2s) | 49.6k tok - 1 vulnerabilities
+[388/413 batches] ✅ routes/profileImageFileUpload.ts (1m10.7s) | 47.0k tok - 0 vulnerabilities
+[389/413 batches] 🚨 routes/search.ts (49.7s) | 26.7k tok - 1 vulnerabilities
+[390/413 batches] 🚨 routes/premiumReward.ts (1m17s) | 50.7k tok - 1 vulnerabilities
+[391/413 batches] ✅ rsn/rsn-update.ts (7.7s) | 4.6k tok - 0 vulnerabilities
+[392/413 batches] ✅ rsn/rsn.ts (11.3s) | 5.2k tok - 0 vulnerabilities
+[393/413 batches] 🚨 routes/recycles.ts (1m16.8s) | 76.2k tok - 2 vulnerabilities
+[394/413 batches] 🚨 routes/restoreProgress.ts (1m11.9s) | 93.3k tok - 3 vulnerabilities
+[395/413 batches] 🚨 routes/updateProductReviews.ts (41.1s) | 32.9k tok - 2 vulnerabilities
+[396/413 batches] 🚨 routes/trackOrder.ts (44.9s) | 48.8k tok - 1 vulnerabilities
+[397/413 batches] 🚨 routes/showProductReviews.ts (55.2s) | 127.2k tok - 1 vulnerabilities
+[398/413 batches] ✅ rsn/rsnOutput.ts (27.7s) | 7.3k tok - 0 vulnerabilities
+[399/413 batches] ✅ routes/web3Wallet.ts (38.1s) | 39.2k tok - 0 vulnerabilities
+[400/413 batches] ✅ terraform/variables.tf (7.4s) | 4.8k tok - 0 vulnerabilities
+[401/413 batches] ✅ routes/resetPassword.ts (1m37.8s) | 58.2k tok - 0 vulnerabilities
+[402/413 batches] ✅ terraform/outputs.tf (17.1s) | 5.9k tok - 0 vulnerabilities
+[403/413 batches] ✅ routes/videoHandler.ts (57.6s) | 41.8k tok - 0 vulnerabilities
+[404/413 batches] ✅ rsn/rsnUtil.ts (38.3s) | 33.9k tok - 0 vulnerabilities
+[405/413 batches] 🚨 routes/updateUserProfile.ts (1m8.4s) | 58.0k tok - 1 vulnerabilities
+[406/413 batches] ✅ scripts/package.mjs (36.2s) | 11.6k tok - 0 vulnerabilities
+[407/413 batches] ✅ routes/wallet.ts (57.3s) | 56.8k tok - 0 vulnerabilities
+[408/413 batches] ✅ routes/vulnCodeSnippet.ts (1m3.8s) | 53.0k tok - 0 vulnerabilities
+[409/413 batches] ✅ routes/verify.ts (1m15.1s) | 78.4k tok - 0 vulnerabilities
+[410/413 batches] ✅ terraform/main.tf (44.7s) | 67.2k tok - 0 vulnerabilities
+[411/413 batches] 🚨 terraform/networking.tf (56.9s) | 34.1k tok - 1 vulnerabilities
+[412/413 batches] 🚨 routes/userProfile.ts (1m49s) | 85.8k tok - 2 vulnerabilities
+[413/413 batches] ✅ routes/vulnCodeFixes.ts (2m12.5s) | 60.5k tok - 0 vulnerabilities
+────────────────────────────────────────────────────────────
+📊 Deep Scan Sifter Complete: 678 files in 413 batches (265 pruned at Tier 0, 413 succeeded, 0 failed) in 16m19s
+   Session: ChBhYjZlYjBlZTQ0OGY1NGY5EAgaAmViKgRtYWlu
+   Total tokens consumed: 13.2M (in: 11.8M, cached: 4.2M, out: 142.2k, thinking: 1.2M)
+
+🔒 Found 119 vulnerabilities:
+
+ID        SEVERITY    TYPE                                                                                  FILE                                                         TITLE                                                                                                         CONFIDENCE
+────────  ────────    ────                                                                                  ────                                                         ─────                                                                                                         ──────────
+9f6beb55  🟡 MEDIUM    CWE-862                                                                               data/static/codefixes/chatbotPromptInjectionChallenge_1.ts   Missing Server-Side Authorization and Verification in generateCoupon Tool                                     90%
+1c658cea  🟠 HIGH      IMPROPER INPUT VALIDATION                                                             data/static/codefixes/chatbotGreedyInjectionChallenge_3.ts   Improper Input Validation via Prompt Injection in generateCoupon Tool                                         100%
+e813aa0d  🟠 HIGH      CWE-89                                                                                data/static/codefixes/dbSchemaChallenge_1.ts                 SQL Injection via Unsanitized Criteria in Product Search Route Handler                                        100%
+6313e8f3  🟡 MEDIUM    CWE-285                                                                               data/static/codefixes/changeProductChallenge_4.ts            Improper Authorization Allowing Non-Admin Product Modification                                                95%
+d9babbf5  🟠 HIGH      CWE-20                                                                                data/static/codefixes/chatbotGreedyInjectionChallenge_1.ts   Missing Upper-Bound Validation on Coupon Discount Enables Excessive Discount Generation via Prompt Injection  100%
+98c27802  🟠 HIGH      IMPROPER INPUT VALIDATION                                                             data/static/codefixes/chatbotGreedyInjectionChallenge_4.ts   Missing Range Validation on Discount Parameter in generateCoupon Tool Allows Arbitrary Coupon Creation        100%
+c7b3f856  🟠 HIGH      CWE-862                                                                               server.ts                                                    Missing Authorization Check Allows Unauthenticated Modification of Products (PUT /api/Products/:id)           100%
+c0a5bfe3  🔴 CRITICAL  CWE-915                                                                               server.ts                                                    Mass Assignment in User Registration Allows Privilege Escalation to Admin                                     100%
+0b381cf1  🟡 MEDIUM    AUTHENTICATION BYPASS BY SPOOFING                                                     server.ts                                                    Rate Limiting Bypass on Password Reset via Spoofed X-Forwarded-For Header                                     100%
+72ec9981  🟡 MEDIUM    CWE-548                                                                               server.ts                                                    Information Disclosure via Unrestricted Directory Listing on Sensitive Paths                                  100%
+f18edb9c  🟡 MEDIUM    CWE-862                                                                               data/static/codefixes/chatbotPromptInjectionChallenge_4.ts   Missing Order Verification and Insufficient Input Validation in Coupon Generation Tool                        90%
+0c64d59f  🟡 MEDIUM    CWE-639                                                                               data/static/codefixes/forgedReviewChallenge_1.ts             Insecure Direct Object Reference (IDOR) in Product Review Update                                              100%
+2f8d9d64  🟡 MEDIUM    CWE-943                                                                               data/static/codefixes/forgedReviewChallenge_1.ts             NoSQL Injection in Product Review Batch Update                                                                100%
+284bd99d  🟡 MEDIUM    MISSING AUTHENTICATION FOR CRITICAL FUNCTION                                          data/static/codefixes/exposedMetricsChallenge_2.ts           Missing Authorization on Prometheus Metrics Endpoint                                                          100%
+8366c231  🟠 HIGH      CWE-321                                                                               data/static/codefixes/iacLeakedKeyChallenge_2.tf             Hardcoded TLS Private Key in Terraform Configuration                                                          100%
+69843ad1  🟠 HIGH      CWE-639                                                                               data/static/codefixes/forgedReviewChallenge_3.ts             Missing Authorization in Review Update Allows Forged Reviews (IDOR)                                           100%
+cc858fdc  🔴 CRITICAL  CWE-89                                                                                data/static/codefixes/loginAdminChallenge_1.ts               SQL Injection via Unsanitized User Input with Defective Guard in Login Route                                  100%
+550dcd4d  🔴 CRITICAL  CWE-89                                                                                data/static/codefixes/loginJimChallenge_2.ts                 SQL Injection Leading to Authentication Bypass in Login Route Handler                                         100%
+f3cc476a  🟡 MEDIUM    CWE-79                                                                                data/static/codefixes/localXssChallenge_3.ts                 DOM-Based Cross-Site Scripting (XSS) via bypassSecurityTrustScript on Untrusted Query Parameter               85%
+496afbff  🔴 CRITICAL  CWE-89                                                                                data/static/codefixes/loginAdminChallenge_2.ts               SQL Injection in Login Route via Incomplete Parameter Binding and Dynamic String Interpolation                90%
+48fdf57b  🔴 CRITICAL  CWE-89                                                                                data/static/codefixes/loginBenderChallenge_4.ts              SQL Injection via Unsanitized Email Parameter in Login Handler                                                100%
+af97cdd6  🟡 MEDIUM    CWE-191                                                                               data/static/codefixes/nftMintChallenge_1.sol                 Integer Underflow Revert in mintNFT Causes Denial of Service                                                  100%
+ef662d9b  🔴 CRITICAL  CWE-89                                                                                data/static/codefixes/loginBenderChallenge_1.ts              SQL Injection via Control Flow Fallthrough in Login Route Handler                                             100%
+3be2a133  🔴 CRITICAL  CWE-89                                                                                data/static/codefixes/loginJimChallenge_4.ts                 SQL Injection in Login Handler via Missing Return and String Concatenation                                    100%
+46ed4c53  🟡 MEDIUM    CWE-601                                                                               data/static/codefixes/redirectChallenge_3.ts                 Insecure Substring Validation in isRedirectAllowed Enables Open Redirect                                      100%
+d9956103  🟡 MEDIUM    CWE-191                                                                               data/static/codefixes/nftMintChallenge_2.sol                 Integer Underflow in mintNFT Causes Denial of Service                                                         95%
+4cfd69eb  🟡 MEDIUM    CWE-601                                                                               data/static/codefixes/redirectChallenge_1.ts                 Insufficient URL Validation in isRedirectAllowed Leading to Open Redirect                                     100%
+dfc62d19  🟡 MEDIUM    URL REDIRECTION TO UNTRUSTED SITE ('OPEN REDIRECT')                                   data/static/codefixes/redirectCryptoCurrencyChallenge_2.ts   Insufficient Allowlist Validation Allows Open Redirect via Substring Match                                    95%
+bb075a90  🟠 HIGH      INSECURE DIRECT OBJECT REFERENCE (IDOR)                                               data/static/codefixes/noSqlReviewsChallenge_3_correct.ts     Broken Object Level Authorization (IDOR) Allows Arbitrary Review Modification                                 100%
+3ee411f5  🟡 MEDIUM    CWE-601                                                                               data/static/codefixes/redirectCryptoCurrencyChallenge_1.ts   Open Redirect via Insecure Substring Matching in isRedirectAllowed                                            100%
+f87608ea  🟠 HIGH      CWE-943                                                                               data/static/codefixes/noSqlReviewsChallenge_1.ts             NoSQL Injection via Incomplete Operator Blocklist in Product Reviews Update                                   100%
+987efcc3  🟠 HIGH      CWE-639                                                                               data/static/codefixes/noSqlReviewsChallenge_1.ts             Missing Authorization Check Allows Modifying Other Users' Product Reviews (IDOR/BOLA)                         100%
+4feabf6f  🟡 MEDIUM    OPEN REDIRECT                                                                         data/static/codefixes/redirectCryptoCurrencyChallenge_4.ts   Open Redirect via Substring Allowlist Validation in isRedirectAllowed                                         100%
+686d9de2  🟠 HIGH      CWE-943                                                                               data/static/codefixes/noSqlReviewsChallenge_2.ts             NoSQL Injection via Unsanitized Query Selector in updateProductReviews                                        100%
+e522e708  🟠 HIGH      CWE-639                                                                               data/static/codefixes/noSqlReviewsChallenge_2.ts             Insecure Direct Object Reference (IDOR) Allowing Unauthorized Review Modification                             100%
+fa9b238a  🟠 HIGH      CWE-269                                                                               data/static/codefixes/registerAdminChallenge_1.ts            Privilege Escalation via Flawed Role Assignment in User Registration Hook                                     100%
+954f05d0  🟠 HIGH      CWE-307                                                                               data/static/codefixes/resetPasswordMortyChallenge_2.ts       Rate Limiting Bypass via Spoofed Forwarded Header in keyGenerator                                             100%
+6dc0f9e0  🟠 HIGH      IMPROPER NEUTRALIZATION OF SPECIAL ELEMENTS USED IN AN SQL COMMAND ('SQL INJECTION')  data/static/codefixes/unionSqlInjectionChallenge_1.ts        SQL Injection in Product Search via Unsanitized Query Parameter                                               100%
+fe658be4  🟠 HIGH      CWE-79                                                                                data/static/codefixes/restfulXssChallenge_3.ts               Stored Cross-Site Scripting (XSS) via DomSanitizer.bypassSecurityTrustHtml                                    100%
+17c24988  🔴 CRITICAL  REENTRANCY                                                                            data/static/codefixes/web3WalletChallenge_2.sol              Reentrancy and Integer Underflow in withdraw function allows contract drainage                                100%
+b86f4274  🔴 CRITICAL  REENTRANCY / STATE MACHINE BYPASS                                                     data/static/codefixes/web3WalletChallenge_1.sol              Reentrancy and Integer Underflow in withdraw function allows complete drain of contract funds                 100%
+7f241741  🟠 HIGH      CWE-915                                                                               data/static/codefixes/registerAdminChallenge_4.ts            Mass Assignment Leading to Privilege Escalation in User Registration Endpoint                                 90%
+85623976  🟠 HIGH      CWE-79                                                                                data/static/codefixes/restfulXssChallenge_4.ts               Bypass of Angular DomSanitizer on Untrusted Product Descriptions Leading to Stored XSS                        100%
+57a5a12c  🟠 HIGH      CWE-682                                                                               data/static/codefixes/web3WalletChallenge_4.sol              Inverted Balance Verification and Accounting in withdraw Allows Unauthorized Fund Theft                       100%
+9346b147  🟠 HIGH      CWE-841                                                                               data/static/codefixes/web3WalletChallenge_4.sol              Reentrancy via Broken Mutex and Post-Call State Update in withdraw                                            100%
+0dc6cf3b  🟡 MEDIUM    CROSS-SITE SCRIPTING (XSS)                                                            data/static/codefixes/xssBonusChallenge_2.ts                 DOM-based Cross-Site Scripting (XSS) via DomSanitizer bypassSecurityTrustResourceUrl                          90%
+42be26cb  🟠 HIGH      CWE-252                                                                               data/static/web3-snippets/HoneyPotNFT.sol                    Unchecked Return Value in HoneyPotNFT.mintNFT Allows Free NFT Minting                                         85%
+7bb11f7b  🔴 CRITICAL  REENTRANCY / IMPROPER ENFORCEMENT OF BEHAVIORAL WORKFLOW                              data/static/web3-snippets/ETHWalletBank.sol                  Reentrancy and Arithmetic Underflow in withdraw() Allows Draining Contract Funds                              100%
+7eaafa4c  🟠 HIGH      CWE-571                                                                               data/static/web3-snippets/BeeFaucet.sol                      Tautological Unsigned Comparison and Flawed Balance Check in BeeFaucet.withdraw                               85%
+cb19446e  🔵 LOW       CWE-340                                                                               data/static/web3-snippets/JuiceShopSBT.sol                   Predictable Sequential Token ID Generation in Soul Bound Token Minting                                        85%
+2135cc68  🟠 HIGH      CWE-79                                                                                frontend/src/app/about/about.component.ts                    Stored Cross-Site Scripting (XSS) via bypassSecurityTrustHtml in Feedback Slideshow                           100%
+17d256fa  🟠 HIGH      CWE-79                                                                                frontend/src/app/administration/administration.component.ts  Stored XSS via bypassSecurityTrustHtml on User Email in findAllUsers                                          100%
+29a301d8  🟠 HIGH      CWE-79                                                                                frontend/src/app/administration/administration.component.ts  Stored XSS via bypassSecurityTrustHtml on Feedback Comment in findAllFeedbacks                                100%
+39ccd566  🟡 MEDIUM    CWE-656                                                                               frontend/src/app/app.routing.ts                              Reliance on Security Through Obscurity for Token Sale Route Protection                                        95%
+ee7fc0e0  🟡 MEDIUM    CWE-79                                                                                frontend/src/app/last-login-ip/last-login-ip.component.ts    DOM-based Cross-Site Scripting via bypassSecurityTrustHtml with Untrusted JWT Payload                         100%
+47ff0588  🔵 LOW       CWE-79                                                                                frontend/src/app/data-export/data-export.component.ts        DOM-based Cross-Site Scripting (XSS) via document.write in save()                                             95%
+25ac55a1  🔴 CRITICAL  CWE-340                                                                               frontend/src/app/oauth/oauth.component.ts                    Predictable Password Generation for OAuth Accounts Enables Account Takeover                                   100%
+2581025f  🟡 MEDIUM    USE OF HARD-CODED CREDENTIALS                                                         frontend/src/app/login/login.component.ts                    Hardcoded Credentials in LoginComponent                                                                       85%
+14fbbeb1  🟡 MEDIUM    CROSS-SITE SCRIPTING (XSS)                                                            frontend/src/app/track-result/track-result.component.ts      Cross-Site Scripting (XSS) via bypassSecurityTrustHtml in TrackResultComponent                                95%
+bc562503  🟡 MEDIUM    CROSS-SITE SCRIPTING (XSS)                                                            frontend/src/app/search-result/search-result.component.ts    DOM-Based Cross-Site Scripting via bypassSecurityTrustHtml in filterTable                                     100%
+4a425aa4  🟠 HIGH      CROSS-SITE SCRIPTING (XSS)                                                            frontend/src/app/search-result/search-result.component.ts    Stored Cross-Site Scripting via bypassSecurityTrustHtml in trustProductDescription                            95%
+e98e4393  🟡 MEDIUM    CWE-22                                                                                frontend/src/app/deluxe-user/deluxe-user.component.ts        Client-Side Path Traversal via Unsanitized testDecal Query Parameter                                          90%
+ae469706  🟠 HIGH      CWE-321                                                                               infrastructure/terraform/networking.tf                       Hardcoded RSA Private Key in IAM Server Certificate Configuration                                             100%
+974d600b  🟠 HIGH      CWE-611                                                                               lib/xml.ts                                                   XML External Entity (XXE) Injection in parseXmlString                                                         100%
+39fc62d2  🟠 HIGH      CWE-79                                                                                models/feedback.ts                                           Stored Cross-Site Scripting (XSS) via Incomplete Sanitization in Feedback Comment Setter                      100%
+6c3f7bb0  🟡 MEDIUM    CWE-200                                                                               routes/appConfiguration.ts                                   Information Disclosure of Sensitive Server Configuration via Incomplete Sanitization                          90%
+06b4588f  🟡 MEDIUM    CWE-200                                                                               routes/captcha.ts                                            Exposure of CAPTCHA Answer in API Response Leading to Anti-Automation Bypass                                  100%
+8f568667  🟡 MEDIUM    CWE-294                                                                               routes/captcha.ts                                            Missing CAPTCHA Invalidation Allowing Replay and Anti-Automation Bypass                                       100%
+12630d0c  🔴 CRITICAL  CWE-94                                                                                routes/b2bOrder.ts                                           Remote Code Execution via Insecure Sandbox Evaluation in B2B Order Route                                      100%
+bf8664a8  🟡 MEDIUM    CWE-601                                                                               lib/insecurity.ts                                            Open Redirect via Insecure URL Substring Validation in isRedirectAllowed                                      100%
+24a12587  🔴 CRITICAL  USE OF HARD-CODED CREDENTIALS                                                         lib/insecurity.ts                                            Hardcoded RSA Private Key Enables Arbitrary JWT Forgery and Authentication Bypass                             100%
+eae3cea2  🟠 HIGH      CWE-79                                                                                models/product.ts                                            Stored Cross-Site Scripting (XSS) via Conditional Sanitization Bypass in Product Description Setter           100%
+973fc390  🟠 HIGH      CWE-79                                                                                models/user.ts                                               Stored Cross-Site Scripting via Unsanitized Email Model Setter                                                100%
+cb69d511  🟠 HIGH      MISSING AUTHORIZATION                                                                 routes/authenticatedUsers.ts                                 Unauthenticated Information Exposure of All Registered User Details                                           100%
+4a590a37  🟡 MEDIUM    CWE-620                                                                               routes/changePassword.ts                                     Unverified Password Change via Missing Current Password Check                                                 100%
+54e2bbb8  🟠 HIGH      CWE-639                                                                               routes/basketItems.ts                                        Broken Object Level Authorization and JSON Parameter Pollution in addBasketItem                               100%
+a8a093f6  🟠 HIGH      CWE-639                                                                               routes/basket.ts                                             Insecure Direct Object Reference (IDOR) Allows Unauthorized Access to User Shopping Baskets                   100%
+b72de494  🟠 HIGH      CWE-639                                                                               routes/coupon.ts                                             Insecure Direct Object Reference (IDOR) / Missing Authorization in applyCoupon                                90%
+da96c124  🟠 HIGH      CWE-862                                                                               routes/createProductReviews.ts                               Improper Authorization Allows Product Review Forgery                                                          95%
+1d7929c6  🔴 CRITICAL  SQL INJECTION                                                                         routes/login.ts                                              SQL Injection in Login Route Handler Leading to Authentication Bypass                                         100%
+3dd095b2  🟡 MEDIUM    CWE-841                                                                               routes/deluxe.ts                                             Payment Mode Validation Bypass Allows Free Deluxe Membership Upgrade                                          100%
+84b99acb  🟠 HIGH      CWE-626                                                                               routes/fileServer.ts                                         Poison Null Byte File Type Allowlist Bypass via Out-of-Order Sanitization                                     100%
+77af2e8e  🟡 MEDIUM    INSECURE DIRECT OBJECT REFERENCES (IDOR)                                              routes/dataExport.ts                                         Insecure Direct Object Reference (IDOR) in User Memory Data Export                                            100%
+8d36051a  🟡 MEDIUM    CWE-200                                                                               routes/dataExport.ts                                         Cross-User Sensitive Order Data Exposure via Colliding Vowel Masking                                          100%
+50dd5d1c  🔵 LOW       CWE-200                                                                               routes/currentUser.ts                                        Sensitive Data Exposure via Arbitrary User Fields Selection in retrieveLoggedInUser                           100%
+f3a0d80e  🔵 LOW       CWE-359                                                                               routes/currentUser.ts                                        Cross-Origin Information Disclosure via JSONP in retrieveLoggedInUser                                         100%
+690597a3  🟠 HIGH      CWE-347                                                                               routes/chat.ts                                               Unverified JWT Signature in getUserId Allows Authentication Bypass and IDOR                                   100%
+e8282fc4  🟡 MEDIUM    IMPROPER INPUT VALIDATION                                                             routes/chat.ts                                               Missing Server-Side Validation on LLM Tool Discount Parameter Allows Arbitrary Coupon Generation              90%
+18484fd2  🟡 MEDIUM    CWE-22                                                                                routes/dataErasure.ts                                        Path Traversal / Local File Read via layout Parameter in Data Erasure                                         100%
+45c3e699  🟠 HIGH      PATH TRAVERSAL                                                                        routes/fileUpload.ts                                         Path Traversal via Zip Slip in extractZipBuffer                                                               100%
+dbb0eda0  🟠 HIGH      PATH TRAVERSAL                                                                        routes/keyServer.ts                                          Path Traversal via Incomplete Blacklist Validation in serveKeyFiles                                           100%
+1a41bce7  🟡 MEDIUM    CWE-200                                                                               routes/memory.ts                                             Sensitive User Information Disclosure via Unrestricted Model Include in getMemories                           95%
+d56ad2e4  🔵 LOW       CWE-200                                                                               routes/imageCaptcha.ts                                       CAPTCHA Solution Leaked in HTTP Response Body                                                                 95%
+e4a63f73  🔵 LOW       CWE-1390                                                                              routes/imageCaptcha.ts                                       Complete CAPTCHA Bypass via Missing CAPTCHA State                                                             95%
+692be866  🟠 HIGH      PATH TRAVERSAL                                                                        routes/logfileServer.ts                                      Path Traversal via Backslash Directory Separator in Logfile Server                                            95%
+89655762  🟡 MEDIUM    SERVER-SIDE REQUEST FORGERY (SSRF)                                                    routes/profileImageUrlUpload.ts                              Server-Side Request Forgery (SSRF) via profileImageUrlUpload                                                  100%
+f98daac5  🟡 MEDIUM    CWE-200                                                                               routes/metrics.ts                                            Missing Authentication Leading to Sensitive Information Disclosure in Prometheus Metrics Endpoint             100%
+c9623675  🟡 MEDIUM    CWE-400                                                                               routes/metrics.ts                                            Uncontrolled Resource Consumption via High-Cardinality Prometheus Metric Labels in File Upload Middleware     95%
+f1815a15  🟡 MEDIUM    CWE-367                                                                               routes/likeProductReviews.ts                                 Time-of-Check to Time-of-Use (TOCTOU) Race Condition Allows Multiple Review Likes                             95%
+dd7e19a4  🟠 HIGH      CWE-639                                                                               routes/order.ts                                              Insecure Direct Object Reference (IDOR) in Basket Checkout                                                    100%
+07d24d51  🟡 MEDIUM    CWE-639                                                                               routes/orderHistory.ts                                       Broken Object-Level Authorization / Cross-User Order History Disclosure via Email Vowel Collision             95%
+aaf40551  🟡 MEDIUM    CWE-601                                                                               routes/redirect.ts                                           Open Redirect via Insufficient Allowlist Validation in performRedirect                                        100%
+c19dd2b5  🟠 HIGH      CWE-22                                                                                routes/quarantineServer.ts                                   Path Traversal in serveQuarantineFiles via Backslash Separation Bypass                                        95%
+15216d3a  🟡 MEDIUM    CROSS-SITE SCRIPTING (XSS)                                                            routes/saveLoginIp.ts                                        Stored Cross-Site Scripting via True-Client-IP HTTP Header in saveLoginIp                                     100%
+1201631e  🟠 HIGH      CWE-89                                                                                routes/search.ts                                             SQL Injection via Unsanitized Query Parameter in Product Search                                               100%
+f80cd518  🟠 HIGH      CWE-862                                                                               routes/premiumReward.ts                                      Missing Authorization for Premium Asset Delivery (Paywall Bypass)                                             95%
+4033eacf  🟠 HIGH      CWE-943                                                                               routes/recycles.ts                                           ORM Query Logic Injection via JSON.parse in getRecycleItem                                                    100%
+3088b336  🟠 HIGH      CWE-639                                                                               routes/recycles.ts                                           Broken Object Level Authorization (IDOR) in getRecycleItem                                                    100%
+267caefb  🟠 HIGH      CWE-321                                                                               routes/restoreProgress.ts                                    Hardcoded Salt in Hashids Allows Forged Challenge Progress Restoration in restoreProgress                     100%
+dd254fc4  🟠 HIGH      CWE-321                                                                               routes/restoreProgress.ts                                    Hardcoded Salt in Hashids Allows Forged FindIt Challenge Progress Restoration in restoreProgressFindIt        100%
+d1ef581a  🟠 HIGH      CWE-321                                                                               routes/restoreProgress.ts                                    Hardcoded Salt in Hashids Allows Forged FixIt Challenge Progress Restoration in restoreProgressFixIt          100%
+234d940d  🟡 MEDIUM    CWE-943                                                                               routes/updateProductReviews.ts                               NoSQL Injection in Product Review Update Handler                                                              100%
+201fc8c2  🟡 MEDIUM    CWE-639                                                                               routes/updateProductReviews.ts                               Insecure Direct Object Reference (IDOR) Allowing Unauthorized Review Modification                             100%
+1ceb0f88  🟠 HIGH      CWE-943                                                                               routes/trackOrder.ts                                         NoSQL Injection via $where Expression in Track Order Endpoint                                                 100%
+278c29b1  🟡 MEDIUM    CWE-943                                                                               routes/showProductReviews.ts                                 NoSQL Injection and Event Loop Denial of Service via $where Clause in showProductReviews                      100%
+10d52d87  🟡 MEDIUM    CWE-352                                                                               routes/updateUserProfile.ts                                  Cross-Site Request Forgery (CSRF) in User Profile Update                                                      100%
+48af5ba2  🔴 CRITICAL  CWE-321                                                                               terraform/networking.tf                                      Hard-coded TLS RSA Private Key in Infrastructure as Code                                                      95%
+b4299de7  🟠 HIGH      CWE-95                                                                                routes/userProfile.ts                                        Server-Side Code Injection via eval() in Profile Username                                                     100%
+e4fa759f  🟡 MEDIUM    CROSS-SITE SCRIPTING (XSS)                                                            routes/userProfile.ts                                        Stored Cross-Site Scripting via CSP Directive Injection and Unescaped Profile Rendering                       100%
+
+Summary: 15 CRITICAL, 52 HIGH, 46 MEDIUM, 6 LOW
+
+Run 'cm report' for detailed analysis, 'cm verify <finding-id>' to validate, or 'cm fix <finding-id>' to generate a patch.
+cm-ci: this run → .codemender/findings.json (17 active finding(s))
+cm-ci: dedup against cm database (previous sessions) (143), .codemender/known_findings.json (143)
+Existing: 143 | Current: 17 | Duplicates suppressed: 6 | New to file: 11 | Reopened: 0
+cm-ci: → .codemender/new_findings.json (findings = file these; reopened = fixed before, back again; suppressed_duplicates = already known)
+cm-ci: removed 6 duplicate row(s) from /Users/ryanmcgrail/.codemender/state.db — `cm report` now shows each bug once
+cm-ci: updated .codemender/known_findings.json (154 entries) — commit it so the next run knows these
+  🆕 NEW      CRITICAL /Users/ryanmcgrail/juice-shop/lib/insecurity.ts:21 Hardcoded RSA Private Key Enables Arbitrary JWT Forgery and Authentication Bypass
+  🆕 NEW      HIGH /Users/ryanmcgrail/juice-shop/routes/premiumReward.ts:11 Missing Authorization for Premium Asset Delivery (Paywall Bypass)
+  🆕 NEW      HIGH /Users/ryanmcgrail/juice-shop/routes/authenticatedUsers.ts:10 Unauthenticated Information Exposure of All Registered User Details
+  🆕 NEW      HIGH /Users/ryanmcgrail/juice-shop/data/static/codefixes/web3WalletChallenge_4.sol:20 Reentrancy via Broken Mutex and Post-Call State Update in withdraw
+  🆕 NEW      HIGH /Users/ryanmcgrail/juice-shop/data/static/codefixes/registerAdminChallenge_1.ts:32 Privilege Escalation via Flawed Role Assignment in User Registration Hook
+  🆕 NEW      MEDIUM /Users/ryanmcgrail/juice-shop/routes/userProfile.ts:25 Stored Cross-Site Scripting via CSP Directive Injection and Unescaped Profile Rendering
+  🆕 NEW      MEDIUM /Users/ryanmcgrail/juice-shop/routes/deluxe.ts:16 Payment Mode Validation Bypass Allows Free Deluxe Membership Upgrade
+  🆕 NEW      MEDIUM /Users/ryanmcgrail/juice-shop/frontend/src/app/login/login.component.ts:62 Hardcoded Credentials in LoginComponent
+  🆕 NEW      MEDIUM /Users/ryanmcgrail/juice-shop/frontend/src/app/app.routing.ts:293 Reliance on Security Through Obscurity for Token Sale Route Protection
+  🆕 NEW      MEDIUM /Users/ryanmcgrail/juice-shop/data/static/codefixes/xssBonusChallenge_2.ts:1 DOM-based Cross-Site Scripting (XSS) via DomSanitizer bypassSecurityTrustResourceUrl
+  🆕 NEW      LOW /Users/ryanmcgrail/juice-shop/data/static/web3-snippets/JuiceShopSBT.sol:17 Predictable Sequential Token ID Generation in Soul Bound Token Minting
