@@ -215,7 +215,6 @@ class Ctx:
         os.chdir(self.repo)
         self.cm_dir = os.environ.get("CM_HOME") or os.path.join(os.path.expanduser("~"), ".codemender")
         self.cfg = os.path.join(self.cm_dir, "config.yaml")
-        self.db = os.path.join(self.cm_dir, "state.db")
         self.cm = CodeMender(repo_dir=self.repo)
 
     def report(self) -> List[Finding]:
@@ -362,14 +361,13 @@ def remove_duplicates_in_db(ctx: Ctx, dups: List[Finding]) -> Optional[Tuple[int
     status) shows each bug once: the cross-run duplicates found here plus the DISMISSED
     twins cm itself writes in deep mode. Rows referenced by a patch/artifact are never
     deleted — they are marked DISMISSED instead. Returns (removed, marked); None = no DB."""
-    if not os.path.exists(ctx.db):
+    con = ctx.cm.db
+    if con is None:
         return None
     try:
-        con = sqlite3.connect(ctx.db, timeout=10)
         tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         cols = {r[1] for r in con.execute("PRAGMA table_info(findings)")} if "findings" in tables else set()
         if "finding_id" not in cols or "status" not in cols:
-            con.close()
             return None
         refs = " OR ".join(f"finding_id IN (SELECT finding_id FROM {t} WHERE finding_id IS NOT NULL)"
                            for t in ("patches", "artifacts") if t in tables) or "0"
@@ -392,10 +390,10 @@ def remove_duplicates_in_db(ctx: Ctx, dups: List[Finding]) -> Optional[Tuple[int
             q = ",".join("?" * len(CM_TWIN_REASONS))
             removed += con.execute(f"DELETE FROM findings WHERE status='DISMISSED' AND dismiss_reason IN ({q}) AND NOT ({refs})",
                                    CM_TWIN_REASONS).rowcount
-        con.commit(); con.close()
+        con.commit()
         return removed, marked
     except sqlite3.Error as e:
-        print(f"cm-ci: warning — could not update {ctx.db}: {e}", file=sys.stderr)
+        print(f"cm-ci: warning — could not update state.db: {e}", file=sys.stderr)
         return None
 
 
@@ -469,9 +467,9 @@ def cmd_find(argv: List[str]) -> int:
     if r is not None:
         removed, marked = r
         extra = f" ({marked} referenced by a patch kept as DISMISSED)" if marked else ""
-        print(f"cm-ci: removed {removed} duplicate row(s) from {ctx.db}{extra} — `cm report` now shows each bug once")
+        print(f"cm-ci: removed {removed} duplicate row(s) from state.db{extra} — `cm report` now shows each bug once")
     elif res["suppressed_duplicates"]:
-        print(f"cm-ci: note — {ctx.db} not found, duplicates only recorded in {new_path}")
+        print(f"cm-ci: note — state.db not found, duplicates only recorded in {new_path}")
 
     if not existing_path and not opts["--no-update"]:
         known_ids = {str(f.finding_id) for f in known}

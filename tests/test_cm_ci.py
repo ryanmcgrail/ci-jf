@@ -7,7 +7,6 @@ import io
 import json
 import os
 from pathlib import Path
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -418,32 +417,24 @@ class TestCmCi(unittest.TestCase):
 
     def test_remove_duplicates_in_db(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            mock_cm = MockCodeMender(repo_dir=os.path.realpath(tmpdir))
-            with patch.object(cm_ci, "CodeMender", return_value=mock_cm):
-                ctx = cm_ci.Ctx(tmpdir)
-            ctx.db = os.path.join(tmpdir, "state.db")
-
-            self.assertIsNone(cm_ci.remove_duplicates_in_db(ctx, []))
-
-            con = sqlite3.connect(ctx.db)
-            con.execute(
-                "CREATE TABLE findings ("
-                "finding_id TEXT PRIMARY KEY, status TEXT, dismiss_reason TEXT, updated_at TEXT)"
-            )
-            con.execute("CREATE TABLE patches (finding_id TEXT)")
-            con.execute("CREATE TABLE artifacts (finding_id TEXT)")
-            con.executemany(
-                "INSERT INTO findings VALUES (?, ?, ?, ?)",
-                [
-                    ("dup-unreferenced", "OPEN", None, None),
-                    ("dup-patched", "OPEN", None, None),
-                    ("twin-dismissed", "DISMISSED", cm_ci.CM_TWIN_REASONS[0], None),
-                    ("keep-open", "OPEN", None, None),
+            mock_cm = MockCodeMender(
+                repo_dir=os.path.realpath(tmpdir),
+                initial_findings=[
+                    Finding(finding_id="dup-unreferenced", status="OPEN"),
+                    Finding(finding_id="dup-patched", status="OPEN"),
+                    Finding(
+                        finding_id="twin-dismissed",
+                        status="DISMISSED",
+                        dismiss_reason=cm_ci.CM_TWIN_REASONS[0],
+                    ),
+                    Finding(finding_id="keep-open", status="OPEN"),
                 ],
             )
-            con.execute("INSERT INTO patches VALUES (?)", ("dup-patched",))
-            con.commit()
-            con.close()
+            mock_cm.db.execute("INSERT INTO patches VALUES (?)", ("dup-patched",))
+            mock_cm.db.commit()
+
+            with patch.object(cm_ci, "CodeMender", return_value=mock_cm):
+                ctx = cm_ci.Ctx(tmpdir)
 
             dups = [
                 Finding(finding_id="dup-unreferenced", duplicate_of="orig-1"),
@@ -452,16 +443,15 @@ class TestCmCi(unittest.TestCase):
             res = cm_ci.remove_duplicates_in_db(ctx, dups)
             self.assertEqual(res, (2, 1))
 
-            con = sqlite3.connect(ctx.db)
-            rows = {
-                r[0]: (r[1], r[2])
-                for r in con.execute("SELECT finding_id, status, dismiss_reason FROM findings")
-            }
-            con.close()
-            self.assertNotIn("dup-unreferenced", rows)
-            self.assertNotIn("twin-dismissed", rows)
-            self.assertEqual(rows["dup-patched"], ("DISMISSED", "cm-ci: duplicate of orig-2"))
-            self.assertEqual(rows["keep-open"], ("OPEN", None))
+            findings = {f.finding_id: f for f in mock_cm.list_findings()}
+            self.assertNotIn("dup-unreferenced", findings)
+            self.assertNotIn("twin-dismissed", findings)
+            self.assertEqual(findings["dup-patched"].status, "DISMISSED")
+            self.assertEqual(
+                findings["dup-patched"].dismiss_reason, "cm-ci: duplicate of orig-2"
+            )
+            self.assertEqual(findings["keep-open"].status, "OPEN")
+            self.assertIsNone(findings["keep-open"].dismiss_reason)
 
     # ─── cmd_dedup ───────────────────────────────────────────────────────────
 

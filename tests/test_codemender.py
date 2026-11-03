@@ -2,6 +2,7 @@
 
 import json
 import os
+import sqlite3
 import tempfile
 import types
 import unittest
@@ -163,6 +164,27 @@ class CodeMenderTests(unittest.TestCase):
     import_cmd = mock_run.call_args_list[1].args[0]
     temp_file_path = import_cmd[import_cmd.index("-f") + 1]
     self.assertFalse(os.path.exists(temp_file_path))
+
+  def test_db_returns_none_when_state_db_missing(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      cm = CodeMender(env={"CM_HOME": tmpdir})
+      self.assertIsNone(cm.db)
+
+  def test_db_returns_sqlite_connection_when_state_db_exists(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      db_path = os.path.join(tmpdir, "state.db")
+      con = sqlite3.connect(db_path)
+      con.execute("CREATE TABLE findings (finding_id TEXT)")
+      con.commit()
+      con.close()
+
+      cm = CodeMender(env={"CM_HOME": tmpdir})
+      self.assertIsInstance(cm.db, sqlite3.Connection)
+      tables = {
+          r[0]
+          for r in cm.db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+      }
+      self.assertIn("findings", tables)
 
 
 if __name__ == "__main__":

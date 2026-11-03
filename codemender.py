@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -122,6 +123,22 @@ class CodeMender:
     self.cm_binary = cm_binary
     self.repo_dir = repo_dir
     self.env = env
+    self._db: Optional[sqlite3.Connection] = None
+
+  @property
+  def db(self) -> Optional[sqlite3.Connection]:
+    """Returns a sqlite3 connection to CodeMender's state.db, or None if not found."""
+    if self._db is None:
+      cm_dir = (
+          (self.env or {}).get("CM_HOME")
+          or os.environ.get("CM_HOME")
+          or os.path.join(os.path.expanduser("~"), ".codemender")
+      )
+      db_path = os.path.join(cm_dir, "state.db")
+      if not os.path.exists(db_path):
+        return None
+      self._db = sqlite3.connect(db_path, timeout=10)
+    return self._db
 
   def find(
       self,
@@ -209,3 +226,8 @@ class CodeMender:
       )
 
     return findings_not_already_in_cm
+
+  def __del__(self) -> None:
+    if getattr(self, "_db", None) is not None:
+      self._db.close()
+      self._db = None
