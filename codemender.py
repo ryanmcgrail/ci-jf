@@ -17,6 +17,10 @@ logger = logging.getLogger("codemender")
 
 _CI_GATE_BLOCKING = re.compile(r"CI Gate Failure:\s*\d+ blocking finding")
 _CI_GATE_TRUNCATED = re.compile(r"CI Gate Failure:\s*Impact expansion truncated")
+_ADC_REAUTH_ERROR = re.compile(
+    r"invalid_grant|invalid_rapt|reauth related error|could not find default credentials",
+    re.IGNORECASE,
+)
 
 
 class ScanMode(str, enum.Enum):
@@ -33,6 +37,12 @@ def is_ci_gate_exit(returncode: int, find_stdout: str) -> bool:
       and bool(_CI_GATE_BLOCKING.search(text))
       and not _CI_GATE_TRUNCATED.search(text)
   )
+
+
+def is_adc_reauth_error(returncode: int, stdout: str, stderr: str = "") -> bool:
+  """Whether a command failed because Google Cloud ADC credentials need login."""
+  combined = f"{stdout or ''}\n{stderr or ''}"
+  return returncode != 0 and bool(_ADC_REAUTH_ERROR.search(combined))
 
 
 def build_cm_command(
@@ -163,6 +173,18 @@ class CodeMender:
     result = run_command(command, cwd=self.repo_dir, env=self.env, check=False, print_to_stdout=True)
     returncode = getattr(result, "returncode", 0)
     stdout = getattr(result, "stdout", "")
+    stderr = getattr(result, "stderr", "")
+    if is_adc_reauth_error(returncode, stdout or "", stderr or ""):
+      run_command(
+          ["gcloud", "auth", "application-default", "login"],
+          cwd=self.repo_dir,
+          env=self.env,
+          check=True,
+          print_to_stdout=True,
+      )
+      result = run_command(command, cwd=self.repo_dir, env=self.env, check=False, print_to_stdout=True)
+      returncode = getattr(result, "returncode", 0)
+      stdout = getattr(result, "stdout", "")
     if returncode and not is_ci_gate_exit(returncode, stdout or ""):
       raise RuntimeError(f"cm find failed with exit code {returncode}")
     return result

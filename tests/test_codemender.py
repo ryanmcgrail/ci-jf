@@ -142,6 +142,35 @@ class CodeMenderTests(unittest.TestCase):
       with self.assertRaises(RuntimeError):
         cm.find()
 
+  def test_find_runs_gcloud_adc_login_and_retries_on_reauth_error(self):
+    cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
+    proc_reauth = types.SimpleNamespace(
+        returncode=1,
+        stdout="",
+        stderr='Error: retrieving access token: oauth2: "invalid_grant" "reauth related error (invalid_rapt)"',
+    )
+    proc_gcloud = types.SimpleNamespace(returncode=0, stdout="Credentials saved", stderr="")
+    proc_success = types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+    with patch(
+        "codemender.run_command",
+        side_effect=[proc_reauth, proc_gcloud, proc_success],
+    ) as mock_run:
+      res = cm.find(scan_mode=codemender.ScanMode.QUICK)
+    self.assertEqual(res, proc_success)
+    self.assertEqual(mock_run.call_count, 3)
+    self.assertEqual(
+        mock_run.call_args_list[0].args[0],
+        ["cm", "find", "/tmp/test_repo", "--quick"],
+    )
+    self.assertEqual(
+        mock_run.call_args_list[1].args[0],
+        ["gcloud", "auth", "application-default", "login"],
+    )
+    self.assertEqual(
+        mock_run.call_args_list[2].args[0],
+        ["cm", "find", "/tmp/test_repo", "--quick"],
+    )
+
   def test_list_findings(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
     raw = json.dumps([{"finding_id": "cm-99"}])
