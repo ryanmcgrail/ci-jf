@@ -97,6 +97,9 @@ def run_command(
     if print_to_stdout:
       sys.stdout.write(line)
       sys.stdout.flush()
+      if not sys.stdout.isatty():
+        sys.stderr.write(line)
+        sys.stderr.flush()
   process.stdout.close()
 
   return_code = process.wait()

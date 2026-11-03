@@ -1,8 +1,10 @@
 """Unit tests for codemender.py."""
 
+import io
 import json
 import os
 import sqlite3
+import sys
 import tempfile
 import types
 import unittest
@@ -214,6 +216,20 @@ class CodeMenderTests(unittest.TestCase):
           for r in cm.db.execute("SELECT name FROM sqlite_master WHERE type='table'")
       }
       self.assertIn("findings", tables)
+
+  def test_run_command_prints_to_console_when_stdout_redirected(self):
+    fake_stdout = io.StringIO()
+    fake_stderr = io.StringIO()
+    with patch.object(sys, "stdout", fake_stdout), patch.object(
+        sys, "stderr", fake_stderr
+    ):
+      res = codemender.run_command(
+          [sys.executable, "-c", 'print("hello from cm find")'],
+          print_to_stdout=True,
+      )
+    self.assertEqual(res.stdout, "hello from cm find\n")
+    self.assertEqual(fake_stdout.getvalue(), "hello from cm find\n")
+    self.assertEqual(fake_stderr.getvalue(), "hello from cm find\n")
 
 
 if __name__ == "__main__":
