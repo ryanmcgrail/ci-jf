@@ -442,6 +442,7 @@ def cmd_find(argv: List[str]) -> int:
     # Pool = what CodeMender already knows on this machine (previous sessions in its DB),
     # plus the repo's known list, plus an explicit export / issue list.
     pool: List[Finding] = []
+    pre_existing_dups: List[Finding] = []
     seen: set = set()
     sources = [("cm database (previous sessions)", before)]
     known: List[Finding] = []
@@ -455,9 +456,17 @@ def cmd_find(argv: List[str]) -> int:
             key = str(f.finding_id or f.gh_issue_number or id(f))
             if key in seen:
                 continue
-            seen.add(key); pool.append(f)
+            seen.add(key)
+            if items is before and status_of(f) in ACTIVE:
+                m = next((p for p in pool if status_of(p) in ACTIVE and is_duplicate(p, f, ctx.repo)), None)
+                if m is not None:
+                    marker = make_github_marker(f, ctx.repo)
+                    pre_existing_dups.append(Finding(f.to_dict(), github_marker=marker, duplicate_of=dup_id(m)))
+                    continue
+            pool.append(f)
     print("cm-ci: dedup against " + ", ".join(f"{name} ({len(items)})" for name, items in sources))
     res = dedup(pool, this_run, ctx.repo)
+    res["suppressed_duplicates"] = pre_existing_dups + res["suppressed_duplicates"]
     print(summary_line(len(pool), len(this_run), res))
     new_path = os.path.join(out_dir, "new_findings.json")
     write_json(new_path, res)

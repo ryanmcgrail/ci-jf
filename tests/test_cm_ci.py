@@ -622,6 +622,190 @@ class TestCmCi(unittest.TestCase):
                 self.assertEqual(
                     [f["finding_id"] for f in new_findings["suppressed_duplicates"]], ["cm-dup"]
                 )
+                self.assertEqual(
+                    [f.finding_id for f in mock_cm.list_findings()],
+                    ["cm-old", "cm-new"],
+                )
+
+    @parameterized(
+        [
+            (
+                "both already in database (CWE-125 then CWE-129)",
+                [
+                    Finding(
+                        finding_id="cm-1",
+                        file_path="src/buf.c",
+                        vuln_type="CWE-125: Out-of-bounds Read",
+                        start_line=10,
+                        end_line=20,
+                        status="OPEN",
+                    ),
+                    Finding(
+                        finding_id="cm-2",
+                        file_path="src/buf.c",
+                        vuln_type="CWE-129: Improper Validation of Array Index",
+                        start_line=12,
+                        end_line=18,
+                        status="OPEN",
+                    ),
+                ],
+                [],
+                [],
+            ),
+            (
+                "both already in database (CWE-129 then CWE-125)",
+                [
+                    Finding(
+                        finding_id="cm-1",
+                        file_path="src/buf.c",
+                        vuln_type="CWE-129: Improper Validation of Array Index",
+                        start_line=12,
+                        end_line=18,
+                        status="OPEN",
+                    ),
+                    Finding(
+                        finding_id="cm-2",
+                        file_path="src/buf.c",
+                        vuln_type="CWE-125: Out-of-bounds Read",
+                        start_line=10,
+                        end_line=20,
+                        status="OPEN",
+                    ),
+                ],
+                [],
+                [],
+            ),
+            (
+                "CWE-125 in database and CWE-129 newly found",
+                [
+                    Finding(
+                        finding_id="cm-1",
+                        file_path="src/buf.c",
+                        vuln_type="CWE-125: Out-of-bounds Read",
+                        start_line=10,
+                        end_line=20,
+                        status="OPEN",
+                    )
+                ],
+                [
+                    Finding(
+                        finding_id="cm-2",
+                        file_path="src/buf.c",
+                        vuln_type="CWE-129: Improper Validation of Array Index",
+                        start_line=12,
+                        end_line=18,
+                        status="OPEN",
+                    )
+                ],
+                [],
+            ),
+            (
+                "CWE-129 in database and CWE-125 newly found",
+                [
+                    Finding(
+                        finding_id="cm-1",
+                        file_path="src/buf.c",
+                        vuln_type="CWE-129: Improper Validation of Array Index",
+                        start_line=12,
+                        end_line=18,
+                        status="OPEN",
+                    )
+                ],
+                [
+                    Finding(
+                        finding_id="cm-2",
+                        file_path="src/buf.c",
+                        vuln_type="CWE-125: Out-of-bounds Read",
+                        start_line=10,
+                        end_line=20,
+                        status="OPEN",
+                    )
+                ],
+                [],
+            ),
+            (
+                "both newly found together (CWE-125 then CWE-129)",
+                [],
+                [
+                    Finding(
+                        finding_id="cm-1",
+                        file_path="src/buf.c",
+                        vuln_type="CWE-125: Out-of-bounds Read",
+                        start_line=10,
+                        end_line=20,
+                        status="OPEN",
+                    ),
+                    Finding(
+                        finding_id="cm-2",
+                        file_path="src/buf.c",
+                        vuln_type="CWE-129: Improper Validation of Array Index",
+                        start_line=12,
+                        end_line=18,
+                        status="OPEN",
+                    ),
+                ],
+                ["cm-1"],
+            ),
+            (
+                "both newly found together (CWE-129 then CWE-125)",
+                [],
+                [
+                    Finding(
+                        finding_id="cm-1",
+                        file_path="src/buf.c",
+                        vuln_type="CWE-129: Improper Validation of Array Index",
+                        start_line=12,
+                        end_line=18,
+                        status="OPEN",
+                    ),
+                    Finding(
+                        finding_id="cm-2",
+                        file_path="src/buf.c",
+                        vuln_type="CWE-125: Out-of-bounds Read",
+                        start_line=10,
+                        end_line=20,
+                        status="OPEN",
+                    ),
+                ],
+                ["cm-1"],
+            ),
+        ]
+    )
+    def test_cmd_find_always_deduplicates_cwe_125_and_cwe_129(
+        self,
+        _desc: str,
+        initial_findings: list[Finding],
+        scheduled_findings: list[Finding],
+        expected_new_ids: list[str],
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_dir = os.path.join(tmpdir, ".codemender")
+            mock_cm = MockCodeMender(
+                repo_dir=os.path.realpath(tmpdir),
+                initial_findings=initial_findings,
+            )
+            mock_cm.schedule_findings(scheduled_findings)
+
+            with (
+                patch.object(cm_ci, "need"),
+                patch.object(cm_ci, "check_config", return_value=True),
+                patch.object(cm_ci, "CodeMender", return_value=mock_cm),
+                patch("sys.stdout", new_callable=io.StringIO),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                rc = cm_ci.cmd_find(["--repo", tmpdir, "--out-dir", out_dir])
+
+            self.assertEqual(rc, 0)
+            with open(os.path.join(out_dir, "new_findings.json"), encoding="utf-8") as fh:
+                new_findings = json.load(fh)
+            self.assertEqual(
+                [f["finding_id"] for f in new_findings["findings"]], expected_new_ids
+            )
+            self.assertEqual(
+                [f["finding_id"] for f in new_findings["suppressed_duplicates"]], ["cm-2"]
+            )
+            self.assertEqual(new_findings["suppressed_duplicates"][0]["duplicate_of"], "cm-1")
+            self.assertEqual([f.finding_id for f in mock_cm.list_findings()], ["cm-1"])
 
     # ─── cmd_fix ─────────────────────────────────────────────────────────────
 
