@@ -212,18 +212,12 @@ class TestCWEDatabase(unittest.TestCase):
             ("CWE-125", "CWE-129", 129),
             ("cwe-125", "cwe-129", 129),
             ("CWE-125: Out-of-bounds Read", "CWE-129: Improper Validation of Array Index", 129),
-            ({"vuln_id": "CWE-125"}, {"vuln_id": "CWE-129"}, 129),
-            ({"VulnID": "CWE-125"}, {"VulnID": "CWE-129"}, 129),
-            ({"vuln_type": "CWE-125"}, {"vuln_type": "CWE-129"}, 129),
-            ({"VulnType": "CWE-125"}, {"VulnType": "CWE-129"}, 129),
-            ({"title": "Issue (CWE-125)"}, {"Title": "Issue (CWE-129)"}, 129),
-            ({"description": "Details: CWE-125"}, 129, 129),
             (Finding(vuln_id="CWE-125"), Finding(vuln_id="CWE-129"), 129),
             (Finding(vuln_type="CWE-125"), Finding(vuln_type="CWE-129"), 129),
             (Finding(title="Issue (CWE-125)"), Finding(title="Issue (CWE-129)"), 129),
+            (Finding(analysis="Details: CWE-125"), 129, 129),
             (True, 129, None),
             ("UNKNOWN", 129, None),
-            ({}, 129, None),
             (Finding(), 129, None),
         ]
     )
@@ -233,7 +227,7 @@ class TestCWEDatabase(unittest.TestCase):
         cwe_b: Any,
         expected_parent: int | None,
     ) -> None:
-        """Verify find_parent supports int, numeric str, CWE-prefixed str, and finding dicts."""
+        """Verify find_parent supports int, numeric str, CWE-prefixed str, and Finding instances."""
         self.assertEqual(self.db.find_parent(cwe_a, cwe_b), expected_parent)
 
     def test_all_cwe_pairs_do_not_lock_up_or_error(self) -> None:

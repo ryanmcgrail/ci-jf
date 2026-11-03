@@ -129,7 +129,7 @@ def unpack_findings(data: Any) -> List[Finding]:
             continue
         if not isinstance(it, dict):
             continue
-        if "body" in it and "file_path" not in it and "FilePath" not in it:
+        if "body" in it and "file_path" not in it:
             m = GITHUB_MARKER_RE.search(it.get("body") or "")
             if m:
                 parsed = json.loads(m.group(1))
@@ -179,7 +179,7 @@ def dedup(existing: List[Finding], current: List[Finding], repo_root: str) -> Di
     return res
 
 
-def summary_line(existing_n: int, current_n: int, res: Dict[str, list]) -> str:
+def summary_line(existing_n: int, current_n: int, res: Dict[str, List[Finding]]) -> str:
     return (f"Existing: {existing_n} | Current: {current_n} | Duplicates suppressed: {len(res['suppressed_duplicates'])}"
             f" | New to file: {len(res['findings'])} | Reopened: {len(res['reopened'])}")
 
