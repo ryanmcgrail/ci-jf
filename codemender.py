@@ -19,9 +19,9 @@ _CI_GATE_TRUNCATED = re.compile(r"CI Gate Failure:\s*Impact expansion truncated"
 
 
 class ScanMode(str, enum.Enum):
-  SHALLOW = "shallow"
   DEEP = "deep"
   DIFF = "diff"
+  QUICK = "quick"
 
 
 def is_ci_gate_exit(returncode: int, find_stdout: str) -> bool:
@@ -126,11 +126,13 @@ class CodeMender:
   def find(
       self,
       target_or_id: Optional[str] = None,
-      scan_mode: ScanMode = ScanMode.SHALLOW,
+      scan_mode: ScanMode = ScanMode.DEEP,
   ) -> Any:
     """Runs the CodeMender find command on the target repository directory."""
     target = target_or_id if target_or_id is not None else self.repo_dir
     extra_flags: List[str] = []
+    if scan_mode == ScanMode.QUICK:
+      extra_flags.append("--quick")
     if scan_mode == ScanMode.DEEP:
       extra_flags.append("--deep")
     elif scan_mode == ScanMode.DIFF:
