@@ -11,6 +11,7 @@ from typing import Any
 import unittest
 
 from cwe_database import CWEDatabase, load_cwe_database
+from finding import Finding
 
 
 def parameterized(cases: Iterable[tuple[Any, ...]]) -> Callable[[Callable[..., None]], Callable[..., None]]:
@@ -217,9 +218,13 @@ class TestCWEDatabase(unittest.TestCase):
             ({"VulnType": "CWE-125"}, {"VulnType": "CWE-129"}, 129),
             ({"title": "Issue (CWE-125)"}, {"Title": "Issue (CWE-129)"}, 129),
             ({"description": "Details: CWE-125"}, 129, 129),
+            (Finding(vuln_id="CWE-125"), Finding(vuln_id="CWE-129"), 129),
+            (Finding(vuln_type="CWE-125"), Finding(vuln_type="CWE-129"), 129),
+            (Finding(title="Issue (CWE-125)"), Finding(title="Issue (CWE-129)"), 129),
             (True, 129, None),
             ("UNKNOWN", 129, None),
             ({}, 129, None),
+            (Finding(), 129, None),
         ]
     )
     def test_supported_id_formats(

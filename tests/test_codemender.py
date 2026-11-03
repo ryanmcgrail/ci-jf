@@ -86,7 +86,7 @@ class CodeMenderTests(unittest.TestCase):
       mock_run.assert_called_once()
       args, kwargs = mock_run.call_args
       cmd = args[0]
-      self.assertEqual(cmd, ["cm", "find", "/tmp/test_repo"])
+      self.assertEqual(cmd, ["cm", "find", "/tmp/test_repo", "--deep"])
       self.assertEqual(kwargs.get("cwd"), "/tmp/test_repo")
       self.assertEqual(res, proc)
 
@@ -97,7 +97,7 @@ class CodeMenderTests(unittest.TestCase):
       cm.find(target_or_id="/tmp/other_target")
       args, _ = mock_run.call_args
       cmd = args[0]
-      self.assertEqual(cmd[-1], "/tmp/other_target")
+      self.assertEqual(cmd[2], "/tmp/other_target")
 
   def test_find_scan_modes(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")

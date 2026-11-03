@@ -45,7 +45,9 @@ import tempfile
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from codemender import CodeMender, ScanMode
 from cwe_database import load_cwe_database, parse_cwe_id
+from finding import Finding
 
 # ─── matching (port of is_duplicate.py) ──────────────────────────────────────
 
@@ -88,40 +90,43 @@ def _int(v: Any, default: int = 0) -> int:
         return default
 
 
-def is_duplicate(a: dict, b: dict, repo_root: str = "") -> bool:
-    fa = norm_rel_path(a.get("file_path") or a.get("FilePath") or "", repo_root)
-    fb = norm_rel_path(b.get("file_path") or b.get("FilePath") or "", repo_root)
+def is_duplicate(a: Finding, b: Finding, repo_root: str = "") -> bool:
+    fa = norm_rel_path(a.file_path or "", repo_root)
+    fb = norm_rel_path(b.file_path or "", repo_root)
     if not fa or fa != fb or CWE_DB.find_parent(a, b) is None:
         return False
-    sla = _int(a.get("start_line") or a.get("StartLine")); ela = max(_int(a.get("end_line") or a.get("EndLine"), sla), sla)
-    slb = _int(b.get("start_line") or b.get("StartLine")); elb = max(_int(b.get("end_line") or b.get("EndLine"), slb), slb)
+    sla = _int(a.start_line); ela = max(_int(a.end_line, sla), sla)
+    slb = _int(b.start_line); elb = max(_int(b.end_line, slb), slb)
     if sla > 0 and slb > 0 and sla <= elb and slb <= ela:
         return True
-    la = set(a.get("raw_lines") or code_lines(a.get("snippet") or a.get("Snippet") or ""))
-    lb = set(b.get("raw_lines") or code_lines(b.get("snippet") or b.get("Snippet") or ""))
+    la = set(a.raw_lines or code_lines(a.snippet or ""))
+    lb = set(b.raw_lines or code_lines(b.snippet or ""))
     return bool(la and lb and (la <= lb or lb <= la))
 
 
-def make_github_marker(f: dict, repo_root: str = "") -> str:
+def make_github_marker(f: Finding, repo_root: str = "") -> str:
     cwe_id = parse_cwe_id(f)
-    vuln_type = f"CWE-{cwe_id}" if cwe_id is not None else str(f.get("vuln_type") or f.get("VulnType") or f.get("vuln_id") or "UNKNOWN")
+    vuln_type = f"CWE-{cwe_id}" if cwe_id is not None else str(f.vuln_type or f.vuln_id or "UNKNOWN")
     payload = {
-        "file_path": norm_rel_path(f.get("file_path") or f.get("FilePath") or "", repo_root),
+        "file_path": norm_rel_path(f.file_path or "", repo_root),
         "vuln_type": vuln_type,
-        "start_line": _int(f.get("start_line") or f.get("StartLine")),
-        "end_line": _int(f.get("end_line") or f.get("EndLine")),
-        "raw_lines": sorted(code_lines(f.get("snippet") or f.get("Snippet") or "")),
+        "start_line": _int(f.start_line),
+        "end_line": _int(f.end_line),
+        "raw_lines": sorted(code_lines(f.snippet or "")),
     }
     return f"<!-- cm-dedup:v1:{json.dumps(payload, separators=(',', ':'))} -->"
 
 
-def unpack_findings(data: Any) -> List[dict]:
+def unpack_findings(data: Any) -> List[Finding]:
     """cm report JSON (array or {findings: []}) or `gh issue list --json` output → findings."""
     if data is None:
         return []
     items = data if isinstance(data, list) else next((data.get(k) for k in ("findings", "results", "items") if isinstance(data.get(k), list)), [])
-    out: List[dict] = []
+    out: List[Finding] = []
     for it in items or []:
+        if isinstance(it, Finding):
+            out.append(it)
+            continue
         if not isinstance(it, dict):
             continue
         if "body" in it and "file_path" not in it and "FilePath" not in it:
@@ -130,44 +135,47 @@ def unpack_findings(data: Any) -> List[dict]:
                 parsed = json.loads(m.group(1))
                 parsed["gh_issue_number"] = it.get("number")
                 parsed["state"] = it.get("state")
-                out.append(parsed)
+                out.append(Finding.from_dict(parsed))
         else:
-            out.append(it)
+            out.append(Finding.from_dict(it))
     return out
 
 
-def load_findings(path: str) -> List[dict]:
+def load_findings(path: str) -> List[Finding]:
     with open(path, encoding="utf-8") as fh:
         return unpack_findings(json.load(fh))
 
 
-def status_of(f: dict) -> str:
-    return str(f.get("status") or f.get("state") or "OPEN").upper()
+def status_of(f: Finding) -> str:
+    return str(f.status or "OPEN").upper()
 
 
-def dup_id(m: dict) -> Any:
-    return m.get("finding_id") or m.get("FindingID") or m.get("gh_issue_number") or m.get("file_path") or m.get("FilePath")
+def dup_id(m: Finding) -> Any:
+    return m.finding_id or m.gh_issue_number or m.file_path
 
 
-def dedup(existing: List[dict], current: List[dict], repo_root: str) -> Dict[str, list]:
+def dedup(existing: List[Finding], current: List[Finding], repo_root: str) -> Dict[str, List[Finding]]:
     """Partition `current` against `existing`. A match on an active entry → suppressed
     duplicate; a match only on a FIXED/CLOSED entry → reopened (regression, not noise).
     Preference among several matches: ACTIVE > FIXED/CLOSED > DISMISSED, so a dismissed
     twin never hides a regression of a fixed finding."""
     pool = list(existing)
-    res: Dict[str, list] = {"findings": [], "reopened": [], "suppressed_duplicates": []}
+    res: Dict[str, List[Finding]] = {"findings": [], "reopened": [], "suppressed_duplicates": []}
     for cur in current:
         matches = [p for p in pool if is_duplicate(p, cur, repo_root)]
         m = (next((p for p in matches if status_of(p) in ACTIVE), None)
              or next((p for p in matches if status_of(p) in RESOLVED), None)
              or (matches[0] if matches else None))
-        e = dict(cur, github_marker=make_github_marker(cur, repo_root))
+        marker = make_github_marker(cur, repo_root)
         if m is None:
+            e = Finding(cur.to_dict(), github_marker=marker)
             res["findings"].append(e); pool.append(e)
         elif status_of(m) in RESOLVED:
-            e["duplicate_of"] = dup_id(m); res["reopened"].append(e); pool.append(e)
+            e = Finding(cur.to_dict(), github_marker=marker, duplicate_of=dup_id(m))
+            res["reopened"].append(e); pool.append(e)
         else:
-            e["duplicate_of"] = dup_id(m); res["suppressed_duplicates"].append(e)
+            e = Finding(cur.to_dict(), github_marker=marker, duplicate_of=dup_id(m))
+            res["suppressed_duplicates"].append(e)
     return res
 
 
@@ -208,14 +216,12 @@ class Ctx:
         self.cm_dir = os.environ.get("CM_HOME") or os.path.join(os.path.expanduser("~"), ".codemender")
         self.cfg = os.path.join(self.cm_dir, "config.yaml")
         self.db = os.path.join(self.cm_dir, "state.db")
+        self.cm = CodeMender(repo_dir=self.repo)
 
-    def report(self) -> List[dict]:
-        r = sh("cm", "report", "--format", "json")
-        if r.returncode != 0 or not r.stdout.strip():
-            return []
+    def report(self) -> List[Finding]:
         try:
-            return unpack_findings(json.loads(r.stdout))
-        except json.JSONDecodeError:
+            return self.cm.list_findings()
+        except (RuntimeError, json.JSONDecodeError):
             return []
 
 
@@ -223,7 +229,12 @@ def write_json(path: str, payload: Any) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(payload, fh, indent=2)
+        json.dump(
+            payload,
+            fh,
+            indent=2,
+            default=lambda o: o.to_dict() if isinstance(o, Finding) else o,
+        )
         fh.write("\n")
     os.replace(tmp, path)
 
@@ -346,7 +357,7 @@ def cmd_check_config(argv: List[str]) -> int:
 CM_TWIN_REASONS = ("Duplicate un-fingerprinted streamed entry", "Duplicate finding entry")  # cm's own in-run dedup markers
 
 
-def remove_duplicates_in_db(ctx: Ctx, dups: List[dict]) -> Optional[Tuple[int, int]]:
+def remove_duplicates_in_db(ctx: Ctx, dups: List[Finding]) -> Optional[Tuple[int, int]]:
     """Drop duplicate rows from CodeMender's state.db so `cm report` (which lists every
     status) shows each bug once: the cross-run duplicates found here plus the DISMISSED
     twins cm itself writes in deep mode. Rows referenced by a patch/artifact are never
@@ -365,14 +376,14 @@ def remove_duplicates_in_db(ctx: Ctx, dups: List[dict]) -> Optional[Tuple[int, i
         removed = marked = 0
         now = now_rfc3339()
         for d in dups:
-            fid = d.get("finding_id")
+            fid = d.finding_id
             cur = con.execute(f"DELETE FROM findings WHERE finding_id=? AND NOT ({refs})", (fid,))
             if cur.rowcount:
                 removed += cur.rowcount
                 continue
             sets, args = ["status='DISMISSED'"], []
             if "dismiss_reason" in cols:
-                sets.append("dismiss_reason=?"); args.append(f"cm-ci: duplicate of {d.get('duplicate_of')}")
+                sets.append("dismiss_reason=?"); args.append(f"cm-ci: duplicate of {d.duplicate_of}")
             if "updated_at" in cols:
                 sets.append("updated_at=?"); args.append(now)
             marked += con.execute(f"UPDATE findings SET {', '.join(sets)} WHERE finding_id=? AND status<>'DISMISSED'",
@@ -402,15 +413,28 @@ def cmd_find(argv: List[str]) -> int:
     os.makedirs(out_dir, exist_ok=True)
 
     before = ctx.report()
-    before_ids = {str(f.get("finding_id") or "") for f in before}
-    print(f"cm-ci: cm find {' '.join(cm_args)}", flush=True)
-    rc = subprocess.call(["cm", "find", *cm_args])
-    if rc != 0:
-        print(f"cm-ci: cm find exited {rc}", file=sys.stderr)
-        return rc
+    before_ids = {str(f.finding_id or "") for f in before}
+    scan_mode = ScanMode.DEEP
+    target: Optional[str] = None
+    for arg in cm_args:
+        if arg == "--quick":
+            scan_mode = ScanMode.QUICK
+        elif arg == "--diff":
+            scan_mode = ScanMode.DIFF
+        elif arg == "--deep":
+            scan_mode = ScanMode.DEEP
+        elif not arg.startswith("-") and target is None:
+            target = arg
+    print(f"cm-ci: cm find {' '.join(cm_args)}".rstrip(), flush=True)
+    try:
+        ctx.cm.find(target_or_id=target, scan_mode=scan_mode)
+    except RuntimeError as e:
+        print(f"cm-ci: {e}", file=sys.stderr)
+        m = re.search(r"exit code (\d+)", str(e))
+        return int(m.group(1)) if m else 1
 
     after = ctx.report()
-    this_run = [f for f in after if str(f.get("finding_id") or "") not in before_ids and status_of(f) in ACTIVE]
+    this_run = [f for f in after if str(f.finding_id or "") not in before_ids and status_of(f) in ACTIVE]
     findings_path = os.path.join(out_dir, "findings.json")
     write_json(findings_path, this_run)
     print(f"cm-ci: this run → {findings_path} ({len(this_run)} active finding(s))")
@@ -419,10 +443,10 @@ def cmd_find(argv: List[str]) -> int:
 
     # Pool = what CodeMender already knows on this machine (previous sessions in its DB),
     # plus the repo's known list, plus an explicit export / issue list.
-    pool: List[dict] = []
+    pool: List[Finding] = []
     seen: set = set()
     sources = [("cm database (previous sessions)", before)]
-    known: List[dict] = []
+    known: List[Finding] = []
     if os.path.exists(known_path):
         known = load_findings(known_path)
         sources.append((known_path, known))
@@ -430,7 +454,7 @@ def cmd_find(argv: List[str]) -> int:
         sources.append((existing_path, load_findings(existing_path)))
     for name, items in sources:
         for f in items:
-            key = str(f.get("finding_id") or f.get("gh_issue_number") or id(f))
+            key = str(f.finding_id or f.gh_issue_number or id(f))
             if key in seen:
                 continue
             seen.add(key); pool.append(f)
@@ -450,20 +474,20 @@ def cmd_find(argv: List[str]) -> int:
         print(f"cm-ci: note — {ctx.db} not found, duplicates only recorded in {new_path}")
 
     if not existing_path and not opts["--no-update"]:
-        known_ids = {str(f.get("finding_id")) for f in known}
-        added = [f for f in res["findings"] + res["reopened"] if str(f.get("finding_id")) not in known_ids]
+        known_ids = {str(f.finding_id) for f in known}
+        added = [f for f in res["findings"] + res["reopened"] if str(f.finding_id) not in known_ids]
         write_json(known_path, known + added)
         print(f"cm-ci: updated {known_path} ({len(known) + len(added)} entries) — commit it so the next run knows these")
 
     for f in res["reopened"]:
-        print(f"  ♻ REOPENED {f.get('severity', '')} {f.get('file_path')}:{f.get('start_line', '')} {f.get('title', '')} (was {f.get('duplicate_of')})")
+        print(f"  ♻ REOPENED {f.severity or ''} {f.file_path}:{f.start_line or ''} {f.title or ''} (was {f.duplicate_of})")
     for f in res["findings"]:
-        print(f"  🆕 NEW      {f.get('severity', '')} {f.get('file_path')}:{f.get('start_line', '')} {f.get('title', '')}")
+        print(f"  🆕 NEW      {f.severity or ''} {f.file_path}:{f.start_line or ''} {f.title or ''}")
 
     fail_on = opts.get("--fail-on")
     if fail_on:
         sevs = {s.strip().upper() for s in fail_on.split(",") if s.strip()}
-        hits = [f for f in res["findings"] + res["reopened"] if str(f.get("severity", "")).upper() in sevs]
+        hits = [f for f in res["findings"] + res["reopened"] if str(f.severity or "").upper() in sevs]
         if hits:
             print(f"cm-ci: {len(hits)} new/reopened finding(s) at severity {fail_on} — failing", file=sys.stderr)
             return 4
@@ -480,29 +504,29 @@ def rel_path(p: str, root: str) -> str:
     return p[len(root) + 1:] if p.startswith(root + "/") else p
 
 
-def vclass(f: dict) -> str:
-    s = f"{f.get('vuln_id') or ''} {f.get('vuln_type') or ''}"
+def vclass(f: Finding) -> str:
+    s = f"{f.vuln_id or ''} {f.vuln_type or ''}"
     m = re.search(r"cwe-?\s*(\d+)", s, re.I)
-    return f"cwe-{m.group(1)}" if m else re.sub(r"\s+", " ", str(f.get("vuln_type") or "")).strip().lower()
+    return f"cwe-{m.group(1)}" if m else re.sub(r"\s+", " ", str(f.vuln_type or "")).strip().lower()
 
 
-def select_findings(findings: List[dict], root: str, max_n: int) -> Tuple[List[dict], int]:
+def select_findings(findings: List[Finding], root: str, max_n: int) -> Tuple[List[Finding], int]:
     rows = []
     for f in findings:
         if status_of(f) not in ACTIVE:
             continue
-        rel = rel_path(f.get("file_path", ""), root)
+        rel = rel_path(f.file_path or "", root)
         if any(s in rel + "/" for s in SKIP_DIRS):
             continue
-        rows.append((SEV_RANK.get(str(f.get("severity", "")).upper(), 9), rel, f))
+        rows.append((SEV_RANK.get(str(f.severity or "").upper(), 9), rel, f))
     rows.sort(key=lambda r: r[0])
     seen, dups, out = set(), 0, []
     for _, rel, f in rows:
-        key = (rel, vclass(f), re.sub(r"\s+", " ", str(f.get("snippet") or "")).strip())
+        key = (rel, vclass(f), re.sub(r"\s+", " ", str(f.snippet or "")).strip())
         if key in seen:
             dups += 1
             continue
-        seen.add(key); out.append(dict(f, _rel=rel))
+        seen.add(key); out.append(Finding(f.to_dict(), _rel=rel))
     return out[:max_n], dups
 
 
@@ -562,11 +586,12 @@ def cmd_fix(argv: List[str]) -> int:
 
     if not ids:
         sel, dups = select_findings(ctx.report(), ctx.repo, max_n)
-        ids = [str(f["finding_id"]) for f in sel]
+        ids = [str(f.finding_id) for f in sel]
         note = f"; {dups} duplicate(s) collapsed (same file/class/snippet)" if dups else ""
         print(f"cm-ci: selected {len(ids)} finding(s) (cap {max_n}){note}:")
         for f in sel:
-            print(f"  {f['finding_id']}  {f.get('severity', '')}  {f['_rel']}  {f.get('title', '')}")
+            rel = f._get("_rel") or rel_path(f.file_path or "", ctx.repo)
+            print(f"  {f.finding_id}  {f.severity or ''}  {rel}  {f.title or ''}")
     else:
         print(f"cm-ci: fixing {len(ids)} finding(s):")
         for i in ids:
@@ -609,13 +634,15 @@ def cmd_fix(argv: List[str]) -> int:
             print("cm-ci: untracked files left by the agent (review; --include-new-files to commit):\n  " + "\n  ".join(untracked.splitlines()))
 
     if os.path.exists(known_path):
-        by_id = {str(f.get("finding_id")): f for f in ctx.report()}
+        by_id = {str(f.finding_id): f for f in ctx.report()}
         known = load_findings(known_path)
+        updated_known = []
         for f in known:
-            cur = by_id.get(str(f.get("finding_id")))
+            cur = by_id.get(str(f.finding_id))
             if cur is not None:
-                f["status"] = cur.get("status")
-        write_json(known_path, known)
+                f = Finding(f.to_dict(), status=cur.status)
+            updated_known.append(f)
+        write_json(known_path, updated_known)
         sh("git", "add", known_path)
         if sh("git", "diff", "--cached", "--quiet").returncode != 0:
             sh("git", "commit", "-q", "-m", f"codemender: update known_findings ({fixed} fix(es))")

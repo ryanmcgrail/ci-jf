@@ -75,7 +75,7 @@ class Finding:
     return _as_str(self._get("analysis"))
 
   @property
-  def confidence(self) -> Optional[str]:
+  def confidence(self) -> Optional[int]:
     return _as_int(self._get("confidence"))
 
   @property
@@ -86,6 +86,10 @@ class Finding:
   @property
   def dismiss_reason(self) -> Optional[str]:
     return _as_str(self._get("dismiss_reason"))
+
+  @property
+  def duplicate_of(self) -> Optional[Any]:
+    return self._get("duplicate_of")
 
   @property
   def end_line(self) -> Optional[int]:
@@ -104,12 +108,24 @@ class Finding:
     return _as_str(self._get("fingerprint"))
 
   @property
+  def gh_issue_number(self) -> Optional[Any]:
+    return self._get("gh_issue_number")
+
+  @property
+  def github_marker(self) -> Optional[str]:
+    return _as_str(self._get("github_marker"))
+
+  @property
   def mute_reason(self) -> Optional[str]:
     return _as_str(self._get("mute_reason"))
 
   @property
   def muted(self) -> Optional[bool]:
     return _as_bool(self._get("muted"))
+
+  @property
+  def raw_lines(self) -> Optional[Any]:
+    return self._get("raw_lines")
 
   @property
   def repository(self) -> Optional[str]:
@@ -142,7 +158,7 @@ class Finding:
 
   @property
   def status(self) -> Optional[str]:
-    val = _as_str(self._get("status"))
+    val = _as_str(self._get("status", "state"))
     return val.upper() if val else None
 
   @property
@@ -177,6 +193,10 @@ class Finding:
     return cls(raw)
 
   # --- Serialization & Export Formats ---
+
+  def to_dict(self) -> Dict[str, Any]:
+    """Returns a dictionary representation of the finding."""
+    return dict(self._raw)
 
   def to_cm_import_record(self) -> Dict[str, Any]:
     """Converts finding to simple-JSON record accepted by CodeMender import."""

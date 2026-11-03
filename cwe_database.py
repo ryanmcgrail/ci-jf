@@ -13,6 +13,8 @@ import re
 from typing import Any
 import xml.etree.ElementTree as ET
 
+from finding import Finding
+
 DEFAULT_XML_PATH = Path(__file__).resolve().parent / "cwec_v4.20.xml"
 
 # Relationships where the declaring Weakness (A) is the parent of the target CWE_ID (B).
@@ -31,10 +33,23 @@ def _extract_namespace(tag: str) -> str:
     return ""
 
 
-def parse_cwe_id(value: int | str | Mapping[str, Any]) -> int | None:
-    """Normalize an int, string (e.g. 79, '79', 'CWE-79'), or finding dict into an integer CWE ID."""
+def parse_cwe_id(value: int | str | Mapping[str, Any] | Finding) -> int | None:
+    """Normalize an int, string (e.g. 79, '79', 'CWE-79'), finding dict, or Finding into an integer CWE ID."""
     if isinstance(value, int) and not isinstance(value, bool):
         return value
+    if isinstance(value, Finding):
+        combined = " ".join(
+            str(v or "")
+            for v in (
+                value.vuln_id,
+                value.vuln_type,
+                value.title,
+                value.analysis,
+                value._get("description"),
+            )
+        )
+        match = re.search(r"CWE-(\d+)", combined, re.IGNORECASE)
+        return int(match.group(1)) if match else None
     if isinstance(value, Mapping):
         combined = " ".join(
             str(value.get(k) or "")
@@ -212,7 +227,9 @@ class CWEDatabase:
         return distances.get(child_id)
 
     def find_parent(
-        self, cwe_a: int | str | Mapping[str, Any], cwe_b: int | str | Mapping[str, Any]
+        self,
+        cwe_a: int | str | Mapping[str, Any] | Finding,
+        cwe_b: int | str | Mapping[str, Any] | Finding,
     ) -> int | None:
         """Determine if cwe_a and cwe_b are related and return whichever is the parent.
 
