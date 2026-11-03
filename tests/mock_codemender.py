@@ -36,6 +36,13 @@ class MockCodeMender:
         """Schedule an exception to be raised the next time find() is called."""
         self._scheduled_error = error
 
+    def mark_status(self, finding_id: str, status: str) -> None:
+        """Update the status of a tracked finding by finding_id."""
+        self._findings = [
+            Finding(f.to_dict(), status=status) if f.finding_id == finding_id else f
+            for f in self._findings
+        ]
+
     def find(
         self,
         target_or_id: str | None = None,

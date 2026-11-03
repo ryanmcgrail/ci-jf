@@ -418,7 +418,9 @@ class TestCmCi(unittest.TestCase):
 
     def test_remove_duplicates_in_db(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            ctx = cm_ci.Ctx(tmpdir)
+            mock_cm = MockCodeMender(repo_dir=os.path.realpath(tmpdir))
+            with patch.object(cm_ci, "CodeMender", return_value=mock_cm):
+                ctx = cm_ci.Ctx(tmpdir)
             ctx.db = os.path.join(tmpdir, "state.db")
 
             self.assertIsNone(cm_ci.remove_duplicates_in_db(ctx, []))
@@ -641,8 +643,10 @@ class TestCmCi(unittest.TestCase):
     )
     def test_cmd_fix_requires_config(self, cfg_state: dict[str, bool]) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
+            mock_cm = MockCodeMender(repo_dir=os.path.realpath(tmpdir))
             with (
                 patch.object(cm_ci, "need"),
+                patch.object(cm_ci, "CodeMender", return_value=mock_cm),
                 patch.object(cm_ci, "cfg_checks", return_value=cfg_state),
                 patch.object(cm_ci, "check_config", return_value=False),
                 patch("sys.stdout", new_callable=io.StringIO),
@@ -660,7 +664,7 @@ class TestCmCi(unittest.TestCase):
             with open(known_path, "w", encoding="utf-8") as fh:
                 json.dump([{"finding_id": "cm-1", "file_path": "src/app.py", "status": "OPEN"}], fh)
 
-            initial_report = [
+            initial_findings = [
                 Finding(
                     finding_id="cm-1",
                     file_path=os.path.join(tmpdir, "src/app.py"),
@@ -671,7 +675,14 @@ class TestCmCi(unittest.TestCase):
                     status="OPEN",
                 )
             ]
-            post_fix_report = [Finding(initial_report[0].to_dict(), status="FIXED")]
+            mock_cm = MockCodeMender(
+                repo_dir=os.path.realpath(tmpdir),
+                initial_findings=initial_findings,
+            )
+
+            def fake_cm_fix(cmd: list[str], **_kwargs: Any) -> int:
+                mock_cm.mark_status("cm-1", "FIXED")
+                return 0
 
             def fake_sh(
                 *cmd: str, check: bool = False, capture: bool = True
@@ -699,9 +710,9 @@ class TestCmCi(unittest.TestCase):
                     "cfg_checks",
                     return_value={"project_paths": True, "reset": True, "exclude_dirs": True},
                 ),
-                patch.object(cm_ci.Ctx, "report", side_effect=[initial_report, post_fix_report]),
+                patch.object(cm_ci, "CodeMender", return_value=mock_cm),
                 patch.object(cm_ci, "sh", side_effect=fake_sh) as mock_sh,
-                patch("subprocess.call", return_value=0) as mock_call,
+                patch("subprocess.call", side_effect=fake_cm_fix) as mock_call,
                 patch("sys.stdout", new_callable=io.StringIO),
             ):
                 rc = cm_ci.cmd_fix(
@@ -726,8 +737,10 @@ class TestCmCi(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             nested = os.path.join(tmpdir, "sub", ".git")
             os.makedirs(nested)
+            mock_cm = MockCodeMender(repo_dir=os.path.realpath(tmpdir))
             with (
                 patch.object(cm_ci, "need"),
+                patch.object(cm_ci, "CodeMender", return_value=mock_cm),
                 patch.object(
                     cm_ci,
                     "cfg_checks",
