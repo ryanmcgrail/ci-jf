@@ -9,13 +9,15 @@ import os
 from pathlib import Path
 import sqlite3
 import subprocess
+import sys
 import tempfile
 from typing import Any
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from codemender import ScanMode
 from finding import Finding
+from mock_codemender import MockCodeMender
 
 _CM_CI_PATH = Path(__file__).resolve().parent.parent / "cm-ci.py"
 _SPEC = importlib.util.spec_from_file_location("cm_ci", _CM_CI_PATH)
@@ -544,10 +546,11 @@ class TestCmCi(unittest.TestCase):
     def test_ctx_report_uses_codemender_list_findings(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             expected = [Finding(finding_id="cm-10", file_path="src/app.py", status="OPEN")]
-            with patch.object(cm_ci.CodeMender, "list_findings", return_value=expected) as mock_list:
+            mock_cm = MockCodeMender(repo_dir=os.path.realpath(tmpdir), initial_findings=expected)
+            with patch.object(cm_ci, "CodeMender", return_value=mock_cm):
                 ctx = cm_ci.Ctx(tmpdir)
                 findings = ctx.report()
-                mock_list.assert_called_once_with()
+                self.assertEqual(mock_cm.list_findings_calls, 1)
                 self.assertEqual(findings, expected)
 
     @parameterized(
@@ -568,7 +571,7 @@ class TestCmCi(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             out_dir = os.path.join(tmpdir, ".codemender")
-            before_report = [
+            initial_findings = [
                 Finding(
                     finding_id="cm-old",
                     file_path="src/buf.c",
@@ -578,7 +581,7 @@ class TestCmCi(unittest.TestCase):
                     status="OPEN",
                 )
             ]
-            after_report = before_report + [
+            scheduled_findings = [
                 Finding(
                     finding_id="cm-dup",
                     file_path="src/buf.c",
@@ -600,10 +603,13 @@ class TestCmCi(unittest.TestCase):
                 ),
             ]
 
-            mock_cm = MagicMock()
-            mock_cm.list_findings.side_effect = [before_report, after_report]
+            mock_cm = MockCodeMender(
+                repo_dir=os.path.realpath(tmpdir),
+                initial_findings=initial_findings,
+            )
+            mock_cm.schedule_findings(scheduled_findings)
             if find_error is not None:
-                mock_cm.find.side_effect = find_error
+                mock_cm.schedule_find_error(find_error)
 
             with (
                 patch.object(cm_ci, "need"),
@@ -616,7 +622,7 @@ class TestCmCi(unittest.TestCase):
 
             self.assertEqual(rc, expected_rc)
             mock_cm_cls.assert_called_once_with(repo_dir=os.path.realpath(tmpdir))
-            mock_cm.find.assert_called_once_with(target_or_id=None, scan_mode=expected_mode)
+            self.assertEqual(mock_cm.find_calls, [(None, expected_mode)])
             if find_error is None:
                 with open(os.path.join(out_dir, "new_findings.json"), encoding="utf-8") as fh:
                     new_findings = json.load(fh)
