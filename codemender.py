@@ -22,9 +22,13 @@ _ADC_REAUTH_ERROR = re.compile(
     re.IGNORECASE,
 )
 _FIND_CONTEXT = (
-    'Call "cm report --format json" and keep track of the known findings for each file.'
-    "If the currently scanned file already has findings, then skip checking lines of code "
-    "that are contained within any known finding's code snippet."
+    'First, run `cm report --format json | jq \'.[] | select(.file_path | endswith("<file>")) | .snippet\'` '
+    "(replacing <file> with the currently scanned file path) to keep track of "
+    "preexisting findings by file without truncating output. Do not skip a "
+    "file just because it already has findings; instead, only skip checking "
+    "lines of code that already have findings associated with them. Determine "
+    "which lines to skip solely from each preexisting finding's snippet (do "
+    "not use start_line or end_line, since they can drift over time)."
 )
 
 
@@ -172,7 +176,7 @@ class CodeMender:
       extra_flags.append("--deep")
     elif scan_mode == ScanMode.DIFF:
       extra_flags.append("--diff")
-    extra_flags.extend(["--bypass-warning"])
+    extra_flags.extend(["--bypass-warning", "--enable-bash", "-y", "--unrestricted"])
     extra_flags.extend(["--context", _FIND_CONTEXT])
     command = build_cm_command(
         self.cm_binary,

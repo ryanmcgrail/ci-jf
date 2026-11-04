@@ -91,7 +91,18 @@ class CodeMenderTests(unittest.TestCase):
       cmd = args[0]
       self.assertEqual(
           cmd,
-          ["cm", "find", "/tmp/test_repo", "--deep", "--context", codemender._FIND_CONTEXT],
+          [
+              "cm",
+              "find",
+              "/tmp/test_repo",
+              "--deep",
+              "--bypass-warning",
+              "--enable-bash",
+              "-y",
+              "--unrestricted",
+              "--context",
+              codemender._FIND_CONTEXT,
+          ],
       )
       self.assertEqual(kwargs.get("cwd"), "/tmp/test_repo")
       self.assertEqual(res, proc)
@@ -116,19 +127,63 @@ class CodeMenderTests(unittest.TestCase):
 
     self.assertEqual(
         mock_run.call_args_list[0].args[0],
-        ["cm", "find", "/tmp/test_repo", "--deep", "--context", codemender._FIND_CONTEXT],
+        [
+            "cm",
+            "find",
+            "/tmp/test_repo",
+            "--deep",
+            "--bypass-warning",
+            "--enable-bash",
+            "-y",
+            "--unrestricted",
+            "--context",
+            codemender._FIND_CONTEXT,
+        ],
     )
     self.assertEqual(
         mock_run.call_args_list[1].args[0],
-        ["cm", "find", "/tmp/test_repo", "--quick", "--context", codemender._FIND_CONTEXT],
+        [
+            "cm",
+            "find",
+            "/tmp/test_repo",
+            "--quick",
+            "--bypass-warning",
+            "--enable-bash",
+            "-y",
+            "--unrestricted",
+            "--context",
+            codemender._FIND_CONTEXT,
+        ],
     )
     self.assertEqual(
         mock_run.call_args_list[2].args[0],
-        ["cm", "find", "/tmp/test_repo", "--deep", "--context", codemender._FIND_CONTEXT],
+        [
+            "cm",
+            "find",
+            "/tmp/test_repo",
+            "--deep",
+            "--bypass-warning",
+            "--enable-bash",
+            "-y",
+            "--unrestricted",
+            "--context",
+            codemender._FIND_CONTEXT,
+        ],
     )
     self.assertEqual(
         mock_run.call_args_list[3].args[0],
-        ["cm", "find", "/tmp/test_repo", "--diff", "--context", codemender._FIND_CONTEXT],
+        [
+            "cm",
+            "find",
+            "/tmp/test_repo",
+            "--diff",
+            "--bypass-warning",
+            "--enable-bash",
+            "-y",
+            "--unrestricted",
+            "--context",
+            codemender._FIND_CONTEXT,
+        ],
     )
 
   def test_find_handles_ci_gate_exit(self):
@@ -165,7 +220,18 @@ class CodeMenderTests(unittest.TestCase):
     self.assertEqual(mock_run.call_count, 3)
     self.assertEqual(
         mock_run.call_args_list[0].args[0],
-        ["cm", "find", "/tmp/test_repo", "--quick", "--context", codemender._FIND_CONTEXT],
+        [
+            "cm",
+            "find",
+            "/tmp/test_repo",
+            "--quick",
+            "--bypass-warning",
+            "--enable-bash",
+            "-y",
+            "--unrestricted",
+            "--context",
+            codemender._FIND_CONTEXT,
+        ],
     )
     self.assertEqual(
         mock_run.call_args_list[1].args[0],
@@ -173,7 +239,18 @@ class CodeMenderTests(unittest.TestCase):
     )
     self.assertEqual(
         mock_run.call_args_list[2].args[0],
-        ["cm", "find", "/tmp/test_repo", "--quick", "--context", codemender._FIND_CONTEXT],
+        [
+            "cm",
+            "find",
+            "/tmp/test_repo",
+            "--quick",
+            "--bypass-warning",
+            "--enable-bash",
+            "-y",
+            "--unrestricted",
+            "--context",
+            codemender._FIND_CONTEXT,
+        ],
     )
 
   def test_list_findings(self):
