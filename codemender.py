@@ -21,6 +21,11 @@ _ADC_REAUTH_ERROR = re.compile(
     r"invalid_grant|invalid_rapt|reauth related error|could not find default credentials",
     re.IGNORECASE,
 )
+_FIND_CONTEXT = (
+    'Call "cm report --format json" and keep track of the known findings for each file.'
+    "If the currently scanned file already has findings, then skip checking lines of code "
+    "that are contained within any known finding's code snippet."
+)
 
 
 class ScanMode(str, enum.Enum):
@@ -167,6 +172,8 @@ class CodeMender:
       extra_flags.append("--deep")
     elif scan_mode == ScanMode.DIFF:
       extra_flags.append("--diff")
+    extra_flags.extend(["--bypass-warning"])
+    extra_flags.extend(["--context", _FIND_CONTEXT])
     command = build_cm_command(
         self.cm_binary,
         "find",
