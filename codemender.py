@@ -22,13 +22,18 @@ _ADC_REAUTH_ERROR = re.compile(
     re.IGNORECASE,
 )
 _FIND_CONTEXT = (
-    'First, run `cm report --format json | jq \'.[] | select(.file_path | endswith("<file>")) | .snippet\'` '
-    "(replacing <file> with the currently scanned file path) to keep track of "
-    "preexisting findings by file without truncating output. Do not skip a "
-    "file just because it already has findings; instead, only skip checking "
-    "lines of code that already have findings associated with them. Determine "
-    "which lines to skip solely from each preexisting finding's snippet (do "
-    "not use start_line or end_line, since they can drift over time)."
+    'First, run `cm report --format json | jq -r \'.[] | select(.file_path | endswith("<file>")) | .snippet\'` '
+    "(replacing <file> with the currently scanned file path) to get the "
+    "snippets of all preexisting findings for that file; do not run any other "
+    "`cm report` commands or inspect `start_line`, `end_line`, `title`, or "
+    "`analysis`. Treat every line of code contained in any returned snippet "
+    "(including any lines in the file between parts of a snippet separated by "
+    "`...`) as already having a finding associated with it—determined solely "
+    "by the snippet text, never by `start_line` or `end_line`—and completely "
+    "skip checking or reporting vulnerabilities on those lines. Only check "
+    "lines of code in the file that are not covered by any returned snippet; "
+    "if all executable code in the file is covered by the returned snippets, "
+    "stop immediately and report 0 vulnerabilities."
 )
 
 
