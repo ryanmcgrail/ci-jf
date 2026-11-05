@@ -24,16 +24,23 @@ _ADC_REAUTH_ERROR = re.compile(
 _FIND_CONTEXT = (
     'First, run `cm report --format json | jq -r \'.[] | select(.file_path | endswith("<file>")) | .snippet\'` '
     "(replacing <file> with the currently scanned file path) to get the "
-    "snippets of all preexisting findings for that file; do not run any other "
-    "`cm report` commands or inspect `start_line`, `end_line`, `title`, or "
-    "`analysis`. Treat every line of code contained in any returned snippet "
-    "(including any lines in the file between parts of a snippet separated by "
-    "`...`) as already having a finding associated with it—determined solely "
-    "by the snippet text, never by `start_line` or `end_line`—and completely "
-    "skip checking or reporting vulnerabilities on those lines. Only check "
-    "lines of code in the file that are not covered by any returned snippet; "
-    "if all executable code in the file is covered by the returned snippets, "
-    "stop immediately and report 0 vulnerabilities."
+    "snippets of all preexisting findings for that file; after that single "
+    "command, do not run any other `run_command` or `cm report` calls, and "
+    "never inspect `start_line`, `end_line`, `title`, or `analysis`. Treat every line of code "
+    "contained in any returned snippet (including any lines in the file "
+    "between parts of a snippet separated by `...`) as already having a "
+    "finding associated with it—determined solely by the snippet text, never "
+    "by `start_line` or `end_line`—and completely skip checking or reporting "
+    "vulnerabilities on those lines (never report a finding whose snippet or "
+    "sink overlaps any line in a returned snippet, and report at most one "
+    "finding per distinct code block/line range). Only check lines of code in "
+    "the file that are not covered by any returned snippet; if all executable "
+    "code in the file is covered by the returned snippets, stop immediately "
+    "and report 0 vulnerabilities. Otherwise, thoroughly and exhaustively "
+    "audit every remaining uncovered line in the target file itself (checking "
+    "every uncovered function, route, middleware, handler, query, and "
+    "statement) and report all distinct vulnerabilities on uncovered lines in "
+    "a single pass rather than stopping after the first issue."
 )
 
 
@@ -181,7 +188,7 @@ class CodeMender:
       extra_flags.append("--deep")
     elif scan_mode == ScanMode.DIFF:
       extra_flags.append("--diff")
-    extra_flags.extend(["--bypass-warning", "--enable-bash", "-y", "--unrestricted"])
+    extra_flags.extend(["--bypass-warning", "--enable-bash", "-y", "--sandbox=false"])
     extra_flags.extend(["--context", _FIND_CONTEXT])
     command = build_cm_command(
         self.cm_binary,
