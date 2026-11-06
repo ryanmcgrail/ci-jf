@@ -25,6 +25,7 @@ _DISCOURAGED_CWES_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "discouraged_cwes.txt",
 )
+_ACTIVE_REPORT_STATUSES = frozenset({"OPEN", "VERIFIED", "REOPENED"})
 _FIND_CONTEXT = (
     'First, run `jq -r \'.[] | select(.file_path | endswith("<file>")) | .snippet\' {report_file}` '
     "(replacing <file> with the currently scanned file path) to get the "
@@ -139,6 +140,30 @@ def run_command(
   return subprocess.CompletedProcess(cmd, return_code, "".join(stdout_lines), "")
 
 
+def preprocess_report_for_context(raw_report: str) -> str:
+  """Filters a raw `cm report --format json` output to OPEN/VERIFIED/REOPENED findings with only file_path and snippet."""
+  text = (raw_report or "").strip()
+  if not text or text == "null":
+    return "[]"
+  try:
+    items, _ = json.JSONDecoder().raw_decode(text)
+  except json.JSONDecodeError:
+    return "[]"
+  if not isinstance(items, list):
+    return "[]"
+  filtered = []
+  for item in items:
+    if not isinstance(item, dict):
+      continue
+    finding = Finding.from_dict(item)
+    if finding.status in _ACTIVE_REPORT_STATUSES:
+      filtered.append({
+          "file_path": finding.file_path,
+          "snippet": finding.snippet,
+      })
+  return json.dumps(filtered, indent=2)
+
+
 def write_import_payload(findings: Iterable[Finding], dest_path: str) -> str:
   """Writes a simple-JSON import payload, keeping only recognized fields."""
   payload = []
@@ -205,7 +230,9 @@ class CodeMender:
         delete=False,
         encoding="utf-8",
     ) as tmp_file:
-      tmp_file.write(getattr(report_res, "stdout", "") or "")
+      tmp_file.write(
+          preprocess_report_for_context(getattr(report_res, "stdout", "") or "")
+      )
       report_file = tmp_file.name
       report_ref = os.path.basename(report_file) if temp_dir else report_file
 
@@ -239,7 +266,7 @@ class CodeMender:
       extra_flags.extend([
           "--enable-bash",
           "--deep-max-turns",
-          "10",
+          "20",
           "--context",
           _FIND_CONTEXT.format(
               report_file=report_ref,

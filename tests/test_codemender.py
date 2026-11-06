@@ -83,7 +83,37 @@ class CodeMenderTests(unittest.TestCase):
 
   def test_find_defaults_to_repo_dir(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
-    proc_report = types.SimpleNamespace(returncode=0, stdout='[{"finding_id": "1"}]')
+    proc_report = types.SimpleNamespace(
+        returncode=0,
+        stdout=json.dumps([
+            {
+                "finding_id": "1",
+                "status": "OPEN",
+                "file_path": "a.py",
+                "snippet": "x = 1",
+                "title": "Should be omitted",
+                "analysis": "Should be omitted",
+            },
+            {
+                "finding_id": "2",
+                "status": "DISMISSED",
+                "file_path": "b.py",
+                "snippet": "y = 2",
+            },
+            {
+                "finding_id": "3",
+                "status": "VERIFIED",
+                "file_path": "c.py",
+                "snippet": "z = 3",
+            },
+            {
+                "finding_id": "4",
+                "status": "REOPENED",
+                "file_path": "d.py",
+                "snippet": "w = 4",
+            },
+        ]),
+    )
     proc_find = types.SimpleNamespace(returncode=0, stdout="Success")
     fake_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
     fake_tmp_path = fake_tmp.name
@@ -91,11 +121,12 @@ class CodeMenderTests(unittest.TestCase):
     fake_cwe_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
     fake_cwe_tmp_path = fake_cwe_tmp.name
     fake_cwe_tmp.close()
+    written_report = []
     with patch("codemender.tempfile.NamedTemporaryFile") as mock_tmp, patch(
         "codemender.run_command", side_effect=[proc_report, proc_find]
     ) as mock_run:
       mock_tmp.return_value.__enter__.side_effect = [
-          types.SimpleNamespace(name=fake_tmp_path, write=lambda _: None),
+          types.SimpleNamespace(name=fake_tmp_path, write=written_report.append),
           types.SimpleNamespace(name=fake_cwe_tmp_path, write=lambda _: None),
       ]
       res = cm.find()
@@ -103,6 +134,14 @@ class CodeMenderTests(unittest.TestCase):
       self.assertEqual(
           mock_run.call_args_list[0].args[0],
           ["cm", "report", "--format", "json"],
+      )
+      self.assertEqual(
+          json.loads(written_report[0]),
+          [
+              {"file_path": "a.py", "snippet": "x = 1"},
+              {"file_path": "c.py", "snippet": "z = 3"},
+              {"file_path": "d.py", "snippet": "w = 4"},
+          ],
       )
       args, kwargs = mock_run.call_args_list[1]
       cmd = args[0]
@@ -115,7 +154,7 @@ class CodeMenderTests(unittest.TestCase):
               "--deep",
               "--enable-bash",
               "--deep-max-turns",
-              "10",
+              "20",
               "--context",
               codemender._FIND_CONTEXT.format(
                   report_file=fake_tmp_path,
@@ -163,7 +202,7 @@ class CodeMenderTests(unittest.TestCase):
             "--deep",
             "--enable-bash",
             "--deep-max-turns",
-            "10",
+            "20",
             "--context",
             expected_ctx,
         ],
@@ -177,7 +216,7 @@ class CodeMenderTests(unittest.TestCase):
             "--quick",
             "--enable-bash",
             "--deep-max-turns",
-            "10",
+            "20",
             "--context",
             expected_ctx,
         ],
@@ -191,7 +230,7 @@ class CodeMenderTests(unittest.TestCase):
             "--deep",
             "--enable-bash",
             "--deep-max-turns",
-            "10",
+            "20",
             "--context",
             expected_ctx,
         ],
@@ -205,7 +244,7 @@ class CodeMenderTests(unittest.TestCase):
             "--diff",
             "--enable-bash",
             "--deep-max-turns",
-            "10",
+            "20",
             "--context",
             expected_ctx,
         ],
@@ -263,7 +302,7 @@ class CodeMenderTests(unittest.TestCase):
             "--quick",
             "--enable-bash",
             "--deep-max-turns",
-            "10",
+            "20",
             "--context",
             expected_ctx,
         ],
@@ -281,7 +320,7 @@ class CodeMenderTests(unittest.TestCase):
             "--quick",
             "--enable-bash",
             "--deep-max-turns",
-            "10",
+            "20",
             "--context",
             expected_ctx,
         ],
