@@ -44,7 +44,7 @@ _FIND_CONTEXT = (
     "every uncovered function, route, middleware, handler, query, and "
     "statement) and report all distinct vulnerabilities on uncovered lines in "
     "a single pass rather than stopping after the first issue. Never use any "
-    "CWE ID defined in `{discouraged_cwes_file}`; always select a more "
+    "CWE ID defined in {discouraged_cwes_file}; always select a more "
     "specific, allowed CWE ID instead."
 )
 
@@ -237,6 +237,9 @@ class CodeMender:
       elif scan_mode == ScanMode.DIFF:
         extra_flags.append("--diff")
       extra_flags.extend([
+          "--enable-bash",
+          "--deep-max-turns",
+          "10",
           "--context",
           _FIND_CONTEXT.format(
               report_file=report_ref,
