@@ -88,10 +88,16 @@ class CodeMenderTests(unittest.TestCase):
     fake_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
     fake_tmp_path = fake_tmp.name
     fake_tmp.close()
+    fake_cwe_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
+    fake_cwe_tmp_path = fake_cwe_tmp.name
+    fake_cwe_tmp.close()
     with patch("codemender.tempfile.NamedTemporaryFile") as mock_tmp, patch(
         "codemender.run_command", side_effect=[proc_report, proc_find]
     ) as mock_run:
-      mock_tmp.return_value.__enter__.return_value.name = fake_tmp_path
+      mock_tmp.return_value.__enter__.side_effect = [
+          types.SimpleNamespace(name=fake_tmp_path, write=lambda _: None),
+          types.SimpleNamespace(name=fake_cwe_tmp_path, write=lambda _: None),
+      ]
       res = cm.find()
       self.assertEqual(mock_run.call_count, 2)
       self.assertEqual(
@@ -108,12 +114,16 @@ class CodeMenderTests(unittest.TestCase):
               "/tmp/test_repo",
               "--deep",
               "--context",
-              codemender._FIND_CONTEXT.format(report_file=fake_tmp_path),
+              codemender._FIND_CONTEXT.format(
+                  report_file=fake_tmp_path,
+                  discouraged_cwes_file=fake_cwe_tmp_path,
+              ),
           ],
       )
       self.assertEqual(kwargs.get("cwd"), "/tmp/test_repo")
       self.assertEqual(res, proc_find)
       self.assertFalse(os.path.exists(fake_tmp_path))
+      self.assertFalse(os.path.exists(fake_cwe_tmp_path))
 
   def test_find_custom_target(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
@@ -137,7 +147,10 @@ class CodeMenderTests(unittest.TestCase):
       cm.find(scan_mode=codemender.ScanMode.DEEP)
       cm.find(scan_mode=codemender.ScanMode.DIFF)
 
-    expected_ctx = codemender._FIND_CONTEXT.format(report_file=fake_tmp_path)
+    expected_ctx = codemender._FIND_CONTEXT.format(
+        report_file=fake_tmp_path,
+        discouraged_cwes_file=fake_tmp_path,
+    )
     self.assertEqual(
         mock_run.call_args_list[1].args[0],
         [
@@ -216,7 +229,10 @@ class CodeMenderTests(unittest.TestCase):
     ) as mock_run:
       mock_tmp.return_value.__enter__.return_value.name = fake_tmp_path
       res = cm.find(scan_mode=codemender.ScanMode.QUICK)
-    expected_ctx = codemender._FIND_CONTEXT.format(report_file=fake_tmp_path)
+    expected_ctx = codemender._FIND_CONTEXT.format(
+        report_file=fake_tmp_path,
+        discouraged_cwes_file=fake_tmp_path,
+    )
     self.assertEqual(res, proc_success)
     self.assertEqual(mock_run.call_count, 4)
     self.assertEqual(

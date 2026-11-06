@@ -10,7 +10,13 @@ import tempfile
 from typing import Any
 import unittest
 
-from cwe_database import CWEDatabase, load_cwe_database
+from cwe_database import (
+    CWEDatabase,
+    DEFAULT_DISCOURAGED_CWES_PATH,
+    extract_discouraged_cwe_ids,
+    load_cwe_database,
+    write_discouraged_cwes_file,
+)
 from finding import Finding
 
 
@@ -238,6 +244,24 @@ class TestCWEDatabase(unittest.TestCase):
                 result = self.db.find_parent(cwe_a, cwe_b)
                 if result is not None:
                     self.assertIn(result, (cwe_a, cwe_b))
+
+    def test_discouraged_cwes_extraction_and_file(self) -> None:
+        """Verify discouraged and prohibited CWE IDs are extracted and match discouraged_cwes.txt."""
+        ids = extract_discouraged_cwe_ids()
+        self.assertEqual(len(ids), 608)
+        for expected_id in (20, 200, 682, 840):
+            self.assertIn(expected_id, ids)
+        for allowed_id in (79, 89, 306, 639):
+            self.assertNotIn(allowed_id, ids)
+
+        self.assertTrue(DEFAULT_DISCOURAGED_CWES_PATH.exists())
+        lines = DEFAULT_DISCOURAGED_CWES_PATH.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(lines, [f"CWE-{cid}" for cid in ids])
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            dest = Path(tmp_dir) / "discouraged.txt"
+            write_discouraged_cwes_file(dest_path=dest)
+            self.assertEqual(dest.read_text(encoding="utf-8").splitlines(), lines)
 
 
 if __name__ == "__main__":

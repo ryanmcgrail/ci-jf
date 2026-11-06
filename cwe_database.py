@@ -14,6 +14,8 @@ import xml.etree.ElementTree as ET
 from finding import Finding
 
 DEFAULT_XML_PATH = Path(__file__).resolve().parent / "cwec_v4.20.xml"
+DEFAULT_DISCOURAGED_CWES_PATH = Path(__file__).resolve().parent / "discouraged_cwes.txt"
+DISCOURAGED_USAGES = frozenset({"Discouraged", "Prohibited"})
 
 # Relationships where the declaring Weakness (A) is the parent of the target CWE_ID (B).
 PARENT_TO_CHILD_NATURES = frozenset({"ParentOf", "CanPrecede"})
@@ -295,6 +297,35 @@ class CWEDatabase:
 def load_cwe_database(xml_path: str | Path = DEFAULT_XML_PATH) -> CWEDatabase:
     """Convenience loader returning a CWEDatabase parsed from xml_path."""
     return CWEDatabase.from_xml(xml_path)
+
+
+def extract_discouraged_cwe_ids(xml_path: str | Path = DEFAULT_XML_PATH) -> list[int]:
+    """Return sorted CWE IDs from xml_path whose Mapping_Notes Usage is Discouraged or Prohibited."""
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
+    ns_uri = _extract_namespace(root.tag)
+    ns = {"cwe": ns_uri} if ns_uri else {}
+    prefix = "cwe:" if ns_uri else ""
+
+    discouraged_ids: set[int] = set()
+    for section in ("Weaknesses", "Categories", "Views"):
+        for elem in root.findall(f"{prefix}{section}/*", ns):
+            usage_elem = elem.find(f"{prefix}Mapping_Notes/{prefix}Usage", ns)
+            usage = (usage_elem.text or "").strip() if usage_elem is not None else ""
+            if usage in DISCOURAGED_USAGES:
+                discouraged_ids.add(int(elem.attrib["ID"]))
+    return sorted(discouraged_ids)
+
+
+def write_discouraged_cwes_file(
+    dest_path: str | Path = DEFAULT_DISCOURAGED_CWES_PATH,
+    xml_path: str | Path = DEFAULT_XML_PATH,
+) -> Path:
+    """Write all discouraged/prohibited CWE IDs (as CWE-<id> lines) to dest_path."""
+    out_path = Path(dest_path)
+    ids = extract_discouraged_cwe_ids(xml_path)
+    out_path.write_text("".join(f"CWE-{cid}\n" for cid in ids), encoding="utf-8")
+    return out_path
 
 
 def main() -> None:

@@ -21,6 +21,10 @@ _ADC_REAUTH_ERROR = re.compile(
     r"invalid_grant|invalid_rapt|reauth related error|could not find default credentials",
     re.IGNORECASE,
 )
+_DISCOURAGED_CWES_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "discouraged_cwes.txt",
+)
 _FIND_CONTEXT = (
     'First, run `jq -r \'.[] | select(.file_path | endswith("<file>")) | .snippet\' {report_file}` '
     "(replacing <file> with the currently scanned file path) to get the "
@@ -39,7 +43,9 @@ _FIND_CONTEXT = (
     "audit every remaining uncovered line in the target file itself (checking "
     "every uncovered function, route, middleware, handler, query, and "
     "statement) and report all distinct vulnerabilities on uncovered lines in "
-    "a single pass rather than stopping after the first issue."
+    "a single pass rather than stopping after the first issue. Never use any "
+    "CWE ID defined in `{discouraged_cwes_file}`; always select a more "
+    "specific, allowed CWE ID instead."
 )
 
 
@@ -203,6 +209,25 @@ class CodeMender:
       report_file = tmp_file.name
       report_ref = os.path.basename(report_file) if temp_dir else report_file
 
+    discouraged_cwes_content = ""
+    if os.path.exists(_DISCOURAGED_CWES_PATH):
+      with open(_DISCOURAGED_CWES_PATH, "r", encoding="utf-8") as cwe_f:
+        discouraged_cwes_content = cwe_f.read()
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix="",
+        dir=temp_dir,
+        delete=False,
+        encoding="utf-8",
+    ) as cwe_tmp_file:
+      cwe_tmp_file.write(discouraged_cwes_content)
+      discouraged_cwes_file = cwe_tmp_file.name
+      discouraged_cwes_ref = (
+          os.path.basename(discouraged_cwes_file)
+          if temp_dir
+          else discouraged_cwes_file
+      )
+
     try:
       extra_flags: List[str] = []
       if scan_mode == ScanMode.QUICK:
@@ -213,7 +238,10 @@ class CodeMender:
         extra_flags.append("--diff")
       extra_flags.extend([
           "--context",
-          _FIND_CONTEXT.format(report_file=report_ref),
+          _FIND_CONTEXT.format(
+              report_file=report_ref,
+              discouraged_cwes_file=discouraged_cwes_ref,
+          ),
       ])
       command = build_cm_command(
           self.cm_binary,
@@ -237,8 +265,9 @@ class CodeMender:
         returncode = getattr(result, "returncode", 0)
         stdout = getattr(result, "stdout", "")
     finally:
-      if os.path.exists(report_file):
-        os.remove(report_file)
+      for tmp_path in (report_file, discouraged_cwes_file):
+        if os.path.exists(tmp_path):
+          os.remove(tmp_path)
 
     if returncode and not is_ci_gate_exit(returncode, stdout or ""):
       raise RuntimeError(f"cm find failed with exit code {returncode}")
