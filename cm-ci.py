@@ -248,6 +248,7 @@ def cmd_find(argv: List[str]) -> int:
     before_ids = {str(f.finding_id or "") for f in before}
     scan_mode = ScanMode.DEEP
     target: Optional[str] = None
+    extra_cm_flags: List[str] = []
     for arg in cm_args:
         if arg == "--quick":
             scan_mode = ScanMode.QUICK
@@ -257,9 +258,14 @@ def cmd_find(argv: List[str]) -> int:
             scan_mode = ScanMode.DEEP
         elif not arg.startswith("-") and target is None:
             target = arg
+        else:
+            extra_cm_flags.append(arg)
     print(f"cm-ci: cm find {' '.join(cm_args)}".rstrip(), flush=True)
     try:
-        ctx.cm.find(target_or_id=target, scan_mode=scan_mode)
+        if extra_cm_flags:
+            ctx.cm.find(target_or_id=target, scan_mode=scan_mode, extra_flags=extra_cm_flags)
+        else:
+            ctx.cm.find(target_or_id=target, scan_mode=scan_mode)
     except RuntimeError as e:
         print(f"cm-ci: {e}", file=sys.stderr)
         m = re.search(r"exit code (\d+)", str(e))

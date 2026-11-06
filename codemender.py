@@ -208,6 +208,7 @@ class CodeMender:
       self,
       target_or_id: Optional[str] = None,
       scan_mode: ScanMode = ScanMode.DEEP,
+      extra_flags: Optional[List[str]] = None,
   ) -> Any:
     """Runs the CodeMender find command on the target repository directory."""
     target = target_or_id if target_or_id is not None else self.repo_dir
@@ -256,14 +257,16 @@ class CodeMender:
       )
 
     try:
-      extra_flags: List[str] = []
+      cmd_flags: List[str] = []
       if scan_mode == ScanMode.QUICK:
-        extra_flags.append("--quick")
+        cmd_flags.append("--quick")
       if scan_mode == ScanMode.DEEP:
-        extra_flags.append("--deep")
+        cmd_flags.append("--deep")
       elif scan_mode == ScanMode.DIFF:
-        extra_flags.append("--diff")
-      extra_flags.extend([
+        cmd_flags.append("--diff")
+      if extra_flags:
+        cmd_flags.extend(extra_flags)
+      cmd_flags.extend([
           "--enable-bash",
           "--deep-max-turns",
           "20",
@@ -277,7 +280,7 @@ class CodeMender:
           self.cm_binary,
           "find",
           target_or_id=target,
-          extra_flags=extra_flags,
+          extra_flags=cmd_flags,
       )
       result = run_command(command, cwd=self.repo_dir, env=self.env, check=False, print_to_stdout=True)
       returncode = getattr(result, "returncode", 0)
