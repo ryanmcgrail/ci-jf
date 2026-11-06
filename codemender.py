@@ -22,11 +22,10 @@ _ADC_REAUTH_ERROR = re.compile(
     re.IGNORECASE,
 )
 _FIND_CONTEXT = (
-    'First, run `cm report --format json | jq -r \'.[] | select(.file_path | endswith("<file>")) | .snippet\'` '
+    'First, run `jq -r \'.[] | select(.file_path | endswith("<file>")) | .snippet\' {report_file}` '
     "(replacing <file> with the currently scanned file path) to get the "
-    "snippets of all preexisting findings for that file; after that single "
-    "command, do not run any other `run_command` or `cm report` calls, and "
-    "never inspect `start_line`, `end_line`, `title`, or `analysis`. Treat every line of code "
+    "snippets of all preexisting findings for that file; never inspect "
+    "`start_line`, `end_line`, `title`, or `analysis`. Treat every line of code "
     "contained in any returned snippet (including any lines in the file "
     "between parts of a snippet separated by `...`) as already having a "
     "finding associated with it—determined solely by the snippet text, never "
@@ -181,36 +180,66 @@ class CodeMender:
   ) -> Any:
     """Runs the CodeMender find command on the target repository directory."""
     target = target_or_id if target_or_id is not None else self.repo_dir
-    extra_flags: List[str] = []
-    if scan_mode == ScanMode.QUICK:
-      extra_flags.append("--quick")
-    if scan_mode == ScanMode.DEEP:
-      extra_flags.append("--deep")
-    elif scan_mode == ScanMode.DIFF:
-      extra_flags.append("--diff")
-    extra_flags.extend(["--bypass-warning", "--enable-bash", "-y", "--sandbox=false"])
-    extra_flags.extend(["--context", _FIND_CONTEXT])
-    command = build_cm_command(
+    report_cmd = build_cm_command(
         self.cm_binary,
-        "find",
-        target_or_id=target,
-        extra_flags=extra_flags,
+        "report",
+        extra_flags=["--format", "json"],
     )
-    result = run_command(command, cwd=self.repo_dir, env=self.env, check=False, print_to_stdout=True)
-    returncode = getattr(result, "returncode", 0)
-    stdout = getattr(result, "stdout", "")
-    stderr = getattr(result, "stderr", "")
-    if is_adc_reauth_error(returncode, stdout or "", stderr or ""):
-      run_command(
-          ["gcloud", "auth", "application-default", "login"],
-          cwd=self.repo_dir,
-          env=self.env,
-          check=True,
-          print_to_stdout=True,
+    report_res = run_command(
+        report_cmd,
+        cwd=self.repo_dir,
+        env=self.env,
+        check=False,
+    )
+    temp_dir = self.repo_dir if os.path.isdir(self.repo_dir) else None
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix="",
+        dir=temp_dir,
+        delete=False,
+        encoding="utf-8",
+    ) as tmp_file:
+      tmp_file.write(getattr(report_res, "stdout", "") or "")
+      report_file = tmp_file.name
+      report_ref = os.path.basename(report_file) if temp_dir else report_file
+
+    try:
+      extra_flags: List[str] = []
+      if scan_mode == ScanMode.QUICK:
+        extra_flags.append("--quick")
+      if scan_mode == ScanMode.DEEP:
+        extra_flags.append("--deep")
+      elif scan_mode == ScanMode.DIFF:
+        extra_flags.append("--diff")
+      extra_flags.extend([
+          "--context",
+          _FIND_CONTEXT.format(report_file=report_ref),
+      ])
+      command = build_cm_command(
+          self.cm_binary,
+          "find",
+          target_or_id=target,
+          extra_flags=extra_flags,
       )
       result = run_command(command, cwd=self.repo_dir, env=self.env, check=False, print_to_stdout=True)
       returncode = getattr(result, "returncode", 0)
       stdout = getattr(result, "stdout", "")
+      stderr = getattr(result, "stderr", "")
+      if is_adc_reauth_error(returncode, stdout or "", stderr or ""):
+        run_command(
+            ["gcloud", "auth", "application-default", "login"],
+            cwd=self.repo_dir,
+            env=self.env,
+            check=True,
+            print_to_stdout=True,
+        )
+        result = run_command(command, cwd=self.repo_dir, env=self.env, check=False, print_to_stdout=True)
+        returncode = getattr(result, "returncode", 0)
+        stdout = getattr(result, "stdout", "")
+    finally:
+      if os.path.exists(report_file):
+        os.remove(report_file)
+
     if returncode and not is_ci_gate_exit(returncode, stdout or ""):
       raise RuntimeError(f"cm find failed with exit code {returncode}")
     return result

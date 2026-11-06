@@ -83,11 +83,22 @@ class CodeMenderTests(unittest.TestCase):
 
   def test_find_defaults_to_repo_dir(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
-    proc = types.SimpleNamespace(returncode=0, stdout="Success")
-    with patch("codemender.run_command", return_value=proc) as mock_run:
+    proc_report = types.SimpleNamespace(returncode=0, stdout='[{"finding_id": "1"}]')
+    proc_find = types.SimpleNamespace(returncode=0, stdout="Success")
+    fake_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+    fake_tmp_path = fake_tmp.name
+    fake_tmp.close()
+    with patch("codemender.tempfile.NamedTemporaryFile") as mock_tmp, patch(
+        "codemender.run_command", side_effect=[proc_report, proc_find]
+    ) as mock_run:
+      mock_tmp.return_value.__enter__.return_value.name = fake_tmp_path
       res = cm.find()
-      mock_run.assert_called_once()
-      args, kwargs = mock_run.call_args
+      self.assertEqual(mock_run.call_count, 2)
+      self.assertEqual(
+          mock_run.call_args_list[0].args[0],
+          ["cm", "report", "--format", "json"],
+      )
+      args, kwargs = mock_run.call_args_list[1]
       cmd = args[0]
       self.assertEqual(
           cmd,
@@ -96,78 +107,46 @@ class CodeMenderTests(unittest.TestCase):
               "find",
               "/tmp/test_repo",
               "--deep",
-              "--bypass-warning",
-              "--enable-bash",
-              "-y",
-              "--sandbox=false",
               "--context",
-              codemender._FIND_CONTEXT,
+              codemender._FIND_CONTEXT.format(report_file=fake_tmp_path),
           ],
       )
       self.assertEqual(kwargs.get("cwd"), "/tmp/test_repo")
-      self.assertEqual(res, proc)
+      self.assertEqual(res, proc_find)
+      self.assertFalse(os.path.exists(fake_tmp_path))
 
   def test_find_custom_target(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
     proc = types.SimpleNamespace(returncode=0, stdout="Success")
     with patch("codemender.run_command", return_value=proc) as mock_run:
       cm.find(target_or_id="/tmp/other_target")
-      args, _ = mock_run.call_args
+      args, _ = mock_run.call_args_list[1]
       cmd = args[0]
       self.assertEqual(cmd[2], "/tmp/other_target")
 
   def test_find_scan_modes(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
     proc = types.SimpleNamespace(returncode=0, stdout="Success")
-    with patch("codemender.run_command", return_value=proc) as mock_run:
+    fake_tmp_path = "/tmp/fake_report.json"
+    with patch("codemender.tempfile.NamedTemporaryFile") as mock_tmp, patch(
+        "codemender.run_command", return_value=proc
+    ) as mock_run:
+      mock_tmp.return_value.__enter__.return_value.name = fake_tmp_path
       cm.find()
       cm.find(scan_mode=codemender.ScanMode.QUICK)
       cm.find(scan_mode=codemender.ScanMode.DEEP)
       cm.find(scan_mode=codemender.ScanMode.DIFF)
 
-    self.assertEqual(
-        mock_run.call_args_list[0].args[0],
-        [
-            "cm",
-            "find",
-            "/tmp/test_repo",
-            "--deep",
-            "--bypass-warning",
-            "--enable-bash",
-            "-y",
-            "--sandbox=false",
-            "--context",
-            codemender._FIND_CONTEXT,
-        ],
-    )
+    expected_ctx = codemender._FIND_CONTEXT.format(report_file=fake_tmp_path)
     self.assertEqual(
         mock_run.call_args_list[1].args[0],
         [
             "cm",
             "find",
             "/tmp/test_repo",
-            "--quick",
-            "--bypass-warning",
-            "--enable-bash",
-            "-y",
-            "--sandbox=false",
-            "--context",
-            codemender._FIND_CONTEXT,
-        ],
-    )
-    self.assertEqual(
-        mock_run.call_args_list[2].args[0],
-        [
-            "cm",
-            "find",
-            "/tmp/test_repo",
             "--deep",
-            "--bypass-warning",
-            "--enable-bash",
-            "-y",
-            "--sandbox=false",
             "--context",
-            codemender._FIND_CONTEXT,
+            expected_ctx,
         ],
     )
     self.assertEqual(
@@ -176,13 +155,31 @@ class CodeMenderTests(unittest.TestCase):
             "cm",
             "find",
             "/tmp/test_repo",
-            "--diff",
-            "--bypass-warning",
-            "--enable-bash",
-            "-y",
-            "--sandbox=false",
+            "--quick",
             "--context",
-            codemender._FIND_CONTEXT,
+            expected_ctx,
+        ],
+    )
+    self.assertEqual(
+        mock_run.call_args_list[5].args[0],
+        [
+            "cm",
+            "find",
+            "/tmp/test_repo",
+            "--deep",
+            "--context",
+            expected_ctx,
+        ],
+    )
+    self.assertEqual(
+        mock_run.call_args_list[7].args[0],
+        [
+            "cm",
+            "find",
+            "/tmp/test_repo",
+            "--diff",
+            "--context",
+            expected_ctx,
         ],
     )
 
@@ -204,6 +201,7 @@ class CodeMenderTests(unittest.TestCase):
 
   def test_find_runs_gcloud_adc_login_and_retries_on_reauth_error(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
+    proc_report = types.SimpleNamespace(returncode=0, stdout="[]", stderr="")
     proc_reauth = types.SimpleNamespace(
         returncode=1,
         stdout="",
@@ -211,45 +209,44 @@ class CodeMenderTests(unittest.TestCase):
     )
     proc_gcloud = types.SimpleNamespace(returncode=0, stdout="Credentials saved", stderr="")
     proc_success = types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
-    with patch(
+    fake_tmp_path = "/tmp/fake_report.json"
+    with patch("codemender.tempfile.NamedTemporaryFile") as mock_tmp, patch(
         "codemender.run_command",
-        side_effect=[proc_reauth, proc_gcloud, proc_success],
+        side_effect=[proc_report, proc_reauth, proc_gcloud, proc_success],
     ) as mock_run:
+      mock_tmp.return_value.__enter__.return_value.name = fake_tmp_path
       res = cm.find(scan_mode=codemender.ScanMode.QUICK)
+    expected_ctx = codemender._FIND_CONTEXT.format(report_file=fake_tmp_path)
     self.assertEqual(res, proc_success)
-    self.assertEqual(mock_run.call_count, 3)
+    self.assertEqual(mock_run.call_count, 4)
     self.assertEqual(
         mock_run.call_args_list[0].args[0],
-        [
-            "cm",
-            "find",
-            "/tmp/test_repo",
-            "--quick",
-            "--bypass-warning",
-            "--enable-bash",
-            "-y",
-            "--sandbox=false",
-            "--context",
-            codemender._FIND_CONTEXT,
-        ],
+        ["cm", "report", "--format", "json"],
     )
     self.assertEqual(
         mock_run.call_args_list[1].args[0],
-        ["gcloud", "auth", "application-default", "login"],
-    )
-    self.assertEqual(
-        mock_run.call_args_list[2].args[0],
         [
             "cm",
             "find",
             "/tmp/test_repo",
             "--quick",
-            "--bypass-warning",
-            "--enable-bash",
-            "-y",
-            "--sandbox=false",
             "--context",
-            codemender._FIND_CONTEXT,
+            expected_ctx,
+        ],
+    )
+    self.assertEqual(
+        mock_run.call_args_list[2].args[0],
+        ["gcloud", "auth", "application-default", "login"],
+    )
+    self.assertEqual(
+        mock_run.call_args_list[3].args[0],
+        [
+            "cm",
+            "find",
+            "/tmp/test_repo",
+            "--quick",
+            "--context",
+            expected_ctx,
         ],
     )
 
