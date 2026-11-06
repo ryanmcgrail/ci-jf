@@ -277,7 +277,7 @@ class CodeMender:
       cmd_flags.extend([
           "--enable-bash",
           "--deep-max-turns",
-          "20",
+          "8",
           "--context",
           _FIND_CONTEXT.format(
               report_file=report_ref,
