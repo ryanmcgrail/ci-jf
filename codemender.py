@@ -29,8 +29,8 @@ _ACTIVE_REPORT_STATUSES = frozenset({"OPEN", "VERIFIED", "REOPENED"})
 _FIND_CONTEXT = (
     'First, run `jq -r \'.[] | select(.file_path | endswith("<file>")) | .snippet\' {report_file}` '
     "(replacing <file> with the currently scanned file path) to get the "
-    "snippets of all preexisting findings for that file; never inspect "
-    "`start_line`, `end_line`, `title`, or `analysis`. Treat every line of code "
+    "snippets of all preexisting findings for that file; never query "
+    "{report_file} for any other file. Treat every line of code "
     "contained in any returned snippet (including any lines in the file "
     "between parts of a snippet separated by `...`) as already having a "
     "finding associated with it—determined solely by the snippet text, never "
@@ -39,14 +39,22 @@ _FIND_CONTEXT = (
     "sink overlaps any line in a returned snippet, and report at most one "
     "finding per distinct code block/line range). Only check lines of code in "
     "the file that are not covered by any returned snippet; if all executable "
-    "code in the file is covered by the returned snippets, stop immediately "
-    "and report 0 vulnerabilities. Otherwise, thoroughly and exhaustively "
-    "audit every remaining uncovered line in the target file itself (checking "
-    "every uncovered function, route, middleware, handler, query, and "
-    "statement) and report all distinct vulnerabilities on uncovered lines in "
-    "a single pass rather than stopping after the first issue. Never use any "
-    "CWE ID defined in {discouraged_cwes_file}; always select a more "
-    "specific, allowed CWE ID instead."
+    "code in the file is covered by the returned snippets, or if the remaining "
+    "uncovered lines in the file are benign, stop immediately and report 0 "
+    "vulnerabilities. Otherwise, thoroughly and exhaustively audit every "
+    "remaining uncovered line in the target file itself (checking every "
+    "uncovered function, route, middleware, handler, query, and statement) "
+    "and report all distinct vulnerabilities on uncovered lines in a single "
+    "pass rather than stopping after the first issue. Never read or dump "
+    "{discouraged_cwes_file} upfront; only after identifying a concrete "
+    "vulnerability and right before reporting it, run "
+    '`grep -qx "CWE-<id>" {discouraged_cwes_file}` to check whether your '
+    "candidate CWE ID is listed in {discouraged_cwes_file}, and if so, select "
+    "a more specific, allowed CWE ID instead. Use `run_command` only for that "
+    "single initial `jq` lookup and final CWE `grep` check—never run git, "
+    "diff, node, npm, ts-node, tsx, python, or rg commands, and never read or "
+    "search test files, challenge metadata (.info.yml, challenges.yml), or "
+    ".codemender files."
 )
 
 
