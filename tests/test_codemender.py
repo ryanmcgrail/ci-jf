@@ -121,6 +121,9 @@ class CodeMenderTests(unittest.TestCase):
     fake_cwe_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
     fake_cwe_tmp_path = fake_cwe_tmp.name
     fake_cwe_tmp.close()
+    fake_clean_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
+    fake_clean_tmp_path = fake_clean_tmp.name
+    fake_clean_tmp.close()
     written_report = []
     with patch("codemender.tempfile.NamedTemporaryFile") as mock_tmp, patch(
         "codemender.run_command", side_effect=[proc_report, proc_find]
@@ -128,6 +131,7 @@ class CodeMenderTests(unittest.TestCase):
       mock_tmp.return_value.__enter__.side_effect = [
           types.SimpleNamespace(name=fake_tmp_path, write=written_report.append),
           types.SimpleNamespace(name=fake_cwe_tmp_path, write=lambda _: None),
+          types.SimpleNamespace(name=fake_clean_tmp_path, write=lambda _: None),
       ]
       res = cm.find()
       self.assertEqual(mock_run.call_count, 2)
@@ -159,6 +163,7 @@ class CodeMenderTests(unittest.TestCase):
               codemender._FIND_CONTEXT.format(
                   report_file=fake_tmp_path,
                   discouraged_cwes_file=fake_cwe_tmp_path,
+                  clean_files_file=fake_clean_tmp_path,
               ),
           ],
       )
@@ -166,6 +171,7 @@ class CodeMenderTests(unittest.TestCase):
       self.assertEqual(res, proc_find)
       self.assertFalse(os.path.exists(fake_tmp_path))
       self.assertFalse(os.path.exists(fake_cwe_tmp_path))
+      self.assertFalse(os.path.exists(fake_clean_tmp_path))
 
   def test_find_custom_target(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
@@ -192,6 +198,7 @@ class CodeMenderTests(unittest.TestCase):
     expected_ctx = codemender._FIND_CONTEXT.format(
         report_file=fake_tmp_path,
         discouraged_cwes_file=fake_tmp_path,
+        clean_files_file=fake_tmp_path,
     )
     self.assertEqual(
         mock_run.call_args_list[1].args[0],
@@ -250,6 +257,115 @@ class CodeMenderTests(unittest.TestCase):
         ],
     )
 
+  def test_find_complete_runs_three_deep_scans_and_tracks_clean_files(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      repo_dir = os.path.join(tmpdir, "repo")
+      cm_home = os.path.join(tmpdir, "cm_home")
+      os.makedirs(repo_dir)
+      os.makedirs(cm_home)
+      db_path = os.path.join(cm_home, "state.db")
+      con = sqlite3.connect(db_path)
+      con.execute(
+          "CREATE TABLE sessions ("
+          "session_id TEXT PRIMARY KEY, "
+          "session_type TEXT, "
+          "status TEXT, "
+          "target TEXT, "
+          "created_at TEXT, "
+          "updated_at TEXT, "
+          "project_root TEXT, "
+          "parent_session_id TEXT)"
+      )
+      con.execute(
+          "CREATE TABLE findings ("
+          "finding_id TEXT PRIMARY KEY, "
+          "session_id TEXT, "
+          "status TEXT)"
+      )
+      con.commit()
+      con.close()
+
+      cm = CodeMender(
+          cm_binary="cm",
+          repo_dir=repo_dir,
+          env={"CM_HOME": cm_home},
+      )
+
+      observed_clean_contents = []
+      observed_clean_paths = []
+      find_scan_num = 0
+
+      def fake_run_command(cmd, **kwargs):
+        nonlocal find_scan_num
+        if cmd[:2] == ["cm", "report"]:
+          return types.SimpleNamespace(returncode=0, stdout="[]", stderr="")
+        if cmd[:2] == ["cm", "find"]:
+          # Record the current contents of the clean_files_file passed in --context.
+          db_con = sqlite3.connect(db_path)
+          if find_scan_num == 0:
+            # Scan 0: clean.py has 0 findings, vuln.py has 1 finding, multi.py has 1 finding
+            db_con.executemany(
+                "INSERT INTO sessions VALUES (?, 'FIND', 'COMPLETED', ?, ?, ?, ?, 'parent-0')",
+                [
+                    ("s0-clean", "clean.py", "t0", "t0", repo_dir),
+                    ("s0-vuln", "vuln.py", "t0", "t0", repo_dir),
+                    ("s0-multi", "multi.py", "t0", "t0", repo_dir),
+                ],
+            )
+            db_con.executemany(
+                "INSERT INTO findings VALUES (?, ?, 'OPEN')",
+                [("f0-1", "s0-vuln"), ("f0-2", "s0-multi")],
+            )
+          elif find_scan_num == 1:
+            # Scan 1: vuln.py now has 0 new findings (uncovered lines benign), multi.py has 1 more finding
+            db_con.executemany(
+                "INSERT INTO sessions VALUES (?, 'FIND', 'COMPLETED', ?, ?, ?, ?, 'parent-1')",
+                [
+                    ("s1-clean", "clean.py", "t1", "t1", repo_dir),
+                    ("s1-vuln", "vuln.py", "t1", "t1", repo_dir),
+                    ("s1-multi", "multi.py", "t1", "t1", repo_dir),
+                ],
+            )
+            db_con.execute("INSERT INTO findings VALUES ('f1-1', 's1-multi', 'OPEN')")
+          db_con.commit()
+          db_con.close()
+          find_scan_num += 1
+          return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+      orig_find = cm.find
+
+      def spy_find(*args, **kwargs):
+        clean_path = kwargs.get("clean_files_file")
+        if clean_path is not None:
+          observed_clean_paths.append(clean_path)
+          with open(clean_path, "r", encoding="utf-8") as fh:
+            observed_clean_contents.append(fh.read())
+        return orig_find(*args, **kwargs)
+
+      with patch("codemender.run_command", side_effect=fake_run_command) as mock_run, patch.object(
+          cm, "find", side_effect=spy_find
+      ):
+        res = cm.find(scan_mode=codemender.ScanMode.COMPLETE, extra_flags=["--deep-workers=16"])
+
+      self.assertEqual(res.returncode, 0)
+      self.assertEqual(find_scan_num, 3)
+      self.assertEqual(len(observed_clean_paths), 3)
+      # All 3 deep scans share the exact same temporary file tied to find_complete's lifecycle.
+      self.assertEqual(len(set(observed_clean_paths)), 1)
+      # Scan 0 starts empty; Scan 1 has clean.py; Scan 2 has both clean.py and vuln.py.
+      self.assertEqual(
+          observed_clean_contents,
+          [
+              "",
+              "clean.py\n",
+              "clean.py\nvuln.py\n",
+          ],
+      )
+      # Temporary file is cleaned up after find_complete exits.
+      self.assertFalse(os.path.exists(observed_clean_paths[0]))
+      self.assertEqual(mock_run.call_count, 6)
+
   def test_find_handles_ci_gate_exit(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
     proc = types.SimpleNamespace(
@@ -286,6 +402,7 @@ class CodeMenderTests(unittest.TestCase):
     expected_ctx = codemender._FIND_CONTEXT.format(
         report_file=fake_tmp_path,
         discouraged_cwes_file=fake_tmp_path,
+        clean_files_file=fake_tmp_path,
     )
     self.assertEqual(res, proc_success)
     self.assertEqual(mock_run.call_count, 4)

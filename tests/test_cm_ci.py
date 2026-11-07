@@ -214,6 +214,7 @@ class TestCmCi(unittest.TestCase):
         [
             (["--quick"], ScanMode.QUICK, None, 0),
             (["--diff"], ScanMode.DIFF, None, 0),
+            (["--complete"], ScanMode.COMPLETE, None, 0),
             (["--fail-on", "CRITICAL", "--deep"], ScanMode.DEEP, None, 4),
             (["--fail-on", "LOW", "--deep"], ScanMode.DEEP, None, 0),
             (["--deep"], ScanMode.DEEP, RuntimeError("cm find failed with exit code 5"), 5),

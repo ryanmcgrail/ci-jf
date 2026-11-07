@@ -27,11 +27,13 @@ _DISCOURAGED_CWES_PATH = os.path.join(
 )
 _ACTIVE_REPORT_STATUSES = frozenset({"OPEN", "VERIFIED", "REOPENED"})
 _FIND_CONTEXT = (
-    'First, run `jq -r \'.[] | select(.file_path | endswith("<file>")) | .snippet\' {report_file}` '
-    "(replacing <file> with the currently scanned file path) to get the "
-    "snippets of all preexisting findings for that file; never query "
-    "{report_file} for any other file. Treat every line of code "
-    "contained in any returned snippet (including any lines in the file "
+    'First, run `grep -Fxq "<file>" {clean_files_file} && echo "ALREADY_AUDITED" || jq -r \'.[] | select(.file_path | endswith("<file>")) | .snippet\' {report_file}` '
+    "(replacing <file> with the currently scanned repo-relative file path) to "
+    "check if the file was already completely audited or to get the snippets "
+    "of all preexisting findings for that file; never query {clean_files_file} "
+    "or {report_file} for any other file. If the command outputs "
+    "ALREADY_AUDITED, stop immediately and report 0 vulnerabilities. Treat "
+    "every line of code contained in any returned snippet (including any lines in the file "
     "between parts of a snippet separated by `...`) as already having a "
     "finding associated with it—determined solely by the snippet text, never "
     "by `start_line` or `end_line`—and completely skip checking or reporting "
@@ -51,7 +53,7 @@ _FIND_CONTEXT = (
     '`grep -qx "CWE-<id>" {discouraged_cwes_file}` to check whether your '
     "candidate CWE ID is listed in {discouraged_cwes_file}, and if so, select "
     "a more specific, allowed CWE ID instead. Use `run_command` only for that "
-    "single initial `jq` lookup and final CWE `grep` check—never run git, "
+    "single initial check and final CWE `grep` check—never run git, "
     "diff, node, npm, ts-node, tsx, python, or rg commands, and never read or "
     "search test files, challenge metadata (.info.yml, challenges.yml), or "
     ".codemender files."
@@ -59,6 +61,7 @@ _FIND_CONTEXT = (
 
 
 class ScanMode(str, enum.Enum):
+  COMPLETE = "complete"
   DEEP = "deep"
   DIFF = "diff"
   QUICK = "quick"
@@ -212,13 +215,86 @@ class CodeMender:
       self._db = sqlite3.connect(db_path, timeout=10)
     return self._db
 
+  def _get_clean_files(self) -> List[str]:
+    """Returns repo-relative paths of files whose most recent completed FIND session produced 0 active findings."""
+    con = self.db
+    if con is None:
+      return []
+    repo_real = os.path.realpath(self.repo_dir)
+    try:
+      rows = con.execute(
+          """
+          SELECT s.target,
+                 (SELECT COUNT(*) FROM findings f
+                  WHERE f.session_id = s.session_id
+                    AND f.status IN ('OPEN', 'VERIFIED', 'REOPENED')) AS finding_count
+          FROM sessions s
+          WHERE s.session_type = 'FIND'
+            AND s.status = 'COMPLETED'
+            AND s.target != ''
+            AND (s.project_root = '' OR s.project_root = ? OR s.project_root = ?)
+            AND NOT EXISTS (
+                SELECT 1 FROM sessions c WHERE c.parent_session_id = s.session_id
+            )
+          ORDER BY s.updated_at ASC, s.created_at ASC, s.rowid ASC
+          """,
+          (self.repo_dir, repo_real),
+      ).fetchall()
+    except sqlite3.Error:
+      return []
+    latest_counts: Dict[str, int] = {}
+    for target, count in rows:
+      latest_counts[str(target)] = int(count)
+    return sorted(target for target, count in latest_counts.items() if count == 0)
+
+  def find_complete(
+      self,
+      target_or_id: Optional[str] = None,
+      extra_flags: Optional[List[str]] = None,
+  ) -> Any:
+    """Runs 3 sequential deep scans, tracking already-audited clean files via a temporary file."""
+    temp_dir = self.repo_dir if os.path.isdir(self.repo_dir) else None
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix="",
+        dir=temp_dir,
+        delete=False,
+        encoding="utf-8",
+    ) as clean_tmp_file:
+      clean_files_file = clean_tmp_file.name
+
+    try:
+      result = None
+      for scan_index in range(3):
+        if scan_index > 0:
+          clean_files = self._get_clean_files()
+          with open(clean_files_file, "w", encoding="utf-8") as clean_f:
+            if clean_files:
+              clean_f.write("\n".join(clean_files) + "\n")
+        result = self.find(
+            target_or_id=target_or_id,
+            scan_mode=ScanMode.DEEP,
+            extra_flags=extra_flags,
+            clean_files_file=clean_files_file,
+        )
+      return result
+    finally:
+      if os.path.exists(clean_files_file):
+        os.remove(clean_files_file)
+
   def find(
       self,
       target_or_id: Optional[str] = None,
       scan_mode: ScanMode = ScanMode.DEEP,
       extra_flags: Optional[List[str]] = None,
+      clean_files_file: Optional[str] = None,
   ) -> Any:
     """Runs the CodeMender find command on the target repository directory."""
+    if scan_mode == ScanMode.COMPLETE:
+      return self.find_complete(
+          target_or_id=target_or_id,
+          extra_flags=extra_flags,
+      )
     target = target_or_id if target_or_id is not None else self.repo_dir
     report_cmd = build_cm_command(
         self.cm_binary,
@@ -264,6 +340,23 @@ class CodeMender:
           else discouraged_cwes_file
       )
 
+    own_clean_files_file = clean_files_file is None
+    if own_clean_files_file:
+      with tempfile.NamedTemporaryFile(
+          mode="w",
+          suffix="",
+          dir=temp_dir,
+          delete=False,
+          encoding="utf-8",
+      ) as clean_tmp_file:
+        clean_tmp_file.write("")
+        clean_files_file = clean_tmp_file.name
+    clean_files_ref = (
+        os.path.basename(clean_files_file)
+        if temp_dir
+        else clean_files_file
+    )
+
     try:
       cmd_flags: List[str] = []
       if scan_mode == ScanMode.QUICK:
@@ -282,6 +375,7 @@ class CodeMender:
           _FIND_CONTEXT.format(
               report_file=report_ref,
               discouraged_cwes_file=discouraged_cwes_ref,
+              clean_files_file=clean_files_ref,
           ),
       ])
       command = build_cm_command(
@@ -306,7 +400,10 @@ class CodeMender:
         returncode = getattr(result, "returncode", 0)
         stdout = getattr(result, "stdout", "")
     finally:
-      for tmp_path in (report_file, discouraged_cwes_file):
+      cleanup_paths = [report_file, discouraged_cwes_file]
+      if own_clean_files_file and clean_files_file is not None:
+        cleanup_paths.append(clean_files_file)
+      for tmp_path in cleanup_paths:
         if os.path.exists(tmp_path):
           os.remove(tmp_path)
 

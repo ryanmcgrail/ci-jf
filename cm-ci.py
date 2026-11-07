@@ -256,6 +256,8 @@ def cmd_find(argv: List[str]) -> int:
             scan_mode = ScanMode.DIFF
         elif arg == "--deep":
             scan_mode = ScanMode.DEEP
+        elif arg == "--complete":
+            scan_mode = ScanMode.COMPLETE
         elif not arg.startswith("-") and target is None:
             target = arg
         else:
