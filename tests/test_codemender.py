@@ -349,22 +349,33 @@ class CodeMenderTests(unittest.TestCase):
         res = cm.find(scan_mode=codemender.ScanMode.COMPLETE, extra_flags=["--deep-workers=16"])
 
       self.assertEqual(res.returncode, 0)
-      self.assertEqual(find_scan_num, 3)
-      self.assertEqual(len(observed_clean_paths), 3)
-      # All 3 deep scans share the exact same temporary file tied to find_complete's lifecycle.
+      self.assertEqual(find_scan_num, 5)
+      self.assertEqual(len(observed_clean_paths), 5)
+      # All 5 deep scans share the exact same temporary file tied to find_complete's lifecycle.
       self.assertEqual(len(set(observed_clean_paths)), 1)
-      # Scan 0 starts empty; Scan 1 has clean.py; Scan 2 has both clean.py and vuln.py.
+      # Scan 0 starts empty; Scan 1 has clean.py; Scans 2-4 have both clean.py and vuln.py.
       self.assertEqual(
           observed_clean_contents,
           [
               "",
               "clean.py\n",
               "clean.py\nvuln.py\n",
+              "clean.py\nvuln.py\n",
+              "clean.py\nvuln.py\n",
           ],
       )
       # Temporary file is cleaned up after find_complete exits.
       self.assertFalse(os.path.exists(observed_clean_paths[0]))
-      self.assertEqual(mock_run.call_count, 6)
+      self.assertEqual(mock_run.call_count, 10)
+
+  def test_find_complete_custom_runs(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      cm = CodeMender(cm_binary="cm", repo_dir=tmpdir)
+      proc = types.SimpleNamespace(returncode=0, stdout="[]", stderr="")
+      with patch("codemender.run_command", return_value=proc) as mock_run:
+        cm.find(scan_mode=codemender.ScanMode.COMPLETE, complete_runs=2)
+      # 2 runs * (1 cm report + 1 cm find) = 4 calls
+      self.assertEqual(mock_run.call_count, 4)
 
   def test_find_handles_ci_gate_exit(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
