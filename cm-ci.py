@@ -44,6 +44,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from codemender import CodeMender, ScanMode
+from complete_scan import run_complete_scan
 from deduplication import (
     ACTIVE,
     CM_TWIN_REASONS,
@@ -247,18 +248,22 @@ def cmd_find(argv: List[str]) -> int:
     before = ctx.report()
     before_ids = {str(f.finding_id or "") for f in before}
     scan_mode = ScanMode.DEEP
+    is_complete_scan = False
     target: Optional[str] = None
     extra_cm_flags: List[str] = []
     complete_runs = int(opts["--complete-runs"]) if opts.get("--complete-runs") is not None else 5
     for arg in cm_args:
         if arg == "--quick":
             scan_mode = ScanMode.QUICK
+            is_complete_scan = False
         elif arg == "--diff":
             scan_mode = ScanMode.DIFF
+            is_complete_scan = False
         elif arg == "--deep":
             scan_mode = ScanMode.DEEP
+            is_complete_scan = False
         elif arg == "--complete":
-            scan_mode = ScanMode.COMPLETE
+            is_complete_scan = True
         elif arg.startswith("--complete-runs="):
             complete_runs = int(arg.split("=", 1)[1])
         elif not arg.startswith("-") and target is None:
@@ -267,15 +272,21 @@ def cmd_find(argv: List[str]) -> int:
             extra_cm_flags.append(arg)
     print(f"cm-ci: cm find {' '.join(cm_args)}".rstrip(), flush=True)
     try:
-        find_kwargs: Dict[str, Any] = {
-            "target_or_id": target,
-            "scan_mode": scan_mode,
-        }
-        if extra_cm_flags:
-            find_kwargs["extra_flags"] = extra_cm_flags
-        if complete_runs != 5:
-            find_kwargs["complete_runs"] = complete_runs
-        ctx.cm.find(**find_kwargs)
+        if is_complete_scan:
+            run_complete_scan(
+                ctx.cm,
+                target_or_id=target,
+                extra_flags=extra_cm_flags or None,
+                complete_runs=complete_runs,
+            )
+        else:
+            find_kwargs: Dict[str, Any] = {
+                "target_or_id": target,
+                "scan_mode": scan_mode,
+            }
+            if extra_cm_flags:
+                find_kwargs["extra_flags"] = extra_cm_flags
+            ctx.cm.find(**find_kwargs)
     except RuntimeError as e:
         print(f"cm-ci: {e}", file=sys.stderr)
         m = re.search(r"exit code (\d+)", str(e))

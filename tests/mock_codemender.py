@@ -142,7 +142,9 @@ class MockCodeMender:
         target_or_id: str | None = None,
         scan_mode: ScanMode = ScanMode.DEEP,
         extra_flags: list[str] | None = None,
-        complete_runs: int = 5,
+        clean_files_file: str | None = None,
+        max_turns: int = 8,
+        active_files: list[str] | None = None,
     ) -> Any:
         self.find_calls.append((target_or_id, scan_mode))
         if self._scheduled_error is not None:
