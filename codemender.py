@@ -43,20 +43,25 @@ _FIND_CONTEXT = (
     "the file that are not covered by any returned snippet; if all executable "
     "code in the file is covered by the returned snippets, or if the remaining "
     "uncovered lines in the file are benign, stop immediately and report 0 "
-    "vulnerabilities. Otherwise, thoroughly and exhaustively audit every "
-    "remaining uncovered line in the target file itself (checking every "
-    "uncovered function, route, middleware, handler, query, and statement) "
-    "and report all distinct vulnerabilities on uncovered lines in a single "
-    "pass rather than stopping after the first issue. Never read or dump "
-    "{discouraged_cwes_file} upfront; only after identifying a concrete "
-    "vulnerability and right before reporting it, run "
-    '`grep -qx "CWE-<id>" {discouraged_cwes_file}` to check whether your '
-    "candidate CWE ID is listed in {discouraged_cwes_file}, and if so, select "
-    "a more specific, allowed CWE ID instead. Use `run_command` only for that "
-    "single initial check and final CWE `grep` check—never run git, "
-    "diff, node, npm, ts-node, tsx, python, or rg commands, and never read or "
-    "search test files, challenge metadata (.info.yml, challenges.yml), or "
-    ".codemender files."
+    "vulnerabilities. Otherwise, first audit every remaining uncovered line in "
+    "the target file itself from top to bottom (cataloguing every uncovered "
+    "function, route, middleware, handler, secret, cryptographic call, regex, "
+    "query, and statement) to collect all candidate vulnerabilities across the "
+    "entire file before making any cross-file tool calls. Spend at most 2–3 "
+    "tool turns total on cross-file `grep_search` or `read_file` lookups only "
+    "when strictly necessary to confirm an external sink or middleware, and "
+    "report all distinct vulnerabilities on uncovered lines in a single pass "
+    "rather than stopping after the first issue. Never read or dump "
+    "{discouraged_cwes_file} upfront; only after identifying all candidate "
+    "vulnerabilities in the file and right before reporting them, run a single "
+    'batched check `grep -Ex "CWE-(<id1>|<id2>|...)" {discouraged_cwes_file}` '
+    "covering all candidate CWE IDs at once, and for any CWE ID listed in "
+    "{discouraged_cwes_file}, select a more specific, allowed CWE ID instead. "
+    "Use `run_command` only for that single initial check and single final "
+    "batched CWE `grep` check—never run git, diff, node, npm, ts-node, tsx, "
+    "python, or rg commands, and never read or search test files, "
+    "package manifests, dependency directories, challenge metadata (.info.yml, "
+    "challenges.yml), or .codemender files."
 )
 
 
@@ -251,8 +256,9 @@ class CodeMender:
       self,
       target_or_id: Optional[str] = None,
       extra_flags: Optional[List[str]] = None,
+      complete_runs: int = 5,
   ) -> Any:
-    """Runs 3 sequential deep scans, tracking already-audited clean files via a temporary file."""
+    """Runs sequential deep scans, tracking already-audited clean files via a temporary file."""
     temp_dir = self.repo_dir if os.path.isdir(self.repo_dir) else None
     with tempfile.NamedTemporaryFile(
         mode="w",
@@ -265,7 +271,7 @@ class CodeMender:
 
     try:
       result = None
-      for scan_index in range(3):
+      for scan_index in range(complete_runs):
         if scan_index > 0:
           clean_files = self._get_clean_files()
           with open(clean_files_file, "w", encoding="utf-8") as clean_f:
@@ -288,12 +294,14 @@ class CodeMender:
       scan_mode: ScanMode = ScanMode.DEEP,
       extra_flags: Optional[List[str]] = None,
       clean_files_file: Optional[str] = None,
+      complete_runs: int = 5,
   ) -> Any:
     """Runs the CodeMender find command on the target repository directory."""
     if scan_mode == ScanMode.COMPLETE:
       return self.find_complete(
           target_or_id=target_or_id,
           extra_flags=extra_flags,
+          complete_runs=complete_runs,
       )
     target = target_or_id if target_or_id is not None else self.repo_dir
     report_cmd = build_cm_command(

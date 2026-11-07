@@ -234,7 +234,7 @@ def cmd_check_config(argv: List[str]) -> int:
 # ─── find ────────────────────────────────────────────────────────────────────
 
 def cmd_find(argv: List[str]) -> int:
-    opts, cm_args = parse_opts(argv, ("--repo", "--existing", "--known", "--out-dir", "--fail-on"),
+    opts, cm_args = parse_opts(argv, ("--repo", "--existing", "--known", "--out-dir", "--fail-on", "--complete-runs"),
                                ("--no-update", "--no-dedup"), passthrough=True)
     need("cm")
     ctx = Ctx(opts.get("--repo"))
@@ -249,6 +249,7 @@ def cmd_find(argv: List[str]) -> int:
     scan_mode = ScanMode.DEEP
     target: Optional[str] = None
     extra_cm_flags: List[str] = []
+    complete_runs = int(opts["--complete-runs"]) if opts.get("--complete-runs") is not None else 5
     for arg in cm_args:
         if arg == "--quick":
             scan_mode = ScanMode.QUICK
@@ -258,16 +259,23 @@ def cmd_find(argv: List[str]) -> int:
             scan_mode = ScanMode.DEEP
         elif arg == "--complete":
             scan_mode = ScanMode.COMPLETE
+        elif arg.startswith("--complete-runs="):
+            complete_runs = int(arg.split("=", 1)[1])
         elif not arg.startswith("-") and target is None:
             target = arg
         else:
             extra_cm_flags.append(arg)
     print(f"cm-ci: cm find {' '.join(cm_args)}".rstrip(), flush=True)
     try:
+        find_kwargs: Dict[str, Any] = {
+            "target_or_id": target,
+            "scan_mode": scan_mode,
+        }
         if extra_cm_flags:
-            ctx.cm.find(target_or_id=target, scan_mode=scan_mode, extra_flags=extra_cm_flags)
-        else:
-            ctx.cm.find(target_or_id=target, scan_mode=scan_mode)
+            find_kwargs["extra_flags"] = extra_cm_flags
+        if complete_runs != 5:
+            find_kwargs["complete_runs"] = complete_runs
+        ctx.cm.find(**find_kwargs)
     except RuntimeError as e:
         print(f"cm-ci: {e}", file=sys.stderr)
         m = re.search(r"exit code (\d+)", str(e))
