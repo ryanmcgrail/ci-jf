@@ -367,6 +367,119 @@ class CodeMenderTests(unittest.TestCase):
       # Temporary file is cleaned up after find_complete exits.
       self.assertFalse(os.path.exists(observed_clean_paths[0]))
       self.assertEqual(mock_run.call_count, 10)
+      find_cmds = [
+          call.args[0]
+          for call in mock_run.call_args_list
+          if call.args[0][:2] == ["cm", "find"]
+      ]
+      self.assertEqual(len(find_cmds), 5)
+      # Pass 0 uses 8 turns and full-repo context.
+      self.assertEqual(find_cmds[0][find_cmds[0].index("--deep-max-turns") + 1], "8")
+      self.assertNotIn(
+          "Only audit these remaining files:",
+          find_cmds[0][find_cmds[0].index("--context") + 1],
+      )
+      # Pass 1 uses 12 turns and scopes to multi.py and vuln.py.
+      self.assertEqual(find_cmds[1][find_cmds[1].index("--deep-max-turns") + 1], "12")
+      self.assertTrue(
+          find_cmds[1][find_cmds[1].index("--context") + 1].endswith(
+              "Only audit these remaining files: `multi.py`, `vuln.py`."
+          )
+      )
+      # Passes 2-4 use 12 turns and scope only to multi.py.
+      for cmd in find_cmds[2:]:
+        self.assertEqual(cmd[cmd.index("--deep-max-turns") + 1], "12")
+        self.assertTrue(
+            cmd[cmd.index("--context") + 1].endswith(
+                "Only audit these remaining files: `multi.py`."
+            )
+        )
+
+  def test_find_complete_early_stops_and_deduplicates_inter_pass_findings(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      repo_dir = os.path.join(tmpdir, "repo")
+      cm_home = os.path.join(tmpdir, "cm_home")
+      os.makedirs(repo_dir)
+      os.makedirs(cm_home)
+      db_path = os.path.join(cm_home, "state.db")
+      con = sqlite3.connect(db_path)
+      con.execute(
+          "CREATE TABLE sessions ("
+          "session_id TEXT PRIMARY KEY, "
+          "session_type TEXT, "
+          "status TEXT, "
+          "target TEXT, "
+          "created_at TEXT, "
+          "updated_at TEXT, "
+          "project_root TEXT, "
+          "parent_session_id TEXT)"
+      )
+      con.execute(
+          "CREATE TABLE findings ("
+          "finding_id TEXT PRIMARY KEY, "
+          "session_id TEXT, "
+          "status TEXT, "
+          "file_path TEXT, "
+          "vuln_type TEXT, "
+          "start_line INTEGER, "
+          "end_line INTEGER, "
+          "snippet TEXT)"
+      )
+      con.commit()
+      con.close()
+
+      cm = CodeMender(
+          cm_binary="cm",
+          repo_dir=repo_dir,
+          env={"CM_HOME": cm_home},
+      )
+
+      find_scan_num = 0
+
+      def fake_run_command(cmd, **kwargs):
+        nonlocal find_scan_num
+        if cmd[:2] == ["cm", "report"]:
+          return types.SimpleNamespace(returncode=0, stdout="[]", stderr="")
+        if cmd[:2] == ["cm", "find"]:
+          db_con = sqlite3.connect(db_path)
+          if find_scan_num == 0:
+            # Pass 0: clean.py has 0 findings; vuln.py has 1 SQLi finding on lines 10-12.
+            db_con.executemany(
+                "INSERT INTO sessions VALUES (?, 'FIND', 'COMPLETED', ?, ?, ?, ?, 'parent-0')",
+                [
+                    ("s0-clean", "clean.py", "t0", "t0", repo_dir),
+                    ("s0-vuln", "vuln.py", "t0", "t0", repo_dir),
+                ],
+            )
+            db_con.execute(
+                "INSERT INTO findings VALUES ('f0-1', 's0-vuln', 'OPEN', 'vuln.py', 'CWE-89', 10, 12, 'db.query(user_input)')"
+            )
+          elif find_scan_num == 1:
+            # Pass 1: vuln.py worker re-reports a duplicate of f0-1 on overlapping lines 10-12.
+            # Inter-pass deduplication removes f1-dup right after Pass 1, leaving s1-vuln with 0 active findings,
+            # which triggers early stopping before Pass 2!
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s1-vuln', 'FIND', 'COMPLETED', 'vuln.py', 't1', 't1', ?, 'parent-1')",
+                (repo_dir,),
+            )
+            db_con.execute(
+                "INSERT INTO findings VALUES ('f1-dup', 's1-vuln', 'OPEN', 'vuln.py', 'CWE-89', 10, 12, 'db.query(user_input)')"
+            )
+          db_con.commit()
+          db_con.close()
+          find_scan_num += 1
+          return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+      with patch("codemender.run_command", side_effect=fake_run_command):
+        res = cm.find(scan_mode=codemender.ScanMode.COMPLETE, complete_runs=5)
+
+      self.assertEqual(res.returncode, 0)
+      # Stopped early after 2 passes instead of running all 5 passes!
+      self.assertEqual(find_scan_num, 2)
+      # Only the original finding f0-1 remains in state.db; f1-dup was removed.
+      remaining = cm.db.execute("SELECT finding_id FROM findings").fetchall()
+      self.assertEqual(remaining, [("f0-1",)])
 
   def test_find_complete_custom_runs(self):
     with tempfile.TemporaryDirectory() as tmpdir:

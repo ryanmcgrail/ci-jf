@@ -9,8 +9,10 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import types
 from typing import Any, Dict, Iterable, List, Optional
 
+from deduplication import dedup, remove_duplicates_in_db
 from finding import Finding
 
 logger = logging.getLogger("codemender")
@@ -220,11 +222,11 @@ class CodeMender:
       self._db = sqlite3.connect(db_path, timeout=10)
     return self._db
 
-  def _get_clean_files(self) -> List[str]:
-    """Returns repo-relative paths of files whose most recent completed FIND session produced 0 active findings."""
+  def _get_latest_session_finding_counts(self) -> Dict[str, int]:
+    """Returns the active finding count of the most recent completed per-file FIND session per target."""
     con = self.db
     if con is None:
-      return []
+      return {}
     repo_real = os.path.realpath(self.repo_dir)
     try:
       rows = con.execute(
@@ -237,6 +239,7 @@ class CodeMender:
           WHERE s.session_type = 'FIND'
             AND s.status = 'COMPLETED'
             AND s.target != ''
+            AND s.target != '.'
             AND (s.project_root = '' OR s.project_root = ? OR s.project_root = ?)
             AND NOT EXISTS (
                 SELECT 1 FROM sessions c WHERE c.parent_session_id = s.session_id
@@ -246,11 +249,45 @@ class CodeMender:
           (self.repo_dir, repo_real),
       ).fetchall()
     except sqlite3.Error:
-      return []
+      return {}
     latest_counts: Dict[str, int] = {}
     for target, count in rows:
       latest_counts[str(target)] = int(count)
-    return sorted(target for target, count in latest_counts.items() if count == 0)
+    return latest_counts
+
+  def _get_clean_files(self) -> List[str]:
+    """Returns repo-relative paths of files whose most recent completed FIND session produced 0 active findings."""
+    counts = self._get_latest_session_finding_counts()
+    return sorted(target for target, count in counts.items() if count == 0)
+
+  def _get_active_files(self) -> List[str]:
+    """Returns repo-relative paths of files whose most recent completed FIND session produced >= 1 active findings."""
+    counts = self._get_latest_session_finding_counts()
+    return sorted(target for target, count in counts.items() if count > 0)
+
+  def _deduplicate_db_findings(self) -> None:
+    """Deduplicates active findings in state.db so inter-pass duplicates do not keep files active."""
+    con = self.db
+    if con is None:
+      return
+    try:
+      cur = con.execute("SELECT * FROM findings ORDER BY rowid ASC")
+      col_names = [desc[0] for desc in (cur.description or [])]
+      rows = cur.fetchall()
+    except sqlite3.Error:
+      return
+    if not rows or "file_path" not in col_names:
+      return
+    findings = [
+        Finding.from_dict(dict(zip(col_names, row)))
+        for row in rows
+    ]
+    res = dedup([], findings, self.repo_dir)
+    if res["suppressed_duplicates"]:
+      remove_duplicates_in_db(
+          types.SimpleNamespace(cm=self),
+          res["suppressed_duplicates"],
+      )
 
   def find_complete(
       self,
@@ -272,8 +309,13 @@ class CodeMender:
     try:
       result = None
       for scan_index in range(complete_runs):
+        active_files: Optional[List[str]] = None
         if scan_index > 0:
-          clean_files = self._get_clean_files()
+          counts = self._get_latest_session_finding_counts()
+          clean_files = sorted(t for t, c in counts.items() if c == 0)
+          active_files = sorted(t for t, c in counts.items() if c > 0)
+          if counts and not active_files:
+            break
           with open(clean_files_file, "w", encoding="utf-8") as clean_f:
             if clean_files:
               clean_f.write("\n".join(clean_files) + "\n")
@@ -282,7 +324,10 @@ class CodeMender:
             scan_mode=ScanMode.DEEP,
             extra_flags=extra_flags,
             clean_files_file=clean_files_file,
+            max_turns=12 if scan_index > 0 else 8,
+            active_files=active_files or None,
         )
+        self._deduplicate_db_findings()
       return result
     finally:
       if os.path.exists(clean_files_file):
@@ -295,6 +340,8 @@ class CodeMender:
       extra_flags: Optional[List[str]] = None,
       clean_files_file: Optional[str] = None,
       complete_runs: int = 5,
+      max_turns: int = 8,
+      active_files: Optional[List[str]] = None,
   ) -> Any:
     """Runs the CodeMender find command on the target repository directory."""
     if scan_mode == ScanMode.COMPLETE:
@@ -375,16 +422,22 @@ class CodeMender:
         cmd_flags.append("--diff")
       if extra_flags:
         cmd_flags.extend(extra_flags)
+      context_str = _FIND_CONTEXT.format(
+          report_file=report_ref,
+          discouraged_cwes_file=discouraged_cwes_ref,
+          clean_files_file=clean_files_ref,
+      )
+      if active_files:
+        scoped_targets = ", ".join(f"`{f}`" for f in active_files)
+        context_str = (
+            f"{context_str} Only audit these remaining files: {scoped_targets}."
+        )
       cmd_flags.extend([
           "--enable-bash",
           "--deep-max-turns",
-          "8",
+          str(max_turns),
           "--context",
-          _FIND_CONTEXT.format(
-              report_file=report_ref,
-              discouraged_cwes_file=discouraged_cwes_ref,
-              clean_files_file=clean_files_ref,
-          ),
+          context_str,
       ])
       command = build_cm_command(
           self.cm_binary,
