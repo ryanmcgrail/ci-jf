@@ -16,6 +16,11 @@ OPERATION="${OPERATION:?OPERATION must be set}"
 CM_OPT_DIR="${CM_OPT_DIR:-/opt/cm}"
 SCRIPTS_DIR="$CM_OPT_DIR/scripts"
 CONFIG_DIR="$CM_OPT_DIR/config"
+CM_CI_DIR="${CM_CI_DIR:-$CM_OPT_DIR/cm-ci}"
+if [ ! -f "$CM_CI_DIR/cm-ci.py" ] && [ -f "$(cd "$(dirname "$0")/../.." 2>/dev/null && pwd)/cm-ci.py" ]; then
+  CM_CI_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+fi
+CM_CI="${CM_CI:-$CM_CI_DIR/cm-ci.py}"
 TASK_INDEX="${CLOUD_RUN_TASK_INDEX:-0}"
 JOB_TIMEOUT="${JOB_TIMEOUT:-172800}"
 SOFT_TIMEOUT_RESERVE="${SOFT_TIMEOUT_RESERVE:-300}"
@@ -38,8 +43,8 @@ INCLUDE_UNVERIFIED="${INCLUDE_UNVERIFIED:-0}"
 FINDING_IDS="${FINDING_IDS:-}"
 export CLOUDSDK_STORAGE_PARALLEL_COMPOSITE_UPLOAD_ENABLED=False
 
-# Deep and diff finds collect stats one session at a time over many sessions.
-case "$MODE" in deep|diff) SOFT_TIMEOUT_RESERVE="$SOFT_TIMEOUT_RESERVE_DEEP" ;; esac
+# Deep, complete, and diff finds collect stats one session at a time over many sessions.
+case "$MODE" in deep|diff|complete) SOFT_TIMEOUT_RESERVE="$SOFT_TIMEOUT_RESERVE_DEEP" ;; esac
 # Leave 120s of the reserve for summary and upload after token stats.
 TOKEN_STATS_TIMEOUT="${TOKEN_STATS_TIMEOUT:-$(( SOFT_TIMEOUT_RESERVE > 121 ? SOFT_TIMEOUT_RESERVE - 120 : 1 ))}"
 START_EPOCH="$(date +%s)"
@@ -311,17 +316,22 @@ diff_task_code() {  # $1 = raw cm exit code
 
 run_find() {
   local deep=() code
-  if [ "$MODE" = "deep" ]; then
+  if [ "$MODE" = "complete" ]; then
+    deep=(--complete)
+    [ -n "$DEEP_WORKERS" ] && deep+=(--deep-workers "$DEEP_WORKERS")
+  elif [ "$MODE" = "deep" ]; then
     deep=(--deep)
     [ -n "$DEEP_WORKERS" ] && deep+=(--deep-workers "$DEEP_WORKERS")
   elif [ "$MODE" = "diff" ]; then
-    deep=("--diff=$DIFF_REF")
+    deep=(--diff "--diff=$DIFF_REF")
     [ -n "$DIFF_WORKERS" ] && deep+=(--diff-workers "$DIFF_WORKERS")
+  elif [ "$MODE" = "shallow" ]; then
+    deep=(--quick)
   fi
   log "cm find (mode=$MODE, soft timeout $(soft_remaining)s)"
   # shellcheck disable=SC2086  # EXTRA_CM_ARGS is intentionally word-split.
   (cd "$REPO_DIR" && timeout --kill-after=15s "$(soft_remaining)" \
-    cm find "${deep[@]}" . --model "$MODEL" -y --bypass-warning $EXTRA_CM_ARGS \
+    python3 "$CM_CI" find . --repo "$REPO_DIR" ${deep[@]+"${deep[@]}"} --model "$MODEL" -y --bypass-warning $EXTRA_CM_ARGS \
     </dev/null 2>&1) | tee "$RESULTS_DIR/logs/execution.log"
   code=$?
   log "cm find exit code $code"

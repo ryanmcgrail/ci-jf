@@ -46,6 +46,7 @@ class EntrypointTestBase(unittest.TestCase):
       if f.is_file():
         shutil.copy(f, self.opt / "scripts" / f.name)
     shutil.copytree(ROOT / "config", self.opt / "config")
+    os.symlink(ROOT.parent, self.opt / "cm-ci")
     self.cm_log = self.tmp / "cm_calls.jsonl"
     self.sha = self._stage_cm_zip()
     self._stage_repo_tarball()

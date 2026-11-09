@@ -43,9 +43,12 @@ ENV PIP_NO_INDEX=1 \
 
 COPY scripts/ /opt/cm/scripts/
 COPY config/ /opt/cm/config/
+COPY cm-ci/ /opt/cm/cm-ci/
 COPY entrypoint.sh /opt/cm/entrypoint.sh
 RUN chmod 0755 /opt/cm/entrypoint.sh /opt/cm/scripts/* \
+ && (chmod 0755 /opt/cm/cm-ci/cm-ci.py 2>/dev/null || true) \
  && ln -s /opt/cm/scripts/cm-api-token-stats /usr/local/bin/cm-api-token-stats \
+ && ln -s /opt/cm/cm-ci/cm-ci.py /usr/local/bin/cm-ci.py \
  && useradd --create-home --uid 10001 --shell /bin/bash runner
 
 USER runner

@@ -50,12 +50,17 @@ for job in "$FIND_JOB" "$VERIFY_JOB" "$FIX_JOB"; do
   fi
 done
 
-# Build context = container/ plus the runtime config the image bakes in.
+# Build context = container/ plus the runtime config and cm-ci wrapper the image bakes in.
 CTX="$(mktemp -d "${TMPDIR:-/tmp}/cm_build.XXXXXX")"
 trap 'rm -rf "$CTX"' EXIT
 cp -a "$ROOT/container/." "$CTX/"
-mkdir -p "$CTX/config"
+mkdir -p "$CTX/config" "$CTX/cm-ci"
 cp "$ROOT/config/cm_config.yaml" "$ROOT/config/verify_context.md" "$CTX/config/"
+for f in cm-ci.py codemender.py complete_scan.py deduplication.py finding.py cwe_database.py cwec_v4.20.xml discouraged_cwes.txt; do
+  if [ -f "$ROOT/../$f" ]; then
+    cp "$ROOT/../$f" "$CTX/cm-ci/"
+  fi
+done
 
 echo "==> Building $IMAGE"
 # Submit async and poll status: streaming logs needs project Viewer.

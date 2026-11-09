@@ -99,7 +99,7 @@ def _build_parser():
   add("--region", default=common.DEFAULT_REGION)
   add("--cm-version", default="0.11.0")
   add("--model", default="gemini-3.8-flash")
-  add("--mode", choices=["shallow", "deep", "diff"], default="shallow",
+  add("--mode", choices=["shallow", "deep", "diff", "complete"], default="shallow",
       help="find mode; diff runs `cm find --diff=<diff_ref>` per manifest case")
   add("--extra-cm-args", default="")
   add("--from-find-run", help="find run_id, exp/run_id, or 'latest'")
@@ -213,15 +213,15 @@ def _check_mode(p, args):
   if args.mode == "diff":
     _check_diff_mode(p, args, extra)
     return
-  if args.mode != "deep":
+  if args.mode not in ("deep", "complete"):
     if args.deep_workers is not None:
       p.error("--deep-workers requires --mode deep")
     return
   if args.operation in ("verify", "fix", "verify-fix"):
-    p.error(f"--mode deep is not supported for --operation {args.operation}")
+    p.error(f"--mode {args.mode} is not supported for --operation {args.operation}")
   if _version_tuple(args.cm_version) < (0, 10):
     p.error(
-        f"--mode deep requires --cm-version >= 0.10.0 (got {args.cm_version};"
+        f"--mode {args.mode} requires --cm-version >= 0.10.0 (got {args.cm_version};"
         " cm < 0.10.0 has no --deep flag)"
     )
   if args.deep_workers is None:
@@ -259,8 +259,8 @@ def effective_diff_workers(args):
 
 
 def check_call_budget(args, total):
-  """Raises UsageError if a deep/diff find would exceed DEEP_CALL_BUDGET calls."""
-  if args.mode == "deep":
+  """Raises UsageError if a deep/complete/diff find would exceed DEEP_CALL_BUDGET calls."""
+  if args.mode in ("deep", "complete"):
     workers, unit, flag = args.deep_workers, "repo(s)", "--deep-workers"
   elif args.mode == "diff":
     workers, unit, flag = effective_diff_workers(args), "case(s)", "--diff-workers"
@@ -903,7 +903,7 @@ def dispatch_job(args, ctx, job, run_id, tasks, manifest, source):
           f" ({total} task(s), {len(manifest.get('repos', []))} repo(s))")
   res = ctx.runner.run(execute)
   deep = ""
-  if args.operation == "find" and args.mode == "deep":
+  if args.operation == "find" and args.mode in ("deep", "complete"):
     deep = (f", deep workers {args.deep_workers}/task"
             f" ({total * args.deep_workers}/{DEEP_CALL_BUDGET} calls)")
   elif args.operation == "find" and args.mode == "diff":
