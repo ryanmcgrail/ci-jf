@@ -28,7 +28,7 @@ while (( $# )); do
 done
 [ -n "$PROJECT" ] || { echo "--project is required" >&2; usage; }
 
-if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
+if [ "${ALLOW_DIRTY:-0}" != "1" ] && [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
   echo "refusing to deploy from a dirty tree; commit or stash first:" >&2
   git -C "$ROOT" status --short >&2
   exit 1

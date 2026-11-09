@@ -24,7 +24,7 @@ from cmrun import pipeline
 CM_ZIP = "cm-linux-amd64.zip"
 DEEP_CALL_BUDGET = 900  # max concurrent model calls per deep find run (API limit: 1000)
 MAX_DEEP_WORKERS = 16  # cm find --deep-workers range is 1..16
-DEFAULT_DEEP_WORKERS = 8  # cm's own default
+DEFAULT_DEEP_WORKERS = 16  # default for deep/complete scans
 MAX_DIFF_WORKERS = 16  # cm find --diff-workers range is 1..16
 DEFAULT_DIFF_WORKERS = 4  # cm's own default, used when --diff-workers is unset
 DEFAULT_TOKEN_STATS_WORKERS = 8  # cm-api-token-stats' own default
@@ -97,8 +97,8 @@ def _build_parser():
   add("--repos", nargs="+")
   add("--project")
   add("--region", default=common.DEFAULT_REGION)
-  add("--cm-version", default="0.11.0")
-  add("--model", default="gemini-3.8-flash")
+  add("--cm-version", default="0.18.0")
+  add("--model", default="gemini-4-argon")
   add("--mode", choices=["shallow", "deep", "diff", "complete"], default="shallow",
       help="find mode; diff runs `cm find --diff=<diff_ref>` per manifest case")
   add("--extra-cm-args", default="")

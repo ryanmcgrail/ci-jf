@@ -54,7 +54,7 @@ echo "==> [1/3] Applying Terraform infrastructure in $CONFIG_DIR"
 )
 
 echo "==> [2/3] Building runner image and updating Cloud Run jobs"
-"$ROOT/deploy.sh" --project "$PROJECT" --region "$REGION"
+ALLOW_DIRTY=1 "$ROOT/deploy.sh" --project "$PROJECT" --region "$REGION"
 
 echo "==> [3/3] Running data-diode self-test across all stages"
 "$ROOT/scripts/selftest.sh" --project "$PROJECT" --region "$REGION"

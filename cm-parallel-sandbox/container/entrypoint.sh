@@ -27,7 +27,7 @@ SOFT_TIMEOUT_RESERVE="${SOFT_TIMEOUT_RESERVE:-300}"
 SOFT_TIMEOUT_RESERVE_DEEP="${SOFT_TIMEOUT_RESERVE_DEEP:-900}"
 VERIFY_FINDING_TIMEOUT="${VERIFY_FINDING_TIMEOUT:-2400}"
 FIX_FINDING_TIMEOUT="${FIX_FINDING_TIMEOUT:-10800}"
-MODEL="${MODEL:-gemini-3.8-flash}"
+MODEL="${MODEL:-gemini-4-argon}"
 MODE="${MODE:-shallow}"
 DEEP_WORKERS="${DEEP_WORKERS:-}"  # cm find --deep-workers; empty = cm default
 DIFF_WORKERS="${DIFF_WORKERS:-}"  # cm find --diff-workers; empty = not passed
@@ -318,20 +318,20 @@ run_find() {
   local deep=() code
   if [ "$MODE" = "complete" ]; then
     deep=(--complete)
-    [ -n "$DEEP_WORKERS" ] && deep+=(--deep-workers "$DEEP_WORKERS")
+    [ -n "$DEEP_WORKERS" ] && [ "$DEEP_WORKERS" != "16" ] && deep+=("--deep-workers=$DEEP_WORKERS")
   elif [ "$MODE" = "deep" ]; then
     deep=(--deep)
-    [ -n "$DEEP_WORKERS" ] && deep+=(--deep-workers "$DEEP_WORKERS")
+    [ -n "$DEEP_WORKERS" ] && [ "$DEEP_WORKERS" != "16" ] && deep+=("--deep-workers=$DEEP_WORKERS")
   elif [ "$MODE" = "diff" ]; then
     deep=(--diff "--diff=$DIFF_REF")
-    [ -n "$DIFF_WORKERS" ] && deep+=(--diff-workers "$DIFF_WORKERS")
+    [ -n "$DIFF_WORKERS" ] && deep+=("--diff-workers=$DIFF_WORKERS")
   elif [ "$MODE" = "shallow" ]; then
     deep=(--quick)
   fi
   log "cm find (mode=$MODE, soft timeout $(soft_remaining)s)"
   # shellcheck disable=SC2086  # EXTRA_CM_ARGS is intentionally word-split.
   (cd "$REPO_DIR" && timeout --kill-after=15s "$(soft_remaining)" \
-    python3 "$CM_CI" find . --repo "$REPO_DIR" ${deep[@]+"${deep[@]}"} --model "$MODEL" -y --bypass-warning $EXTRA_CM_ARGS \
+    python3 "$CM_CI" find . --repo "$REPO_DIR" ${deep[@]+"${deep[@]}"} "--model=$MODEL" -y $EXTRA_CM_ARGS \
     </dev/null 2>&1) | tee "$RESULTS_DIR/logs/execution.log"
   code=$?
   log "cm find exit code $code"
