@@ -26,43 +26,30 @@ _DISCOURAGED_CWES_PATH = os.path.join(
     "discouraged_cwes.txt",
 )
 _ACTIVE_REPORT_STATUSES = frozenset({"OPEN", "VERIFIED", "REOPENED"})
-_FIND_CONTEXT = (
-    'First, run `grep -Fxq "<file>" {clean_files_file} && echo "ALREADY_AUDITED" || jq -r \'.[] | select(.file_path | endswith("<file>")) | .snippet\' {report_file}` '
-    "(replacing <file> with the currently scanned repo-relative file path) to "
-    "check if the file was already completely audited or to get the snippets "
-    "of all preexisting findings for that file; never query {clean_files_file} "
-    "or {report_file} for any other file. If the command outputs "
-    "ALREADY_AUDITED, stop immediately and report 0 vulnerabilities. Treat "
-    "every line of code contained in any returned snippet (including any lines in the file "
-    "between parts of a snippet separated by `...`) as already having a "
-    "finding associated with it—determined solely by the snippet text, never "
-    "by `start_line` or `end_line`—and completely skip checking or reporting "
-    "vulnerabilities on those lines (never report a finding whose snippet or "
-    "sink overlaps any line in a returned snippet, and report at most one "
-    "finding per distinct code block/line range). Only check lines of code in "
-    "the file that are not covered by any returned snippet; if all executable "
-    "code in the file is covered by the returned snippets, or if the remaining "
-    "uncovered lines in the file are benign, stop immediately and report 0 "
-    "vulnerabilities. Otherwise, first audit every remaining uncovered line in "
-    "the target file itself from top to bottom (cataloguing every uncovered "
-    "function, route, middleware, handler, secret, cryptographic call, regex, "
-    "query, and statement) to collect all candidate vulnerabilities across the "
-    "entire file before making any cross-file tool calls. Spend at most 2–3 "
-    "tool turns total on cross-file `grep_search` or `read_file` lookups only "
-    "when strictly necessary to confirm an external sink or middleware, and "
-    "report all distinct vulnerabilities on uncovered lines in a single pass "
-    "rather than stopping after the first issue. Never read or dump "
-    "{discouraged_cwes_file} upfront; only after identifying all candidate "
-    "vulnerabilities in the file and right before reporting them, run a single "
-    'batched check `grep -Ex "CWE-(<id1>|<id2>|...)" {discouraged_cwes_file}` '
-    "covering all candidate CWE IDs at once, and for any CWE ID listed in "
-    "{discouraged_cwes_file}, select a more specific, allowed CWE ID instead. "
-    "Use `run_command` only for that single initial check and single final "
-    "batched CWE `grep` check—never run git, diff, node, npm, ts-node, tsx, "
-    "python, or rg commands, and never read or search test files, "
-    "package manifests, dependency directories, challenge metadata (.info.yml, "
-    "challenges.yml), or .codemender files."
-)
+_FIND_CONTEXT = """\
+# 1. Initial Pre-Audit Check
+- First, run `grep -Fxq "<file>" {clean_files_file} && echo "ALREADY_AUDITED" || jq -r '.[] | select(.file_path | endswith("<file>")) | .snippet' {report_file}` (replacing <file> with the currently scanned repo-relative file path) to check if the file was already completely audited or to get the snippets of all preexisting findings for that file.
+- Never query {clean_files_file} or {report_file} for any other file.
+- If the command outputs ALREADY_AUDITED, stop immediately and report 0 vulnerabilities.
+
+# 2. Preexisting Snippet & Line Coverage Rules
+- Treat every line of code contained in any returned snippet (including any lines in the file between parts of a snippet separated by `...`) as already having a finding associated with it—determined solely by the snippet text, never by `start_line` or `end_line`—and completely skip checking or reporting vulnerabilities on those lines.
+- Never report a finding whose snippet or sink overlaps any line in a returned snippet, and report at most one finding per distinct code block/line range.
+- Only check lines of code in the file that are not covered by any returned snippet; if all executable code in the file is covered by the returned snippets, or if the remaining uncovered lines in the file are benign, stop immediately and report 0 vulnerabilities.
+
+# 3. File Audit & Cross-File Lookup Strategy
+- Otherwise, first audit every remaining uncovered line in the target file itself from top to bottom (cataloguing every uncovered function, route, middleware, handler, secret, cryptographic call, regex, query, and statement) to collect all candidate vulnerabilities across the entire file before making any cross-file tool calls.
+- Spend at most 2–3 tool turns total on cross-file `grep_search` or `read_file` lookups only when strictly necessary to confirm an external sink or middleware.
+- Report all distinct vulnerabilities on uncovered lines in a single pass rather than stopping after the first issue.
+
+# 4. CWE Selection & Validation
+- Never read or dump {discouraged_cwes_file} upfront.
+- Only after identifying all candidate vulnerabilities in the file and right before reporting them, run a single batched check `grep -Ex "CWE-(<id1>|<id2>|...)" {discouraged_cwes_file}` covering all candidate CWE IDs at once.
+- For any CWE ID listed in {discouraged_cwes_file}, select a more specific, allowed CWE ID instead.
+
+# 5. Tool & File Restrictions
+- Use `run_command` only for that single initial check and single final batched CWE `grep` check—never run git, diff, node, npm, ts-node, tsx, python, or rg commands.
+- Never read or search test files, package manifests, dependency directories, challenge metadata (.info.yml, challenges.yml), or .codemender files."""
 
 
 class ScanMode(str, enum.Enum):
