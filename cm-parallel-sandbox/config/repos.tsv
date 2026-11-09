@@ -1,0 +1,89 @@
+repo_id	name	git_url	pinned_ref	language	build_system	domain	size_bucket	approx_loc	split	notes
+p01-flask	Flask	https://github.com/pallets/flask.git	3.0.3	python	pip	library	small	17600	OPEN_SOURCE	Clean production Python web framework
+p02-fastapi	FastAPI	https://github.com/tiangolo/fastapi.git	0.111.0	python	pip	rest_api	medium	93000	OPEN_SOURCE	Clean production Python ASGI API
+p03-scikit-learn	scikit-learn	https://github.com/scikit-learn/scikit-learn.git	1.5.0	python	pip	data_ml	large	405500	OPEN_SOURCE	Clean Python ML library (native ext)
+p04-pytorch-geom	PyTorch Geometric	https://github.com/pyg-team/pytorch_geometric.git	2.5.3	python	pip	data_ml	medium	152500	OPEN_SOURCE	Clean Python deep-learning library
+p05-django	Django	https://github.com/django/django.git	5.0.6	python	pip	monolith	large	468900	OPEN_SOURCE	Clean Python full-stack web framework
+p06-requests	Requests	https://github.com/psf/requests.git	v2.32.3	python	pip	library	small	11200	OPEN_SOURCE	Clean Python HTTP client library
+p07-express	Express.js	https://github.com/expressjs/express.git	4.19.2	javascript	npm	library	small	23400	OPEN_SOURCE	Clean Node.js web framework
+p08-axios	Axios	https://github.com/axios/axios.git	v1.7.2	javascript	npm	library	small	15900	OPEN_SOURCE	Clean JS/Node HTTP client library
+p09-react-admin	React Admin	https://github.com/marmelab/react-admin.git	v4.16.0	typescript	yarn	web_frontend	medium	138700	OPEN_SOURCE	Clean React/TS admin framework
+p10-nextjs	Next.js	https://github.com/vercel/next.js.git	v14.2.3	typescript	npm	web_frontend	mega	1174200	OPEN_SOURCE	Clean Next.js SSR frontend
+p11-vue	Vue Core	https://github.com/vuejs/core.git	v3.4.27	typescript	pnpm	web_frontend	medium	129000	OPEN_SOURCE	Clean Vue 3 reactive framework core
+p12-grafana	Grafana	https://github.com/grafana/grafana.git	v11.0.0	typescript	yarn	monolith	mega	1402300	OPEN_SOURCE	Large TS/Go analytics dashboard
+p13-gin	Gin	https://github.com/gin-gonic/gin.git	v1.10.0	go	go_mod	library	small	18900	OPEN_SOURCE	Clean Go web framework
+p14-fzf	fzf	https://github.com/junegunn/fzf.git	0.53.0	go	go_mod	cli	small	24900	OPEN_SOURCE	Clean Go interactive CLI
+p15-prometheus	Prometheus	https://github.com/prometheus/prometheus.git	v2.52.0	go	go_mod	microservices	medium	227400	OPEN_SOURCE	Clean Go monitoring server
+p16-traefik	Traefik	https://github.com/traefik/traefik.git	v3.0.2	go	go_mod	microservices	medium	159800	OPEN_SOURCE	Clean Go reverse proxy
+p17-opentofu	OpenTofu	https://github.com/opentofu/opentofu.git	v1.7.2	go	go_mod	iac	large	429300	OPEN_SOURCE	Clean OSS IaC (Terraform fork)
+p18-kubernetes	Kubernetes	https://github.com/kubernetes/kubernetes.git	v1.30.1	go	bazel	monolith	mega	2462600	OPEN_SOURCE	Mega Go container orchestration core
+p19-argocd	ArgoCD	https://github.com/argoproj/argo-cd.git	v2.11.2	go	go_mod	microservices	medium	238300	OPEN_SOURCE	Clean Go GitOps delivery controller
+p20-spring-boot	Spring Boot	https://github.com/spring-projects/spring-boot.git	v3.3.0	java	gradle	microservices	large	744200	OPEN_SOURCE	Clean enterprise Spring Boot
+p21-keycloak	Keycloak	https://github.com/keycloak/keycloak.git	24.0.4	java	maven	rest_api	mega	1011200	OPEN_SOURCE	Clean Java identity/auth server
+p22-retrofit	Retrofit	https://github.com/square/retrofit.git	2.11.0	java	gradle	mobile	small	39700	OPEN_SOURCE	Clean Java/Android HTTP client
+p23-netty	Netty	https://github.com/netty/netty.git	netty-4.1.110.Final	java	maven	library	large	518500	OPEN_SOURCE	Clean Java async network framework
+p24-guava	Guava	https://github.com/google/guava.git	v33.2.0	java	maven	library	large	789100	OPEN_SOURCE	Clean Java core libraries
+p25-ktor	Ktor	https://github.com/ktorio/ktor.git	2.3.11	kotlin	gradle	microservices	medium	214600	OPEN_SOURCE	Clean Kotlin async microservice
+p26-okhttp	OkHttp	https://github.com/square/okhttp.git	parent-4.12.0	kotlin	gradle	library	medium	97500	OPEN_SOURCE	Clean Kotlin networking library
+p27-ripgrep	ripgrep	https://github.com/BurntSushi/ripgrep.git	14.1.0	rust	cargo	cli	medium	50200	OPEN_SOURCE	Clean Rust high-performance CLI
+p28-tokio	Tokio	https://github.com/tokio-rs/tokio.git	tokio-1.38.0	rust	cargo	library	medium	153200	OPEN_SOURCE	Clean Rust async runtime
+p29-clap	clap	https://github.com/clap-rs/clap.git	v4.5.4	rust	cargo	library	medium	74700	OPEN_SOURCE	Clean Rust CLI argument parser
+p30-valkey	Valkey	https://github.com/valkey-io/valkey.git	7.2.5	c	make	embedded	large	287500	OPEN_SOURCE	Clean Redis OSS fork in C
+p31-curl	libcurl	https://github.com/curl/curl.git	curl-8_8_0	c	cmake	library	large	271300	OPEN_SOURCE	Clean C HTTP client library
+p32-wireguard	WireGuard Linux	https://github.com/WireGuard/wireguard-linux-compat.git	18fbcd68a35a892527345dc5679d0b2d860ee004	c	make	embedded	small	33800	OPEN_SOURCE	Clean kernel crypto module
+p33-openssl	OpenSSL	https://github.com/openssl/openssl.git	openssl-3.3.0	c	make	library	large	769200	OPEN_SOURCE	Clean C cryptography/TLS library
+p34-zephyr	Zephyr RTOS	https://github.com/zephyrproject-rtos/zephyr.git	v3.6.0	c	cmake	embedded	mega	2613900	OPEN_SOURCE	Clean embedded C RTOS framework
+p35-grpc	gRPC C++	https://github.com/grpc/grpc.git	v1.64.0	cpp	cmake	microservices	mega	1707400	OPEN_SOURCE	Clean high-performance RPC framework
+p36-envoy	Envoy	https://github.com/envoyproxy/envoy.git	v1.30.2	cpp	bazel	microservices	mega	1188600	OPEN_SOURCE	Clean C++ edge/service proxy
+p37-flarum	Flarum	https://github.com/flarum/framework.git	v1.8.5	php	composer	web_frontend	medium	124300	OPEN_SOURCE	Clean modern PHP forum framework
+p38-symfony	Symfony	https://github.com/symfony/symfony.git	v7.1.0	php	composer	library	mega	1698900	OPEN_SOURCE	Clean PHP enterprise MVC framework
+p39-discourse	Discourse	https://github.com/discourse/discourse.git	v3.2.3	ruby	bundler	monolith	large	840100	OPEN_SOURCE	Clean modern Ruby on Rails monolith
+p40-aspnet-core	ASP.NET Core	https://github.com/dotnet/aspnetcore.git	v8.0.6	csharp	dotnet	web_frontend	mega	1537700	OPEN_SOURCE	Clean enterprise .NET web app
+p42-typeorm	TypeORM	https://github.com/typeorm/typeorm.git	3d55188c0dd1256f520143379ecf97f45e71acba	typescript	npm	library_sdk	large	263900	OPEN_SOURCE	Data-mapper/ActiveRecord ORM for TypeScript and JavaScript
+p43-calcom	Cal.com	https://github.com/calcom/cal.com.git	87d2ec9e7575ada6eeafd65b3c434d9b3e29382f	typescript	yarn	web_frontend	large	305500	OPEN_SOURCE	Full-stack Next.js/tRPC/Prisma scheduling platform monorepo
+h01-sqlalchemy	SQLAlchemy	https://github.com/sqlalchemy/sqlalchemy.git	rel_2_0_30	python	pip	library	large	575200	OPEN_SOURCE	In-distribution real Python ORM
+h02-pandas	pandas	https://github.com/pandas-dev/pandas.git	v2.2.2	python	pip	data_ml	large	640300	OPEN_SOURCE	In-distribution real Python data library
+h03-lodash	Lodash	https://github.com/lodash/lodash.git	4.17.21	javascript	npm	library	medium	51600	OPEN_SOURCE	In-distribution real JS utility library
+h04-svelte	Svelte	https://github.com/sveltejs/svelte.git	a8deae9323f942be6a9cffe414fdc2a7484f70ca	javascript	pnpm	web_frontend	medium	125800	OPEN_SOURCE	In-distribution real TS UI framework
+h05-cobra	Cobra	https://github.com/spf13/cobra.git	v1.8.0	go	go_mod	library	small	15300	OPEN_SOURCE	In-distribution real Go CLI library
+h06-caddy	Caddy	https://github.com/caddyserver/caddy.git	v2.8.4	go	go_mod	microservices	medium	76100	OPEN_SOURCE	In-distribution real Go web server
+h07-jackson	Jackson Databind	https://github.com/FasterXML/jackson-databind.git	jackson-databind-2.17.1	java	maven	library	medium	242600	OPEN_SOURCE	In-distribution real Java JSON library
+h08-hikaricp	HikariCP	https://github.com/brettwooldridge/HikariCP.git	HikariCP-5.1.0	java	maven	library	small	19700	OPEN_SOURCE	In-distribution real Java JDBC pool
+h09-exposed	Exposed	https://github.com/JetBrains/Exposed.git	0.50.1	kotlin	gradle	library	medium	54800	OPEN_SOURCE	In-distribution real Kotlin SQL library
+h10-serde	Serde	https://github.com/serde-rs/serde.git	v1.0.203	rust	cargo	library	small	38600	OPEN_SOURCE	In-distribution real Rust serialization
+h11-nginx	nginx	https://github.com/nginx/nginx.git	release-1.27.0	c	make	microservices	medium	231700	OPEN_SOURCE	In-distribution real C web server
+h12-fmt	fmt	https://github.com/fmtlib/fmt.git	10.2.1	cpp	cmake	library	medium	68500	OPEN_SOURCE	In-distribution real C++ formatting library
+h13-laravel	Laravel Framework	https://github.com/laravel/framework.git	v11.9.0	php	composer	monolith	large	409300	OPEN_SOURCE	In-distribution real PHP web framework
+h14-sidekiq	Sidekiq	https://github.com/sidekiq/sidekiq.git	v7.2.4	ruby	bundler	library	small	17100	OPEN_SOURCE	In-distribution real Ruby job framework
+h15-dapper	Dapper	https://github.com/DapperLib/Dapper.git	2.1.35	csharp	dotnet	library	small	25800	OPEN_SOURCE	In-distribution real .NET micro-ORM
+o01-juice-shop	OWASP Juice Shop	https://github.com/juice-shop/juice-shop.git	v16.0.0	typescript	npm	web_frontend	medium	88900	OWASP	OWASP vulnerable-by-design (out-of-sample)
+o02-webgoat	OWASP WebGoat	https://github.com/WebGoat/WebGoat.git	v2023.8	java	maven	rest_api	medium	82200	OWASP	OWASP vulnerable-by-design (out-of-sample)
+o03-nodegoat	OWASP NodeGoat	https://github.com/OWASP/NodeGoat.git	v1.3	javascript	npm	rest_api	micro	2100	OWASP	OWASP vulnerable-by-design (out-of-sample)
+o04-vampi	OWASP VAmPI	https://github.com/erev0s/VAmPI.git	f16052dce83f05847133ec98f01c5193a41de7d8	python	pip	rest_api	micro	500	OWASP	OWASP vulnerable-by-design (out-of-sample)
+o05-vulnerablelightapp	VulnerableLightApp	https://github.com/Aif4thah/VulnerableLightApp.git	8998b55caab6a4a5bb2d725ad054c797c7d101f4	csharp	dotnet	rest_api	micro	1000	OWASP	Vulnerable .NET API for research (HEAD of main)
+o06-vulnerableapp	OWASP VulnerableApp	https://github.com/SasanLabs/VulnerableApp.git	c4dd7572e92b992fc89b898de0cbd09d8713ac73	java	gradle	rest_api	small	32700	OWASP	OWASP VulnerableApp (HEAD of master)
+o07-brokencrystals	BrokenCrystals	https://github.com/NeuraLegion/brokencrystals.git	2a64b95586d4ef8dbb26803bf9ae8ec5182964f0	typescript	npm	web_frontend	small	16000	OWASP	Very vulnerable NestJS/React app (HEAD of stable)
+o08-benchmarkpython	OWASP BenchmarkPython	https://github.com/OWASP-Benchmark/BenchmarkPython.git	f1291485808b66e20ddb6b01b10dc71b3df8c8ba	python	pip	rest_api	medium	78700	OWASP	OWASP Benchmark for Python (HEAD of main)
+o09-benchmarkjava	OWASP BenchmarkJava	https://github.com/OWASP-Benchmark/BenchmarkJava.git	20cbf3d11123347e47ed89541e6942836def53f7	java	maven	rest_api	large	286500	OWASP	OWASP Benchmark for Java (HEAD of master)
+s01-jsmn	jsmn	https://github.com/zserge/jsmn.git	25647e692c7906b96ffd2b05ca54c097948e879c	c	make	library	micro	1200	OPEN_SOURCE	Minimal C JSON tokenizer; 6 cm-filtered files (small-repo cost study)
+s02-httprouter	httprouter	https://github.com/julienschmidt/httprouter.git	484018016424d215c0b87c42f4c9b57d980fbd00	go	go_mod	library	micro	2900	OPEN_SOURCE	Go HTTP request router; 6 cm-filtered files (small-repo cost study)
+s03-dsvw	DSVW	https://github.com/stamparm/DSVW.git	9ca3c9acf3defa0a6148d40e5f5cebeb5dcbb908	python	pip	monolith	micro	1300	OPEN_SOURCE	Damn Small Vulnerable Web (vulnerable-by-design, single file); 6 cm-filtered files (small-repo cost study)
+s04-dvna	DVNA	https://github.com/appsecco/dvna.git	9ba473add536f66ac9007966acb2a775dd31277a	javascript	npm	monolith	micro	800	OPEN_SOURCE	Damn Vulnerable NodeJS Application (vulnerable-by-design); 12 cm-filtered files (small-repo cost study)
+s05-php-jwt	php-jwt	https://github.com/firebase/php-jwt.git	0501f5729b9e2448516674aff07c7d1727869b8e	php	composer	library	micro	3700	OPEN_SOURCE	PHP JWT encode/decode library; 13 cm-filtered files (small-repo cost study)
+s06-go-oidc	go-oidc	https://github.com/coreos/go-oidc.git	c914bd380327a5a3a81403774d1a5d5b73772ce7	go	go_mod	library	micro	5000	OPEN_SOURCE	Go OpenID Connect client; 15 cm-filtered files (small-repo cost study)
+s07-httparse	httparse	https://github.com/seanmonstar/httparse.git	a0fa552e4e0fa9a5914a736ef3a556748fef709b	rust	cargo	library	micro	8100	OPEN_SOURCE	Rust zero-copy HTTP/1.x parser; 17 cm-filtered files (small-repo cost study)
+s08-javavulnlab	JavaVulnerableLab	https://github.com/CSPF-Founder/JavaVulnerableLab.git	626a106a49777507beb51955d19ef9d271a9d4a5	java	maven	monolith	micro	1800	OPEN_SOURCE	Vulnerable Java web app (vulnerable-by-design); 19 cm-filtered files (small-repo cost study)
+s09-serilog-aspnetcore	serilog-aspnetcore	https://github.com/serilog/serilog-aspnetcore.git	2002d1f7e356bf0e2980dd5a764529d8ee615264	csharp	dotnet	library	micro	1600	OPEN_SOURCE	Serilog integration for ASP.NET Core; 20 cm-filtered files (small-repo cost study)
+s10-omniauth	OmniAuth	https://github.com/omniauth/omniauth.git	2ad2d0dd9e15f8fd89814e00d3f50c61886d81cd	ruby	bundler	library	micro	3200	OPEN_SOURCE	Ruby multi-provider authentication framework; 23 cm-filtered files (small-repo cost study)
+s11-dvpwa	DVPWA	https://github.com/anxolerd/dvpwa.git	a1d8f89fac2e57093189853c6527c2b01fc1d9c1	python	pip	monolith	small	10700	OPEN_SOURCE	Damn Vulnerable Python Web App (vulnerable-by-design); 23 cm-filtered files (small-repo cost study)
+s12-libyaml	libyaml	https://github.com/yaml/libyaml.git	90a56d4500aa1a1798514c5cb55c3ad4cb095f94	c	cmake	library	small	17200	OPEN_SOURCE	C YAML parser and emitter; 24 cm-filtered files (small-repo cost study)
+s13-waitress	Waitress	https://github.com/Pylons/waitress.git	2b43237e9caa66f906d0f652f2519cc79ef969a5	python	pip	library	small	15600	OPEN_SOURCE	Python WSGI server; 45 cm-filtered files (small-repo cost study)
+s14-golang-jwt	golang-jwt	https://github.com/golang-jwt/jwt.git	73c870b18e68b6e654b2b03f485aa3c9fab32cea	go	go_mod	library	micro	6400	OPEN_SOURCE	Go JWT library; 46 cm-filtered files (small-repo cost study)
+s15-multer	Multer	https://github.com/expressjs/multer.git	dd9f0628e1288046b0f6a3c81f4aa13aa70622a4	javascript	npm	library	micro	6100	OPEN_SOURCE	Express multipart/form-data upload middleware; 47 cm-filtered files (small-repo cost study)
+s16-petclinic	Spring PetClinic	https://github.com/spring-projects/spring-petclinic.git	500158f732419217507c7656904b8e6aa1bcc0d6	java	maven	monolith	micro	4300	OPEN_SOURCE	Spring Boot sample web app; 50 cm-filtered files (small-repo cost study)
+s17-xvwa	XVWA	https://github.com/s4n7h0/xvwa.git	fb30fa517d288e618b521d252f61107ef6a24797	php	none	monolith	micro	5600	OPEN_SOURCE	Xtreme Vulnerable Web Application (vulnerable-by-design); 55 cm-filtered files (small-repo cost study)
+s18-password-hashes	password-hashes	https://github.com/RustCrypto/password-hashes.git	958527c7d855e1687e28f9e592e537003833ed1e	rust	cargo	library	small	10700	OPEN_SOURCE	Rust password hashing algorithms (argon2, bcrypt, scrypt, ...); 63 cm-filtered files (small-repo cost study)
+s19-ratelimit	AspNetCoreRateLimit	https://github.com/stefanprodan/AspNetCoreRateLimit.git	3a574a8e6a6ab1bfe3ecf285490568c08cf1aa65	csharp	dotnet	library	micro	2800	OPEN_SOURCE	ASP.NET Core rate-limiting middleware; 69 cm-filtered files (small-repo cost study)
+s20-dvsa	DVSA	https://github.com/OWASP/DVSA.git	c04e0a536ac54db8f732144be92b5f208169f8c4	typescript	npm	microservices	micro	5900	OPEN_SOURCE	Damn Vulnerable Serverless Application (vulnerable-by-design); 76 cm-filtered files (small-repo cost study)
+s21-java-jwt	java-jwt	https://github.com/auth0/java-jwt.git	29f252b2d6fea74df6576803d5fce5f6d6799cf3	java	gradle	library	small	14800	OPEN_SOURCE	Java JWT library; 77 cm-filtered files (small-repo cost study)
+s22-ruby-jwt	ruby-jwt	https://github.com/jwt/ruby-jwt.git	028d89e8ac613b5e140a3e026a32cfb2bc75fc86	ruby	bundler	library	micro	8100	OPEN_SOURCE	Ruby JWT library; 86 cm-filtered files (small-repo cost study)

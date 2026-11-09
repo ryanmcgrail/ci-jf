@@ -1,0 +1,109 @@
+rc=0
+--- log ---
+[entrypoint TS] task 0: find o04-vampi -> gs://p-cm-find-results/exp/G/o04-vampi/
+[entrypoint TS] cm find (mode=shallow, soft timeout Ns)
+[entrypoint TS] cm find exit code 0
+[entrypoint TS] cm-api-token-stats (limit 180s, workers default)
+[entrypoint TS] uploaded results to gs://p-cm-find-results/exp/G/o04-vampi/
+--- gcloud ---
+storage cat gs://p-cm-payload/runs/exp/G/tasks.json
+storage cp gs://p-cm-payload/bin/cm/0.10.0/cm-linux-amd64.zip <tmp>/cmtask.X/cm-linux-amd64.zip
+storage cp gs://p-cm-payload/repos/o04-vampi.tar.gz <tmp>/cmtask.X/repo.tar.gz
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+--- cm ---
+["--version"]
+["init", "-y"]
+["find", ".", "--model", "gemini-3.8-flash", "-y", "--bypass-warning"]
+["report", "--format", "json"]
+["report"]
+["stats", "--json", "--since", "Ns"]
+--- files ---
+cm_api_token_stats.json
+cm_stats.json
+findings.json
+findings_table.txt
+logs/cm_init.log
+logs/cm_logs.tar.gz
+logs/cm_stats.log
+logs/execution.log
+logs/token_stats.log
+repo_commit.txt
+state.db
+summary.json
+--- contents ---
+=== cm_stats.json
+{
+  "since": "Ns",
+  "total_turns": 4,
+  "total_polls": 6,
+  "command_types": 1,
+  "input_tokens": 25,
+  "output_tokens": 8,
+  "cached_tokens": 5,
+  "thought_tokens": 2,
+  "tool_calls": 3,
+  "total_tokens": 35,
+  "buckets": [
+    {
+      "label": "total",
+      "requests": 4,
+      "input_tokens": 25,
+      "output_tokens": 8,
+      "cached_tokens": 5,
+      "thought_tokens": 2,
+      "tool_calls": 3,
+      "total_tokens": 35
+    }
+  ]
+}
+
+=== findings.json
+[]
+=== findings_table.txt
+ID  SEVERITY  TITLE
+
+=== repo_commit.txt
+<sha40>
+
+=== summary.json
+{
+  "cm_version": "0.10.0",
+  "deep_workers": null,
+  "exit_code": 0,
+  "experiment_id": "exp",
+  "findings_count": 0,
+  "mode": "shallow",
+  "model": "gemini-3.8-flash",
+  "operation": "find",
+  "repo_id": "o04-vampi",
+  "run_id": "G",
+  "sessions": {
+    "dropped_from_db": 0,
+    "logs": 1,
+    "state_db": 1,
+    "union": 1
+  },
+  "severity_counts": {},
+  "status": "ok",
+  "token_stats_status": "ok",
+  "tokens": {
+    "cached_tokens": 0,
+    "input_tokens": 30,
+    "output_tokens": 10,
+    "thought_tokens": 2,
+    "tool_calls": 3,
+    "total_tokens": 42,
+    "total_turns": 4
+  }
+}

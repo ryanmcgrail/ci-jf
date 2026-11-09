@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Stub getent: resolves googleapis names to the private VIP.
+[ "$1" = hosts ] && echo "199.36.153.9    private.googleapis.com $2"

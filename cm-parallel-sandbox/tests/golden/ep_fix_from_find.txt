@@ -1,0 +1,350 @@
+rc=0
+--- log ---
+[entrypoint TS] task 0: fix o04-vampi -> gs://p-cm-fix-results/exp/G/o04-vampi/
+[entrypoint TS] FIX_LIMIT=2: fixing the first 2 by severity
+[entrypoint TS] fixing 2 finding(s) sequentially
+[entrypoint TS] finding 3e84cd12-afc1-508b-959e-e58c3b19e556 exit code 0
+[entrypoint TS] cm-api-token-stats (limit 180s, workers default)
+[entrypoint TS] finding 16dbc47c-637d-56fa-aef1-18f3db99ce5e exit code 0
+[entrypoint TS] cm-api-token-stats (limit 180s, workers default)
+[entrypoint TS] uploaded results to gs://p-cm-fix-results/exp/G/o04-vampi/
+--- gcloud ---
+storage cat gs://p-cm-payload/runs/exp/G/tasks.json
+storage cp gs://p-cm-payload/bin/cm/0.9.0/cm-linux-amd64.zip <tmp>/cmtask.X/cm-linux-amd64.zip
+storage cp gs://p-cm-payload/repos/o04-vampi.tar.gz <tmp>/cmtask.X/repo.tar.gz
+storage cp gs://p-cm-find-results/exp/FRUN/o04-vampi/findings.json <tmp>/cmtask.X/results/source_findings.json
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+--- cm ---
+["--version"]
+["init", "-y"]
+["report", "--format", "json"]
+["fix", "3e84cd12-afc1-508b-959e-e58c3b19e556", "--model", "gemini-3.8-flash", "-y", "--bypass-warning", "--unrestricted", "-c", "<context>"]
+["stats", "--json", "--since", "Ns"]
+["fix", "16dbc47c-637d-56fa-aef1-18f3db99ce5e", "--model", "gemini-3.8-flash", "-y", "--bypass-warning", "--unrestricted", "-c", "<context>"]
+["stats", "--json", "--since", "Ns"]
+["report", "--format", "json"]
+--- files ---
+findings/16dbc47c-637d-56fa-aef1-18f3db99ce5e/cm_stats.json
+findings/16dbc47c-637d-56fa-aef1-18f3db99ce5e/context.txt
+findings/16dbc47c-637d-56fa-aef1-18f3db99ce5e/exit_code
+findings/16dbc47c-637d-56fa-aef1-18f3db99ce5e/fix.log
+findings/16dbc47c-637d-56fa-aef1-18f3db99ce5e/patch.diff
+findings/16dbc47c-637d-56fa-aef1-18f3db99ce5e/token_stats.json
+findings/3e84cd12-afc1-508b-959e-e58c3b19e556/cm_stats.json
+findings/3e84cd12-afc1-508b-959e-e58c3b19e556/context.txt
+findings/3e84cd12-afc1-508b-959e-e58c3b19e556/exit_code
+findings/3e84cd12-afc1-508b-959e-e58c3b19e556/fix.log
+findings/3e84cd12-afc1-508b-959e-e58c3b19e556/patch.diff
+findings/3e84cd12-afc1-508b-959e-e58c3b19e556/token_stats.json
+imported_findings.json
+logs/cm_init.log
+logs/cm_stats.log
+logs/import.log
+logs/token_stats.log
+matching_finding_ids.txt
+patch.diff
+post_fix_report.json
+repo_commit.txt
+source_findings.json
+state.db
+summary.json
+tool_inventory.txt
+--- contents ---
+=== findings/16dbc47c-637d-56fa-aef1-18f3db99ce5e/cm_stats.json
+{
+  "since": "Ns",
+  "total_turns": 4,
+  "total_polls": 6,
+  "command_types": 1,
+  "input_tokens": 25,
+  "output_tokens": 8,
+  "cached_tokens": 5,
+  "thought_tokens": 2,
+  "tool_calls": 3,
+  "total_tokens": 35,
+  "buckets": [
+    {
+      "label": "total",
+      "requests": 4,
+      "input_tokens": 25,
+      "output_tokens": 8,
+      "cached_tokens": 5,
+      "thought_tokens": 2,
+      "tool_calls": 3,
+      "total_tokens": 35
+    }
+  ]
+}
+
+=== findings/16dbc47c-637d-56fa-aef1-18f3db99ce5e/exit_code
+0
+
+=== findings/16dbc47c-637d-56fa-aef1-18f3db99ce5e/patch.diff
+diff --git a/app.py b/app.py
+index 242ad1c..28d3522 100644
+--- a/app.py
++++ b/app.py
+@@ -1 +1,2 @@
+ print('vampi')
++# fix applied for 16dbc47c-637d-56fa-aef1-18f3db99ce5e
+
+=== findings/3e84cd12-afc1-508b-959e-e58c3b19e556/cm_stats.json
+{
+  "since": "Ns",
+  "total_turns": 4,
+  "total_polls": 6,
+  "command_types": 1,
+  "input_tokens": 25,
+  "output_tokens": 8,
+  "cached_tokens": 5,
+  "thought_tokens": 2,
+  "tool_calls": 3,
+  "total_tokens": 35,
+  "buckets": [
+    {
+      "label": "total",
+      "requests": 4,
+      "input_tokens": 25,
+      "output_tokens": 8,
+      "cached_tokens": 5,
+      "thought_tokens": 2,
+      "tool_calls": 3,
+      "total_tokens": 35
+    }
+  ]
+}
+
+=== findings/3e84cd12-afc1-508b-959e-e58c3b19e556/exit_code
+0
+
+=== findings/3e84cd12-afc1-508b-959e-e58c3b19e556/patch.diff
+diff --git a/app.py b/app.py
+index 242ad1c..b65674a 100644
+--- a/app.py
++++ b/app.py
+@@ -1 +1,2 @@
+ print('vampi')
++# fix applied for 3e84cd12-afc1-508b-959e-e58c3b19e556
+
+=== imported_findings.json
+[
+  {
+    "finding_id": "3e84cd12-afc1-508b-959e-e58c3b19e556",
+    "session_id": "sess-fixture",
+    "title": "Mass Assignment on User Registration Allows Privilege Escalation to Administrator",
+    "file_path": "/home/runner/workspace/o04-vampi/api_views/users.py",
+    "severity": "CRITICAL",
+    "confidence": 100,
+    "analysis": "Data Flow Analysis:\n- Source: HTTP POST request containing a JSON body sent to `/api/Users` with untrusted properties (such as `\"role\": \"admin\"`).\n- Sanitization/Validation: None. The pre-routing vali",
+    "snippet": "    const resource = finale.resource({\n      model,\n      endpoints: [`/api/${name}s`, `/api/${name}s/:id`],\n      excludeAttributes: exclude,\n      pagination: false,\n      include\n    })",
+    "vuln_type": "Mass Assignment",
+    "vuln_id": "CWE-915",
+    "status": "OPEN",
+    "start_line": 520,
+    "end_line": 526,
+    "verified": 0
+  },
+  {
+    "finding_id": "16dbc47c-637d-56fa-aef1-18f3db99ce5e",
+    "session_id": "sess-fixture",
+    "title": "Out-of-Bounds Heap Read in Curl_doh_decode_httpsrr via Missing Parameter Length Validation",
+    "file_path": "/home/runner/workspace/o04-vampi/api_views/books.py",
+    "severity": "HIGH",
+    "confidence": 95,
+    "analysis": "In `lib/doh.c`, `Curl_doh_decode_httpsrr()` parses HTTPS Resource Record (RR) parameters in a loop. For each parameter, it extracts a 2-byte parameter code (`pcode`) and a 2-byte parameter length (`pl",
+    "snippet": "  while(remaining >= 4) {\n    pcode = (uint16_t)((*cp << 8) + (*(cp + 1)));\n    cp += 2;\n    plen = (uint16_t)((*cp << 8) + (*(cp + 1)));\n    cp += 2;\n    remaining -= 4;\n    if(pcode == HTTPS_RR_CODE",
+    "vuln_type": "Out-of-bounds Read",
+    "vuln_id": "CWE-125",
+    "status": "OPEN",
+    "start_line": 1199,
+    "end_line": 1233,
+    "verified": 0
+  },
+  {
+    "finding_id": "e4462a0a-ef85-497c-a22b-b034fe9395f3",
+    "session_id": "sess-fixture",
+    "title": "Out-of-Bounds Heap Read in Curl_doh_decode_httpsrr via Missing Parameter Length Validation",
+    "file_path": "/home/runner/workspace/o04-vampi/models/user_model.py",
+    "severity": "HIGH",
+    "confidence": 95,
+    "analysis": "In `lib/doh.c`, `Curl_doh_decode_httpsrr()` parses HTTPS Resource Record (RR) parameters in a loop. For each parameter, it extracts a 2-byte parameter code (`pcode`) and a 2-byte parameter length (`pl",
+    "snippet": "  while(remaining >= 4) {\n    pcode = (uint16_t)((*cp << 8) + (*(cp + 1)));\n    cp += 2;\n    plen = (uint16_t)((*cp << 8) + (*(cp + 1)));\n    cp += 2;\n    remaining -= 4;\n    if(pcode == HTTPS_RR_CODE",
+    "vuln_type": "OUT-OF-BOUNDS READ",
+    "vuln_id": "CWE-125",
+    "fingerprint": "a1249e50fefc1f93",
+    "status": "OPEN",
+    "start_line": 1199,
+    "end_line": 1233,
+    "verified": 0
+  }
+]
+=== matching_finding_ids.txt
+3e84cd12-afc1-508b-959e-e58c3b19e556
+16dbc47c-637d-56fa-aef1-18f3db99ce5e
+
+=== patch.diff
+diff --git a/app.py b/app.py
+index 242ad1c..28d3522 100644
+--- a/app.py
++++ b/app.py
+@@ -1 +1,2 @@
+ print('vampi')
++# fix applied for 16dbc47c-637d-56fa-aef1-18f3db99ce5e
+diff --git a/app.py b/app.py
+index 242ad1c..b65674a 100644
+--- a/app.py
++++ b/app.py
+@@ -1 +1,2 @@
+ print('vampi')
++# fix applied for 3e84cd12-afc1-508b-959e-e58c3b19e556
+
+=== post_fix_report.json
+null
+
+=== repo_commit.txt
+<sha40>
+
+=== source_findings.json
+[
+  {
+    "finding_id": "3e84cd12-afc1-508b-959e-e58c3b19e556",
+    "session_id": "sess-fixture",
+    "title": "Mass Assignment on User Registration Allows Privilege Escalation to Administrator",
+    "file_path": "/home/runner/workspace/o04-vampi/api_views/users.py",
+    "severity": "CRITICAL",
+    "confidence": 100,
+    "analysis": "Data Flow Analysis:\n- Source: HTTP POST request containing a JSON body sent to `/api/Users` with untrusted properties (such as `\"role\": \"admin\"`).\n- Sanitization/Validation: None. The pre-routing vali",
+    "snippet": "    const resource = finale.resource({\n      model,\n      endpoints: [`/api/${name}s`, `/api/${name}s/:id`],\n      excludeAttributes: exclude,\n      pagination: false,\n      include\n    })",
+    "vuln_type": "Mass Assignment",
+    "vuln_id": "CWE-915",
+    "status": "OPEN",
+    "start_line": 520,
+    "end_line": 526
+  },
+  {
+    "finding_id": "16dbc47c-637d-56fa-aef1-18f3db99ce5e",
+    "session_id": "sess-fixture",
+    "title": "Out-of-Bounds Heap Read in Curl_doh_decode_httpsrr via Missing Parameter Length Validation",
+    "file_path": "/home/runner/workspace/o04-vampi/api_views/books.py",
+    "severity": "HIGH",
+    "confidence": 95,
+    "analysis": "In `lib/doh.c`, `Curl_doh_decode_httpsrr()` parses HTTPS Resource Record (RR) parameters in a loop. For each parameter, it extracts a 2-byte parameter code (`pcode`) and a 2-byte parameter length (`pl",
+    "snippet": "  while(remaining >= 4) {\n    pcode = (uint16_t)((*cp << 8) + (*(cp + 1)));\n    cp += 2;\n    plen = (uint16_t)((*cp << 8) + (*(cp + 1)));\n    cp += 2;\n    remaining -= 4;\n    if(pcode == HTTPS_RR_CODE",
+    "vuln_type": "Out-of-bounds Read",
+    "vuln_id": "CWE-125",
+    "status": "DISMISSED",
+    "start_line": 1199,
+    "end_line": 1233
+  },
+  {
+    "finding_id": "e4462a0a-ef85-497c-a22b-b034fe9395f3",
+    "session_id": "sess-fixture",
+    "title": "Out-of-Bounds Heap Read in Curl_doh_decode_httpsrr via Missing Parameter Length Validation",
+    "file_path": "/home/runner/workspace/o04-vampi/models/user_model.py",
+    "severity": "HIGH",
+    "confidence": 95,
+    "analysis": "In `lib/doh.c`, `Curl_doh_decode_httpsrr()` parses HTTPS Resource Record (RR) parameters in a loop. For each parameter, it extracts a 2-byte parameter code (`pcode`) and a 2-byte parameter length (`pl",
+    "snippet": "  while(remaining >= 4) {\n    pcode = (uint16_t)((*cp << 8) + (*(cp + 1)));\n    cp += 2;\n    plen = (uint16_t)((*cp << 8) + (*(cp + 1)));\n    cp += 2;\n    remaining -= 4;\n    if(pcode == HTTPS_RR_CODE",
+    "vuln_type": "OUT-OF-BOUNDS READ",
+    "vuln_id": "CWE-125",
+    "fingerprint": "a1249e50fefc1f93",
+    "status": "OPEN",
+    "start_line": 1199,
+    "end_line": 1233
+  },
+  {
+    "finding_id": "1b1da3bb-4574-5a47-840b-917b3ea83716",
+    "session_id": "sess-fixture",
+    "title": "Use of Uninitialized Stack Buffer in Curl_gss_log_error",
+    "file_path": "/home/runner/workspace/o04-vampi/config.py",
+    "severity": "MEDIUM",
+    "confidence": 90,
+    "analysis": "In `lib/curl_gssapi.c`, `Curl_gss_log_error()` allocates `char buf[GSS_LOG_BUFFER_LEN];` on the stack without zero-initialization or setting `buf[0] = '\\0'`. \n\n- **Source**: When GSS-API authenticatio",
+    "snippet": "  char buf[GSS_LOG_BUFFER_LEN];\n  size_t len = 0;\n\n  if(major != GSS_S_FAILURE)\n    len = display_gss_error(major, GSS_C_GSS_CODE, buf, len);\n\n  display_gss_error(minor, GSS_C_MECH_CODE, buf, len);\n\n ",
+    "vuln_type": "CWE-457: Use of Uninitialized Variable",
+    "vuln_id": "CWE-457",
+    "status": "DISMISSED",
+    "start_line": 137,
+    "end_line": 145
+  },
+  {
+    "finding_id": "1e9d94bf-fea0-5789-928f-f691d8676a75",
+    "session_id": "sess-fixture",
+    "title": "Unauthenticated Prometheus Metrics Endpoint Exposure",
+    "file_path": "/home/runner/workspace/o04-vampi/app.py",
+    "severity": "LOW",
+    "confidence": 95,
+    "analysis": "Data Flow Analysis:\n- Source: HTTP GET request to `/metrics` sent by an unauthenticated client.\n- Sanitization/Validation: None. No authentication, token validation, or network restriction is applied ",
+    "snippet": "const Metrics = metrics.observeMetrics() // vuln-code-snippet neutral-line exposedMetricsChallenge\napp.get('/metrics', utils.asyncHandler(metrics.serveMetrics())) // vuln-code-snippet vuln-line expose",
+    "vuln_type": "Missing Authentication for Critical Function",
+    "vuln_id": "CWE-306",
+    "status": "OPEN",
+    "start_line": 749,
+    "end_line": 750
+  }
+]
+=== summary.json
+{
+  "cm_version": "0.9.0",
+  "exit_code": 0,
+  "exit_codes": {
+    "16dbc47c-637d-56fa-aef1-18f3db99ce5e": 0,
+    "3e84cd12-afc1-508b-959e-e58c3b19e556": 0
+  },
+  "experiment_id": "exp",
+  "exploits_imported": 0,
+  "findings_attempted": 2,
+  "findings_expected": 2,
+  "mode": "shallow",
+  "model": "gemini-3.8-flash",
+  "nonzero_exit_count": 0,
+  "operation": "fix",
+  "patch_sizes": {
+    "16dbc47c-637d-56fa-aef1-18f3db99ce5e": 171,
+    "3e84cd12-afc1-508b-959e-e58c3b19e556": 171
+  },
+  "patches_generated": 2,
+  "repo_id": "o04-vampi",
+  "run_id": "G",
+  "severity": "CRITICAL,HIGH",
+  "source_find_run": "FRUN",
+  "source_verify_run": "",
+  "status": "ok",
+  "status_counts": {
+    "OTHER:MISSING": 2
+  },
+  "timeout_count": 0,
+  "tokens": {
+    "cached_tokens": 0,
+    "input_tokens": 60,
+    "output_tokens": 20,
+    "thought_tokens": 4,
+    "tool_calls": 6,
+    "total_tokens": 84,
+    "total_turns": 8
+  }
+}

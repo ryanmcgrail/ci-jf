@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+"""Stub cm: records argv (+timing) to $CM_STUB_LOG and fakes find/report/verify/fix.
+
+CM_STUB_VERSION (default 0.9.0) picks the emulated binary. 0.10.0 honors
+$CM_HOME, keeps state.db in WAL mode and writes a sessions row plus a session
+log per scanned file (CM_STUB_DEEP_FILES with --deep, else 1);
+CM_STUB_DROP_SESSIONS=k loses k rows (SQLITE_BUSY) and CM_STUB_LEAVE_WAL=1
+exits without checkpointing the WAL.
+
+find --diff=<ref> (with optional --diff-workers N) prints cm's banner
+(`merge-base(<ref>)` when git finds one, else `--diff=<ref>`) and emulates the
+default --fail-on gate: exit 1 when $CM_STUB_REPORT holds a finding whose
+severity is in --fail-on (default CRITICAL,HIGH). CM_STUB_DIFF_EXIT forces the
+exit code. CM_STUB_DIFF_TIMEOUT=1 emulates cm's 5-minute delta-scan ceiling
+(timeout error with 3/4 jobs, exit 1).
+"""
+import json, os, pathlib, shutil, sqlite3, subprocess, sys, time
+a = sys.argv[1:]
+t0 = time.time()
+VER = os.environ.get("CM_STUB_VERSION", "0.9.0")
+V10 = VER != "0.9.0"
+home = pathlib.Path(os.environ["HOME"]) / ".codemender"
+if V10 and os.environ.get("CM_HOME"):
+  home = pathlib.Path(os.environ["CM_HOME"])
+rec = {"argv": a, "version": VER, "cm_home": os.environ.get("CM_HOME"), "cwd": os.getcwd(), "t0": t0,
+       "dirty_at_start": os.path.exists("dirty.txt") or os.path.exists(".exploit")}
+def done(code=0):
+  rec["t1"] = time.time()
+  with open(os.environ["CM_STUB_LOG"], "a") as f: f.write(json.dumps(rec) + "\n")
+  if os.environ.get("CM_STUB_LEAVE_WAL"):
+    os._exit(code)  # skips sqlite's close-time checkpoint
+  sys.exit(code)
+if a == ["--version"]: print("cm version " + VER); done()
+cmd = a[0] if a else ""
+if cmd == "init": home.mkdir(parents=True, exist_ok=True); done()
+if cmd == "find":
+  time.sleep(float(os.environ.get("CM_STUB_SLEEP", "0")))
+  home.mkdir(parents=True, exist_ok=True)
+  c = sqlite3.connect(home / "state.db")
+  if V10:
+    c.execute("PRAGMA journal_mode=WAL"); c.execute("PRAGMA wal_autocheckpoint=0")
+  c.execute("CREATE TABLE IF NOT EXISTS findings (finding_id TEXT PRIMARY KEY)")
+  c.execute("INSERT OR IGNORE INTO findings VALUES ('f1')"); c.commit()
+  if V10:
+    c.execute("CREATE TABLE IF NOT EXISTS sessions "
+              "(session_id TEXT PRIMARY KEY, session_type TEXT, created_at TEXT)")
+    n = int(os.environ.get("CM_STUB_DEEP_FILES", "1")) if "--deep" in a else 1
+    drop = int(os.environ.get("CM_STUB_DROP_SESSIONS", "0"))
+    ts = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(t0))
+    iso = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(t0))
+    (home / "logs").mkdir(exist_ok=True)
+    lines = [f"=== CodeMender session log started at {iso} ===\n"]
+    for i in range(n):
+      sid = f"ChStubSession{i:04d}"
+      lines.append(f"{iso} [DEBUG] StartSession \u2713 accepted: "
+                   f"operation={sid} session={sid}\n")
+      if i >= drop:
+        c.execute("INSERT OR IGNORE INTO sessions VALUES (?, 'FIND', ?)", (sid, iso))
+    # Real cm 0.10.0 writes one <ts>_pending.log per run, not per session.
+    (home / "logs" / f"{ts}_pending.log").write_text("".join(lines))
+    c.commit()
+  diff = next((x.split("=", 1)[1] for x in a if x.startswith("--diff=")), None)
+  if diff is not None:
+    mb = subprocess.run(["git", "merge-base", diff, "HEAD"], capture_output=True)
+    print(f"Scanning changes against merge-base({diff})" if mb.returncode == 0
+          else f"Scanning changes against --diff={diff}")
+    if os.environ.get("CM_STUB_DIFF_TIMEOUT"):
+      print("  PR Delta Scan reached maximum 5-minute ceiling (5m0s). "
+            "Cancelling active sessions...")
+      print("Error: PR delta scan timed out after 5m0s (3/4 jobs completed): "
+            "context deadline exceeded")
+      done(1)
+    print("  PR Delta Scan Complete: 1 jobs (1 succeeded, 0 failed) in 0s")
+    if "CM_STUB_DIFF_EXIT" in os.environ:
+      done(int(os.environ["CM_STUB_DIFF_EXIT"]))
+    fail_on = "CRITICAL,HIGH"
+    for i, x in enumerate(a):
+      if x == "--fail-on" and i + 1 < len(a):
+        fail_on = a[i + 1]
+      elif x.startswith("--fail-on="):
+        fail_on = x.split("=", 1)[1]
+    rp = os.environ.get("CM_STUB_REPORT")
+    items = json.load(open(rp)) if rp and os.path.exists(rp) else []
+    items = items.get("findings", []) if isinstance(items, dict) else items or []
+    gate = {s.strip().upper() for s in fail_on.split(",") if s.strip()}
+    if any(str(f.get("severity", "")).upper() in gate for f in items):
+      print("Findings at or above --fail-on threshold")
+      done(1)
+  done()
+if cmd == "report":
+  if "--format" in a:
+    rp = os.environ.get("CM_STUB_REPORT")
+    print(open(rp).read() if rp and os.path.exists(rp) else "null")
+  else:
+    print("ID  SEVERITY  TITLE")
+  done()
+if cmd == "stats":
+  # Real cm logs the session-log path to stderr and writes an empty
+  # <ts>_pending.log for the stats run itself.
+  time.sleep(float(os.environ.get("CM_STUB_STATS_SLEEP", "0")))
+  print("[INFO]  Session log: stub", file=sys.stderr)
+  if V10:
+    (home / "logs").mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(t0))
+    (home / "logs" / f"{ts}_stats_pending.log").write_text("")
+  if "CM_STUB_STATS_EXIT" in os.environ:
+    done(int(os.environ["CM_STUB_STATS_EXIT"]))
+  since = a[a.index("--since") + 1] if "--since" in a[:-1] else "168h0m0s"
+  bucket = {"input_tokens": 25, "output_tokens": 8, "cached_tokens": 5,
+            "thought_tokens": 2, "tool_calls": 3, "total_tokens": 35}
+  print(json.dumps({"since": since, "total_turns": 4, "total_polls": 6,
+                    "command_types": 1, **bucket,
+                    "buckets": [{"label": "total", "requests": 4, **bucket}]},
+                   indent=2))
+  done()
+if cmd == "verify":
+  time.sleep(float(os.environ.get("CM_STUB_VERIFY_SLEEP", "0")))
+  if os.environ.get("CM_STUB_SYMLINK_EXPLOIT"):
+    os.makedirs("api_views/.exploit", exist_ok=True)
+    pathlib.Path("api_views/.exploit/poc.txt").write_text(a[1])
+    if os.path.islink(".exploit") or os.path.exists(".exploit"):
+      os.remove(".exploit")
+    os.symlink("api_views/.exploit", ".exploit")
+  else:
+    os.makedirs(".exploit", exist_ok=True)
+    pathlib.Path(".exploit/poc.txt").write_text(a[1])
+  pathlib.Path("dirty.txt").write_text("x")
+  with open("app.py", "a") as f: f.write("# tampered\n")
+  done()
+if cmd == "fix":
+  time.sleep(float(os.environ.get("CM_STUB_FIX_SLEEP", "0")))
+  fid = a[1]
+  exploit_restored = False
+  db_path = home / "state.db"
+  if db_path.exists():
+    c = sqlite3.connect(db_path)
+    try:
+      rows = c.execute(
+          "SELECT session_id FROM sessions WHERE pipeline_mode='VERIFY' AND target=?",
+          (fid,)).fetchall()
+      for (sess_id,) in rows:
+        art_rows = c.execute(
+            "SELECT filename, original_path FROM artifacts WHERE session_id=?",
+            (sess_id,)).fetchall()
+        for fn, orig in art_rows:
+          art_file = home / "artifacts" / sess_id / fn
+          if art_file.exists():
+            orig_p = pathlib.Path(orig)
+            orig_p.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(art_file, orig_p)
+            exploit_restored = True
+    except sqlite3.OperationalError:
+      pass
+    try:
+      c.execute(
+          "CREATE TABLE IF NOT EXISTS patches (finding_id TEXT, diff TEXT, created_at TEXT)")
+      c.execute(
+          "INSERT INTO patches VALUES (?, ?, datetime('now'))",
+          (fid, f"--- a/app.py\n+++ b/app.py\n@@ -1 +1,2 @@\n+# fix applied for {fid}\n"))
+      c.commit()
+    except Exception:
+      pass
+    c.close()
+  rec["exploit_restored"] = exploit_restored
+  if not os.environ.get("CM_STUB_FIX_NO_EDIT"):
+    with open("app.py", "a") as f:
+      f.write(f"# fix applied for {fid}\n")
+  done()
+done(2)

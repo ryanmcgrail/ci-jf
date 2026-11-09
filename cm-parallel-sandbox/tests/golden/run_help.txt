@@ -1,0 +1,59 @@
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+
+Orchestrates cm find / verify runs on the cm-parallel-sandbox Cloud Run jobs. Steps:
+stage_cm_binary -> ensure_repos_staged -> build_tasks -> dispatch_job.
+
+options:
+  -h, --help            show this help message and exit
+  --operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}
+  --repos-tsv REPOS_TSV
+                        repos manifest (default: config/repos.tsv); --mode diff requires a diff
+                        manifest such as config/repos_with_diff.tsv
+  --repos REPOS [REPOS ...]
+  --project PROJECT
+  --region REGION
+  --cm-version CM_VERSION
+  --model MODEL
+  --mode {shallow,deep,diff}
+                        find mode; diff runs `cm find --diff=<diff_ref>` per manifest case
+  --extra-cm-args EXTRA_CM_ARGS
+  --from-find-run FROM_FIND_RUN
+                        find run_id, exp/run_id, or 'latest'
+  --from-verify-run FROM_VERIFY_RUN
+                        fix only: verify run_id, exp/run_id, or 'latest'
+  --severity SEVERITY   comma-separated severities (default: CRITICAL,HIGH)
+  --verify-limit VERIFY_LIMIT
+                        max findings per verify task (0 = all)
+  --fix-limit FIX_LIMIT
+                        max findings per fix task (0 = all)
+  --include-unverified  fix: include unverified findings (status!=DISMISSED)
+  --finding-ids FINDING_IDS [FINDING_IDS ...]
+                        filter by finding UUIDs or prefixes
+  --experiment-id EXPERIMENT_ID
+  --run-id RUN_ID
+  --deep-workers DEEP_WORKERS
+                        find --mode deep: cm workers per repo (1-16, default 8); repos x workers
+                        must be <= 900
+  --diff-workers DIFF_WORKERS
+                        find --mode diff: cm --diff-workers per case (1-16); unset = not passed to
+                        cm (cm default 4)
+  --token-stats-workers TOKEN_STATS_WORKERS
+                        concurrent sessions per cm-api-token-stats run (>= 1, default 8)
+  --container-timeout CONTAINER_TIMEOUT
+  --fix-timeout FIX_TIMEOUT
+                        max seconds per finding in fix stage (default: 10800, 3 hours; <=
+                        container-timeout - 300)
+  --wait
+  --poll-interval POLL_INTERVAL
+                        polling interval in seconds under --wait (default 300)
+  --dry-run

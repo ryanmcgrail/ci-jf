@@ -1,0 +1,140 @@
+rc=0
+--- log ---
+[entrypoint TS] task 0: find o04-vampi -> gs://p-cm-find-results/exp/D/o04-vampi/
+[entrypoint TS] diff 742aff99a0b7bf436cc4160b22727e0f8cebf688..6e56df83c2a93c3fb261574591ac3f1367812af1: {"changed_files": 2, "changed_lines": 2}
+[entrypoint TS] cm find (mode=diff, soft timeout Ns)
+[entrypoint TS] cm find exit code 1
+[entrypoint TS] cm find exit 1 with findings: --fail-on gate tripped; counted as success
+[entrypoint TS] cm-api-token-stats (limit 780s, workers default)
+[entrypoint TS] uploaded results to gs://p-cm-find-results/exp/D/o04-vampi/
+--- gcloud ---
+storage cat gs://p-cm-payload/runs/exp/D/tasks.json
+storage cp gs://p-cm-payload/bin/cm/0.10.0/cm-linux-amd64.zip <tmp>/cmtask.X/cm-linux-amd64.zip
+storage cp gs://p-cm-payload/repos/o04-vampi.tar.gz <tmp>/cmtask.X/repo.tar.gz
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+--- cm ---
+["--version"]
+["init", "-y"]
+["find", "--diff=742aff99a0b7bf436cc4160b22727e0f8cebf688", ".", "--model", "gemini-3.8-flash", "-y", "--bypass-warning"]
+["report", "--format", "json"]
+["report"]
+["stats", "--json", "--since", "Ns"]
+--- files ---
+cm_api_token_stats.json
+cm_stats.json
+diff_files.txt
+diff_stats.json
+findings.json
+findings_table.txt
+logs/cm_init.log
+logs/cm_logs.tar.gz
+logs/cm_stats.log
+logs/execution.log
+logs/token_stats.log
+repo_commit.txt
+state.db
+summary.json
+--- contents ---
+=== cm_stats.json
+{
+  "since": "Ns",
+  "total_turns": 4,
+  "total_polls": 6,
+  "command_types": 1,
+  "input_tokens": 25,
+  "output_tokens": 8,
+  "cached_tokens": 5,
+  "thought_tokens": 2,
+  "tool_calls": 3,
+  "total_tokens": 35,
+  "buckets": [
+    {
+      "label": "total",
+      "requests": 4,
+      "input_tokens": 25,
+      "output_tokens": 8,
+      "cached_tokens": 5,
+      "thought_tokens": 2,
+      "tool_calls": 3,
+      "total_tokens": 35
+    }
+  ]
+}
+
+=== diff_files.txt
+api/views.py
+app.py
+
+=== diff_stats.json
+{"changed_files": 2, "changed_lines": 2}
+
+=== findings.json
+[
+  {
+    "finding_id": "f-high",
+    "severity": "HIGH",
+    "status": "OPEN"
+  }
+]
+=== findings_table.txt
+ID  SEVERITY  TITLE
+
+=== repo_commit.txt
+<sha40>
+
+=== summary.json
+{
+  "changed_files": 2,
+  "changed_lines": 2,
+  "cm_exit_code": 1,
+  "cm_version": "0.10.0",
+  "deep_workers": null,
+  "diff_jobs_completed": 1,
+  "diff_jobs_failed": 0,
+  "diff_jobs_total": 1,
+  "diff_ref": "742aff99a0b7bf436cc4160b22727e0f8cebf688",
+  "diff_timed_out": false,
+  "diff_workers": null,
+  "exit_code": 0,
+  "experiment_id": "exp",
+  "findings_count": 1,
+  "mode": "diff",
+  "model": "gemini-3.8-flash",
+  "operation": "find",
+  "pinned_ref": "6e56df83c2a93c3fb261574591ac3f1367812af1",
+  "repo_id": "o04-vampi",
+  "run_id": "D",
+  "sessions": {
+    "dropped_from_db": 0,
+    "logs": 1,
+    "state_db": 1,
+    "union": 1
+  },
+  "severity_counts": {
+    "HIGH": 1
+  },
+  "status": "ok",
+  "token_stats_status": "ok",
+  "tokens": {
+    "cached_tokens": 0,
+    "input_tokens": 30,
+    "output_tokens": 10,
+    "thought_tokens": 2,
+    "tool_calls": 3,
+    "total_tokens": 42,
+    "total_turns": 4
+  }
+}

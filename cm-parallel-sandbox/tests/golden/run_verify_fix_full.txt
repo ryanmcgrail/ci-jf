@@ -1,0 +1,221 @@
+rc=0
+--- log ---
+[stage] cm 0.11.0: cached gs://proj-cm-payload/bin/cm/0.11.0/cm-linux-amd64.zip sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+[stage] repos: all 2 tarball(s) cached (2/2)
+[summary] o04-vampi: 5 finding(s) (CRITICAL=1, HIGH=2, MEDIUM=1, LOW=1); 3 matching CRITICAL,HIGH (capped to 2 by --verify-limit=2)
+[verify] skip p01-flask: no CRITICAL,HIGH findings (1 total: LOW=1)
+[summary] findings from smoke/FRUN: 6 total (CRITICAL=1, HIGH=2, MEDIUM=1, LOW=2); 2 matching CRITICAL,HIGH across 1/2 repo(s) queued for verify
+run_id=GOLD
+results=gs://proj-cm-verify-results/smoke/GOLD/
+[stage] manifest: uploaded gs://proj-cm-payload/runs/smoke/GOLD/tasks.json and run_manifest.json (1 task(s), 1 repo(s))
+[dispatch] cm-verify-runner: 1 task(s)
+execution=cm-verify-runner-exec1
+status: gcloud run jobs executions describe cm-verify-runner-exec1 --project=proj --region=us-central1
+logs: gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="cm-verify-runner" AND resource.labels.location="us-central1" AND labels."run.googleapis.com/execution_name"="cm-verify-runner-exec1"' --project=proj --limit=50
+console: https://console.cloud.google.com/logs/viewer?project=proj&advancedFilter=resource.type%3D%22cloud_run_job%22%0Aresource.labels.job_name%3D%22cm-verify-runner%22%0Aresource.labels.location%3D%22us-central1%22%0Alabels.%22run.googleapis.com/execution_name%22%3D%22cm-verify-runner-exec1%22
+[progress] [00:00] cm-verify-runner-exec1: 0 running, 1 succeeded, 0 failed / 1 total
+[summary] cm-verify-runner-exec1: Completed=True (1/1 succeeded, 0 failed) in 00:00 (exit_code=0) — Execution completed successfully in 10s.
+[phase] verify phase (GOLD) complete; transitioning to fix (--from-verify-run smoke/GOLD)
+[summary] o04-vampi: 3 finding(s) attempted; 1 verified matching CRITICAL,HIGH
+[summary] candidates from smoke/GOLD: 3 attempted; 1 matching across 1/2 repo(s) queued for fix
+run_id=GOLD_fix
+results=gs://proj-cm-fix-results/smoke/GOLD_fix/
+[stage] manifest: uploaded gs://proj-cm-payload/runs/smoke/GOLD_fix/tasks.json and run_manifest.json (1 task(s), 1 repo(s))
+[dispatch] cm-fix-runner: 1 task(s)
+execution=cm-fix-runner-exec1
+status: gcloud run jobs executions describe cm-fix-runner-exec1 --project=proj --region=us-central1
+logs: gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="cm-fix-runner" AND resource.labels.location="us-central1" AND labels."run.googleapis.com/execution_name"="cm-fix-runner-exec1"' --project=proj --limit=50
+console: https://console.cloud.google.com/logs/viewer?project=proj&advancedFilter=resource.type%3D%22cloud_run_job%22%0Aresource.labels.job_name%3D%22cm-fix-runner%22%0Aresource.labels.location%3D%22us-central1%22%0Alabels.%22run.googleapis.com/execution_name%22%3D%22cm-fix-runner-exec1%22
+--- mutating calls ---
+["gcloud", "storage", "cp", "<tmp>/tasks.json", "gs://proj-cm-payload/runs/smoke/GOLD/tasks.json"]
+["gcloud", "storage", "cp", "<tmp>/run_manifest.json", "gs://proj-cm-payload/runs/smoke/GOLD/run_manifest.json"]
+["gcloud", "run", "jobs", "execute", "cm-verify-runner", "--region=us-central1", "--project=proj", "--tasks=1", "--task-timeout=172800s", "--update-env-vars=^##^EXPERIMENT_ID=smoke##RUN_ID=GOLD##CM_VERSION=0.11.0##EXPECTED_CM_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa##MODEL=gemini-3.8-flash##MODE=shallow##DEEP_WORKERS=##SEVERITY=CRITICAL,HIGH##VERIFY_LIMIT=2##FIX_LIMIT=1##FIX_FINDING_TIMEOUT=10800##FROM_FIND_RUN=FRUN##SOURCE_FIND_EXPERIMENT=smoke##FROM_VERIFY_RUN=##SOURCE_VERIFY_EXPERIMENT=##INCLUDE_UNVERIFIED=0##FINDING_IDS=##EXTRA_CM_ARGS=##JOB_TIMEOUT=172800##TOKEN_STATS_WORKERS=8", "--async", "--format=json"]
+["gcloud", "run", "jobs", "executions", "describe", "cm-verify-runner-exec1", "--project=proj", "--region=us-central1", "--format=json"]
+["gcloud", "storage", "cp", "<tmp>/tasks.json", "gs://proj-cm-payload/runs/smoke/GOLD_fix/tasks.json"]
+["gcloud", "storage", "cp", "<tmp>/run_manifest.json", "gs://proj-cm-payload/runs/smoke/GOLD_fix/run_manifest.json"]
+["gcloud", "run", "jobs", "execute", "cm-fix-runner", "--region=us-central1", "--project=proj", "--tasks=1", "--task-timeout=172800s", "--update-env-vars=^##^EXPERIMENT_ID=smoke##RUN_ID=GOLD_fix##CM_VERSION=0.11.0##EXPECTED_CM_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa##MODEL=gemini-3.8-flash##MODE=shallow##DEEP_WORKERS=##SEVERITY=CRITICAL,HIGH##VERIFY_LIMIT=2##FIX_LIMIT=1##FIX_FINDING_TIMEOUT=10800##FROM_FIND_RUN=##SOURCE_FIND_EXPERIMENT=##FROM_VERIFY_RUN=GOLD##SOURCE_VERIFY_EXPERIMENT=smoke##INCLUDE_UNVERIFIED=0##FINDING_IDS=##EXTRA_CM_ARGS=##JOB_TIMEOUT=172800##TOKEN_STATS_WORKERS=8", "--async", "--format=json"]
+--- uploads ---
+=== gs://proj-cm-payload/bin/cm/0.11.0/cm-linux-amd64.zip.sha256
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  cm-linux-amd64.zip
+
+=== gs://proj-cm-payload/runs/smoke/GOLD/run_manifest.json
+{
+  "run_id": "GOLD",
+  "experiment_id": "smoke",
+  "operation": "verify",
+  "project": "proj",
+  "region": "us-central1",
+  "job": "cm-verify-runner",
+  "results_prefix": "gs://proj-cm-verify-results/smoke/GOLD/",
+  "cm_version": "0.11.0",
+  "cm_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "model": "gemini-3.8-flash",
+  "mode": "shallow",
+  "deep_workers": null,
+  "deep_call_budget": 900,
+  "token_stats_workers": 8,
+  "severity": "CRITICAL,HIGH",
+  "timeout": 172800,
+  "verify_limit": 2,
+  "fix_limit": 1,
+  "fix_timeout": 10800,
+  "include_unverified": false,
+  "finding_ids": null,
+  "extra_cm_args": "",
+  "source_find": {
+    "source_experiment": "smoke",
+    "find_run_id": "FRUN"
+  },
+  "source_verify": null,
+  "source_find_mode": null,
+  "repos": [
+    "o04-vampi"
+  ],
+  "total_tasks": 1,
+  "env": {
+    "EXPERIMENT_ID": "smoke",
+    "RUN_ID": "GOLD",
+    "CM_VERSION": "0.11.0",
+    "EXPECTED_CM_SHA256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "MODEL": "gemini-3.8-flash",
+    "MODE": "shallow",
+    "DEEP_WORKERS": "",
+    "SEVERITY": "CRITICAL,HIGH",
+    "VERIFY_LIMIT": "2",
+    "FIX_LIMIT": "1",
+    "FIX_FINDING_TIMEOUT": "10800",
+    "FROM_FIND_RUN": "FRUN",
+    "SOURCE_FIND_EXPERIMENT": "smoke",
+    "FROM_VERIFY_RUN": "",
+    "SOURCE_VERIFY_EXPERIMENT": "",
+    "INCLUDE_UNVERIFIED": "0",
+    "FINDING_IDS": "",
+    "EXTRA_CM_ARGS": "",
+    "JOB_TIMEOUT": "172800",
+    "TOKEN_STATS_WORKERS": "8"
+  },
+  "commands": {
+    "execute": [
+      "gcloud",
+      "run",
+      "jobs",
+      "execute",
+      "cm-verify-runner",
+      "--region=us-central1",
+      "--project=proj",
+      "--tasks=1",
+      "--task-timeout=172800s",
+      "--update-env-vars=^##^EXPERIMENT_ID=smoke##RUN_ID=GOLD##CM_VERSION=0.11.0##EXPECTED_CM_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa##MODEL=gemini-3.8-flash##MODE=shallow##DEEP_WORKERS=##SEVERITY=CRITICAL,HIGH##VERIFY_LIMIT=2##FIX_LIMIT=1##FIX_FINDING_TIMEOUT=10800##FROM_FIND_RUN=FRUN##SOURCE_FIND_EXPERIMENT=smoke##FROM_VERIFY_RUN=##SOURCE_VERIFY_EXPERIMENT=##INCLUDE_UNVERIFIED=0##FINDING_IDS=##EXTRA_CM_ARGS=##JOB_TIMEOUT=172800##TOKEN_STATS_WORKERS=8",
+      "--async",
+      "--format=json"
+    ]
+  }
+}
+
+=== gs://proj-cm-payload/runs/smoke/GOLD/tasks.json
+[
+  {
+    "repo_id": "o04-vampi",
+    "source_find_mode": "",
+    "language": "python",
+    "git_url": "https://github.com/erev0s/VAmPI.git",
+    "pinned_ref": "f16052dce83f05847133ec98f01c5193a41de7d8",
+    "findings_gcs_uri": "gs://proj-cm-find-results/smoke/FRUN/o04-vampi/findings.json",
+    "source_stage": "find",
+    "severity": "CRITICAL,HIGH",
+    "matching_findings": 2
+  }
+]
+
+=== gs://proj-cm-payload/runs/smoke/GOLD_fix/run_manifest.json
+{
+  "run_id": "GOLD_fix",
+  "experiment_id": "smoke",
+  "operation": "fix",
+  "project": "proj",
+  "region": "us-central1",
+  "job": "cm-fix-runner",
+  "results_prefix": "gs://proj-cm-fix-results/smoke/GOLD_fix/",
+  "cm_version": "0.11.0",
+  "cm_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "model": "gemini-3.8-flash",
+  "mode": "shallow",
+  "deep_workers": null,
+  "deep_call_budget": 900,
+  "token_stats_workers": 8,
+  "severity": "CRITICAL,HIGH",
+  "timeout": 172800,
+  "verify_limit": 2,
+  "fix_limit": 1,
+  "fix_timeout": 10800,
+  "include_unverified": false,
+  "finding_ids": null,
+  "extra_cm_args": "",
+  "source_find": null,
+  "source_verify": {
+    "source_experiment": "smoke",
+    "verify_run_id": "GOLD"
+  },
+  "source_find_mode": null,
+  "repos": [
+    "o04-vampi"
+  ],
+  "total_tasks": 1,
+  "env": {
+    "EXPERIMENT_ID": "smoke",
+    "RUN_ID": "GOLD_fix",
+    "CM_VERSION": "0.11.0",
+    "EXPECTED_CM_SHA256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "MODEL": "gemini-3.8-flash",
+    "MODE": "shallow",
+    "DEEP_WORKERS": "",
+    "SEVERITY": "CRITICAL,HIGH",
+    "VERIFY_LIMIT": "2",
+    "FIX_LIMIT": "1",
+    "FIX_FINDING_TIMEOUT": "10800",
+    "FROM_FIND_RUN": "",
+    "SOURCE_FIND_EXPERIMENT": "",
+    "FROM_VERIFY_RUN": "GOLD",
+    "SOURCE_VERIFY_EXPERIMENT": "smoke",
+    "INCLUDE_UNVERIFIED": "0",
+    "FINDING_IDS": "",
+    "EXTRA_CM_ARGS": "",
+    "JOB_TIMEOUT": "172800",
+    "TOKEN_STATS_WORKERS": "8"
+  },
+  "commands": {
+    "execute": [
+      "gcloud",
+      "run",
+      "jobs",
+      "execute",
+      "cm-fix-runner",
+      "--region=us-central1",
+      "--project=proj",
+      "--tasks=1",
+      "--task-timeout=172800s",
+      "--update-env-vars=^##^EXPERIMENT_ID=smoke##RUN_ID=GOLD_fix##CM_VERSION=0.11.0##EXPECTED_CM_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa##MODEL=gemini-3.8-flash##MODE=shallow##DEEP_WORKERS=##SEVERITY=CRITICAL,HIGH##VERIFY_LIMIT=2##FIX_LIMIT=1##FIX_FINDING_TIMEOUT=10800##FROM_FIND_RUN=##SOURCE_FIND_EXPERIMENT=##FROM_VERIFY_RUN=GOLD##SOURCE_VERIFY_EXPERIMENT=smoke##INCLUDE_UNVERIFIED=0##FINDING_IDS=##EXTRA_CM_ARGS=##JOB_TIMEOUT=172800##TOKEN_STATS_WORKERS=8",
+      "--async",
+      "--format=json"
+    ]
+  }
+}
+
+=== gs://proj-cm-payload/runs/smoke/GOLD_fix/tasks.json
+[
+  {
+    "repo_id": "o04-vampi",
+    "source_find_mode": "",
+    "language": "python",
+    "git_url": "https://github.com/erev0s/VAmPI.git",
+    "pinned_ref": "f16052dce83f05847133ec98f01c5193a41de7d8",
+    "findings_gcs_uri": "gs://proj-cm-verify-results/smoke/GOLD/o04-vampi/source_findings.json",
+    "verify_report_gcs_uri": "gs://proj-cm-verify-results/smoke/GOLD/o04-vampi/post_verify_report.json",
+    "verify_ids_gcs_uri": "gs://proj-cm-verify-results/smoke/GOLD/o04-vampi/matching_finding_ids.txt",
+    "verify_repo_prefix": "gs://proj-cm-verify-results/smoke/GOLD/o04-vampi/",
+    "source_stage": "verify",
+    "severity": "CRITICAL,HIGH",
+    "matching_findings": 1
+  }
+]
+

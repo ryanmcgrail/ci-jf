@@ -1,0 +1,479 @@
+$ --poll-interval 0
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --poll-interval must be > 0
+
+$ --container-timeout 300
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --container-timeout must be > 300 (300s are reserved for telemetry/upload)
+
+$ --container-timeout 604801
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --container-timeout must be <= 604800 (7 days)
+
+$ --fix-timeout 5
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --fix-timeout is not supported for --operation find
+
+$ --operation fix --from-find-run R --fix-timeout 0
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --fix-timeout must be > 0
+
+$ --operation fix --from-find-run R --container-timeout 1000 --fix-timeout 701
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --fix-timeout (701s) cannot exceed --container-timeout - 300 (700s)
+
+$ --operation find-verify --verify-limit 1 --fix-timeout 9
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --fix-timeout is not supported for --operation find-verify
+
+$ --verify-limit 1
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --verify-limit is not supported for --operation find
+
+$ --operation verify --from-find-run R --verify-limit -1
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --verify-limit must be >= 0
+
+$ --operation find-verify --fix-limit 1
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --fix-limit is not supported for --operation find-verify
+
+$ --operation fix --from-find-run R --fix-limit -1
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --fix-limit must be >= 0
+
+$ --severity HIGH
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --severity is not supported for --operation find
+
+$ --operation verify --from-find-run R --mode deep
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --mode deep is not supported for --operation verify
+
+$ --mode deep --cm-version 0.9.0
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --mode deep requires --cm-version >= 0.10.0 (got 0.9.0; cm < 0.10.0 has no --deep flag)
+
+$ --mode deep --cm-version banana
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --mode deep requires --cm-version >= 0.10.0 (got banana; cm < 0.10.0 has no --deep flag)
+
+$ --operation verify-fix
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --from-find-run is required for --operation verify-fix
+
+$ --operation find-fix --from-find-run R
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --from-find-run is not supported for --operation find-fix
+
+$ --operation find-verify --from-verify-run V
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --from-verify-run is not supported for --operation find-verify
+
+$ --operation fix
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --operation fix requires either --from-verify-run or --from-find-run
+
+$ --operation fix --from-find-run R --from-verify-run V
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --from-find-run and --from-verify-run are mutually exclusive for --operation fix
+
+$ --operation find-fix --include-unverified
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --include-unverified is not supported for --operation find-fix
+
+$ --operation fix --from-find-run R --include-unverified
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --include-unverified is only supported when fixing from a verify run
+
+$ --finding-ids x
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --finding-ids is not supported for --operation find
+
+$ --operation verify --from-find-run R --finding-ids x --severity HIGH
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --severity cannot be used with --finding-ids
+
+$ --operation verify --from-find-run R --finding-ids x --verify-limit 0
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --verify-limit cannot be used with --finding-ids
+
+$ --operation fix --from-find-run R --finding-ids x --fix-limit 0
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --fix-limit cannot be used with --finding-ids
+
+$ --operation selftest
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: argument --operation: invalid choice: 'selftest' (choose from 'find', 'verify', 'find-verify', 'fix', 'verify-fix', 'find-fix', 'find-verify-fix')
+
+$ --deep-workers two
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: argument --deep-workers: invalid int value: 'two'
+
+$ --deep-workers 4
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --deep-workers requires --mode deep
+
+$ --mode deep --cm-version 0.10.0 --deep-workers 17
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --deep-workers must be between 1 and 16
+
+$ --extra-cm-args --x, --deep-workers=4
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: --extra-cm-args cannot contain --deep-workers; use --deep-workers
+
+$ --bogus
+exit=2
+usage: run.py [-h] [--operation {find,verify,find-verify,fix,verify-fix,find-fix,find-verify-fix}]
+              [--repos-tsv REPOS_TSV] [--repos REPOS [REPOS ...]] [--project PROJECT]
+              [--region REGION] [--cm-version CM_VERSION] [--model MODEL]
+              [--mode {shallow,deep,diff}] [--extra-cm-args EXTRA_CM_ARGS]
+              [--from-find-run FROM_FIND_RUN] [--from-verify-run FROM_VERIFY_RUN]
+              [--severity SEVERITY] [--verify-limit VERIFY_LIMIT] [--fix-limit FIX_LIMIT]
+              [--include-unverified] [--finding-ids FINDING_IDS [FINDING_IDS ...]]
+              [--experiment-id EXPERIMENT_ID] [--run-id RUN_ID] [--deep-workers DEEP_WORKERS]
+              [--diff-workers DIFF_WORKERS] [--token-stats-workers TOKEN_STATS_WORKERS]
+              [--container-timeout CONTAINER_TIMEOUT] [--fix-timeout FIX_TIMEOUT] [--wait]
+              [--poll-interval POLL_INTERVAL] [--dry-run]
+run.py: error: unrecognized arguments: --bogus

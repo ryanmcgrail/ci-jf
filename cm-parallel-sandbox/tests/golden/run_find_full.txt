@@ -1,0 +1,108 @@
+rc=0
+--- log ---
+[stage] cm 0.11.0: cached gs://proj-cm-payload/bin/cm/0.11.0/cm-linux-amd64.zip sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+[stage] repos: all 2 tarball(s) cached (2/2)
+[stage] manifest: 2 find task(s) across 2 repo(s)
+run_id=GOLD
+results=gs://proj-cm-find-results/smoke/GOLD/
+[stage] manifest: uploaded gs://proj-cm-payload/runs/smoke/GOLD/tasks.json and run_manifest.json (2 task(s), 2 repo(s))
+[dispatch] cm-find-runner: 2 task(s)
+execution=cm-find-runner-exec1
+status: gcloud run jobs executions describe cm-find-runner-exec1 --project=proj --region=us-central1
+logs: gcloud logging read 'resource.type="cloud_run_job" AND resource.labels.job_name="cm-find-runner" AND resource.labels.location="us-central1" AND labels."run.googleapis.com/execution_name"="cm-find-runner-exec1"' --project=proj --limit=50
+console: https://console.cloud.google.com/logs/viewer?project=proj&advancedFilter=resource.type%3D%22cloud_run_job%22%0Aresource.labels.job_name%3D%22cm-find-runner%22%0Aresource.labels.location%3D%22us-central1%22%0Alabels.%22run.googleapis.com/execution_name%22%3D%22cm-find-runner-exec1%22
+--- mutating calls ---
+["gcloud", "storage", "cp", "<tmp>/tasks.json", "gs://proj-cm-payload/runs/smoke/GOLD/tasks.json"]
+["gcloud", "storage", "cp", "<tmp>/run_manifest.json", "gs://proj-cm-payload/runs/smoke/GOLD/run_manifest.json"]
+["gcloud", "run", "jobs", "execute", "cm-find-runner", "--region=us-central1", "--project=proj", "--tasks=2", "--task-timeout=172800s", "--update-env-vars=^##^EXPERIMENT_ID=smoke##RUN_ID=GOLD##CM_VERSION=0.11.0##EXPECTED_CM_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa##MODEL=gemini-3.8-flash##MODE=shallow##DEEP_WORKERS=##SEVERITY=CRITICAL,HIGH##VERIFY_LIMIT=0##FIX_LIMIT=0##FIX_FINDING_TIMEOUT=10800##FROM_FIND_RUN=##SOURCE_FIND_EXPERIMENT=##FROM_VERIFY_RUN=##SOURCE_VERIFY_EXPERIMENT=##INCLUDE_UNVERIFIED=0##FINDING_IDS=##EXTRA_CM_ARGS=##JOB_TIMEOUT=172800##TOKEN_STATS_WORKERS=8", "--async", "--format=json"]
+--- uploads ---
+=== gs://proj-cm-payload/bin/cm/0.11.0/cm-linux-amd64.zip.sha256
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  cm-linux-amd64.zip
+
+=== gs://proj-cm-payload/runs/smoke/GOLD/run_manifest.json
+{
+  "run_id": "GOLD",
+  "experiment_id": "smoke",
+  "operation": "find",
+  "project": "proj",
+  "region": "us-central1",
+  "job": "cm-find-runner",
+  "results_prefix": "gs://proj-cm-find-results/smoke/GOLD/",
+  "cm_version": "0.11.0",
+  "cm_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "model": "gemini-3.8-flash",
+  "mode": "shallow",
+  "deep_workers": null,
+  "deep_call_budget": 900,
+  "token_stats_workers": 8,
+  "severity": "CRITICAL,HIGH",
+  "timeout": 172800,
+  "verify_limit": 0,
+  "fix_limit": 0,
+  "fix_timeout": 10800,
+  "include_unverified": false,
+  "finding_ids": null,
+  "extra_cm_args": "",
+  "source_find": null,
+  "source_verify": null,
+  "repos": [
+    "o04-vampi",
+    "p01-flask"
+  ],
+  "total_tasks": 2,
+  "env": {
+    "EXPERIMENT_ID": "smoke",
+    "RUN_ID": "GOLD",
+    "CM_VERSION": "0.11.0",
+    "EXPECTED_CM_SHA256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "MODEL": "gemini-3.8-flash",
+    "MODE": "shallow",
+    "DEEP_WORKERS": "",
+    "SEVERITY": "CRITICAL,HIGH",
+    "VERIFY_LIMIT": "0",
+    "FIX_LIMIT": "0",
+    "FIX_FINDING_TIMEOUT": "10800",
+    "FROM_FIND_RUN": "",
+    "SOURCE_FIND_EXPERIMENT": "",
+    "FROM_VERIFY_RUN": "",
+    "SOURCE_VERIFY_EXPERIMENT": "",
+    "INCLUDE_UNVERIFIED": "0",
+    "FINDING_IDS": "",
+    "EXTRA_CM_ARGS": "",
+    "JOB_TIMEOUT": "172800",
+    "TOKEN_STATS_WORKERS": "8"
+  },
+  "commands": {
+    "execute": [
+      "gcloud",
+      "run",
+      "jobs",
+      "execute",
+      "cm-find-runner",
+      "--region=us-central1",
+      "--project=proj",
+      "--tasks=2",
+      "--task-timeout=172800s",
+      "--update-env-vars=^##^EXPERIMENT_ID=smoke##RUN_ID=GOLD##CM_VERSION=0.11.0##EXPECTED_CM_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa##MODEL=gemini-3.8-flash##MODE=shallow##DEEP_WORKERS=##SEVERITY=CRITICAL,HIGH##VERIFY_LIMIT=0##FIX_LIMIT=0##FIX_FINDING_TIMEOUT=10800##FROM_FIND_RUN=##SOURCE_FIND_EXPERIMENT=##FROM_VERIFY_RUN=##SOURCE_VERIFY_EXPERIMENT=##INCLUDE_UNVERIFIED=0##FINDING_IDS=##EXTRA_CM_ARGS=##JOB_TIMEOUT=172800##TOKEN_STATS_WORKERS=8",
+      "--async",
+      "--format=json"
+    ]
+  }
+}
+
+=== gs://proj-cm-payload/runs/smoke/GOLD/tasks.json
+[
+  {
+    "repo_id": "o04-vampi",
+    "language": "python",
+    "git_url": "https://github.com/erev0s/VAmPI.git",
+    "pinned_ref": "f16052dce83f05847133ec98f01c5193a41de7d8"
+  },
+  {
+    "repo_id": "p01-flask",
+    "language": "python",
+    "git_url": "https://github.com/pallets/flask.git",
+    "pinned_ref": "3.0.3"
+  }
+]
+

@@ -1,0 +1,26 @@
+rc=0
+--- log ---
+[stage] cm 0.11.0: cached gs://proj-cm-payload/bin/cm/0.11.0/cm-linux-amd64.zip sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+[dry-run] repos: 0/2 cached; would stage 2 missing: o04-vampi--f16052d-beca461 o04-vampi--f16052d-a488a52
+[stage] manifest: 2 find task(s) across 2 repo(s)
+run_id=GOLD
+results=gs://proj-cm-find-results/cm-011-diff-smoke/GOLD/
+[dry-run] tasks.json:
+[
+  {
+    "repo_id": "o04-vampi--f16052d-beca461",
+    "language": "python",
+    "git_url": "https://github.com/erev0s/VAmPI.git",
+    "pinned_ref": "f16052dce83f05847133ec98f01c5193a41de7d8",
+    "diff_ref": "beca4615d1bc947825a5e5bd8a9275c2a7cbda6a"
+  },
+  {
+    "repo_id": "o04-vampi--f16052d-a488a52",
+    "language": "python",
+    "git_url": "https://github.com/erev0s/VAmPI.git",
+    "pinned_ref": "f16052dce83f05847133ec98f01c5193a41de7d8",
+    "diff_ref": "a488a52826892fcab23ac2cf8a38d0a6c607146c"
+  }
+]
+[dry-run] would upload gs://proj-cm-payload/runs/cm-011-diff-smoke/GOLD/tasks.json and run_manifest.json
+[dry-run] gcloud run jobs execute cm-find-runner --region=us-central1 --project=proj --tasks=2 --task-timeout=172800s --update-env-vars=^##^EXPERIMENT_ID=cm-011-diff-smoke##RUN_ID=GOLD##CM_VERSION=0.11.0##EXPECTED_CM_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa##MODEL=gemini-3.8-flash##MODE=diff##DEEP_WORKERS=##SEVERITY=CRITICAL,HIGH##VERIFY_LIMIT=0##FIX_LIMIT=0##FIX_FINDING_TIMEOUT=10800##FROM_FIND_RUN=##SOURCE_FIND_EXPERIMENT=##FROM_VERIFY_RUN=##SOURCE_VERIFY_EXPERIMENT=##INCLUDE_UNVERIFIED=0##FINDING_IDS=##EXTRA_CM_ARGS=##JOB_TIMEOUT=172800##TOKEN_STATS_WORKERS=8 --async --format=json

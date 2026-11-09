@@ -1,0 +1,25 @@
+rc=0
+--- log ---
+[stage] cm 0.11.0: cached gs://proj-cm-payload/bin/cm/0.11.0/cm-linux-amd64.zip sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+[stage] repos: all 2 tarball(s) cached (2/2)
+[summary] o04-vampi: 5 finding(s) (CRITICAL=1, HIGH=2, MEDIUM=1, LOW=1); 4 matching CRITICAL,HIGH,MEDIUM (capped to 1 by --verify-limit=1)
+[verify] skip p01-flask: no CRITICAL,HIGH,MEDIUM findings (1 total: LOW=1)
+[summary] findings from smoke/FRUN: 6 total (CRITICAL=1, HIGH=2, MEDIUM=1, LOW=2); 1 matching CRITICAL,HIGH,MEDIUM across 1/2 repo(s) queued for verify
+run_id=GOLD
+results=gs://proj-cm-verify-results/smoke/GOLD/
+[dry-run] tasks.json:
+[
+  {
+    "repo_id": "o04-vampi",
+    "source_find_mode": "",
+    "language": "python",
+    "git_url": "https://github.com/erev0s/VAmPI.git",
+    "pinned_ref": "f16052dce83f05847133ec98f01c5193a41de7d8",
+    "findings_gcs_uri": "gs://proj-cm-find-results/smoke/FRUN/o04-vampi/findings.json",
+    "source_stage": "find",
+    "severity": "CRITICAL,HIGH,MEDIUM",
+    "matching_findings": 1
+  }
+]
+[dry-run] would upload gs://proj-cm-payload/runs/smoke/GOLD/tasks.json and run_manifest.json
+[dry-run] gcloud run jobs execute cm-verify-runner --region=us-central1 --project=proj --tasks=1 --task-timeout=172800s --update-env-vars=^##^EXPERIMENT_ID=smoke##RUN_ID=GOLD##CM_VERSION=0.11.0##EXPECTED_CM_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa##MODEL=gemini-3.8-flash##MODE=shallow##DEEP_WORKERS=##SEVERITY=CRITICAL,HIGH,MEDIUM##VERIFY_LIMIT=1##FIX_LIMIT=0##FIX_FINDING_TIMEOUT=10800##FROM_FIND_RUN=FRUN##SOURCE_FIND_EXPERIMENT=smoke##FROM_VERIFY_RUN=##SOURCE_VERIFY_EXPERIMENT=##INCLUDE_UNVERIFIED=0##FINDING_IDS=##EXTRA_CM_ARGS=##JOB_TIMEOUT=172800##TOKEN_STATS_WORKERS=8 --async --format=json

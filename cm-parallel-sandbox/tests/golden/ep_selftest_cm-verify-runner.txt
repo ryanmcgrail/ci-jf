@@ -1,0 +1,42 @@
+rc=0
+--- log ---
+[entrypoint TS] selftest role=verify own=p-cm-verify-results
+[entrypoint TS] selftest result: gs://p-cm-verify-results/selftest/cm-verify-runner-g/result.json
+--- gcloud ---
+auth print-access-token
+auth print-access-token
+auth print-access-token
+auth print-access-token
+storage ls gs://p-cm-find-results/
+storage ls gs://p-cm-fix-results/
+storage ls gs://p-cm-payload/
+auth print-access-token
+--- cm ---
+
+--- files ---
+probe.txt
+result.json
+{"role": "verify", "execution": "cm-verify-runner-g", "job": "cm-verify-runner"}
+dns_private_vip=True
+googleapis_https=True
+egress_github_blocked=True
+egress_1111_blocked=True
+own_bucket_create=True
+own_bucket_overwrite_denied=True
+payload_write_denied=True
+verify_sa_write_find_results_denied=True
+verify_sa_read_find_results=True
+verify_sa_read_fix_results_denied=True
+payload_read=True
+toolbox_python_libs
+toolbox_node_express
+toolbox_gcc
+toolbox_gxx_asan
+toolbox_javac
+toolbox_go
+toolbox_php
+toolbox_ruby
+airgap_pip_install_fails
+airgap_npm_view_fails
+airgap_git_ls_remote_fails
+render_verify_context=True

@@ -1,0 +1,28 @@
+rc=0
+--- log ---
+[entrypoint TS] selftest role=find own=p-cm-find-results
+[entrypoint TS] selftest result: gs://p-cm-find-results/selftest/cm-find-runner-g/result.json
+--- gcloud ---
+auth print-access-token
+auth print-access-token
+auth print-access-token
+storage ls gs://p-cm-verify-results/
+storage ls gs://p-cm-fix-results/
+storage ls gs://p-cm-payload/
+auth print-access-token
+--- cm ---
+
+--- files ---
+probe.txt
+result.json
+{"role": "find", "execution": "cm-find-runner-g", "job": "cm-find-runner"}
+dns_private_vip=True
+googleapis_https=True
+egress_github_blocked=True
+egress_1111_blocked=True
+own_bucket_create=True
+own_bucket_overwrite_denied=True
+payload_write_denied=True
+find_sa_read_verify_results_denied=True
+find_sa_read_fix_results_denied=True
+payload_read=True

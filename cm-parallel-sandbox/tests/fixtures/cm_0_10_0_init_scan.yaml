@@ -1,0 +1,9 @@
+# scan block of the config.yaml written by `cm init` (cm 0.10.0).
+scan:
+  extensions:
+    include: [".py", ".java", ".go", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".cs", ".rs", ".kt", ".kts", ".rb", ".php", ".sol", ".tf", ".hcl"]
+    exclude: [".min.js", ".generated.go", ".pb.go"]
+  exclude_dirs: ["node_modules", "vendor", "dist", "bin", "target", "obj", "build", ".gradle"]
+  max_file_size_kb: 500
+  incremental: true
+

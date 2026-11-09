@@ -1,0 +1,25 @@
+rc=0
+--- log ---
+[stage] cm 0.11.0: cached gs://proj-cm-payload/bin/cm/0.11.0/cm-linux-amd64.zip sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+[stage] repos: all 2 tarball(s) cached (2/2)
+[stage] manifest: 2 find task(s) across 2 repo(s)
+run_id=GOLD
+results=gs://proj-cm-find-results/smoke/GOLD/
+[dry-run] tasks.json:
+[
+  {
+    "repo_id": "o04-vampi",
+    "language": "python",
+    "git_url": "https://github.com/erev0s/VAmPI.git",
+    "pinned_ref": "f16052dce83f05847133ec98f01c5193a41de7d8"
+  },
+  {
+    "repo_id": "p01-flask",
+    "language": "python",
+    "git_url": "https://github.com/pallets/flask.git",
+    "pinned_ref": "3.0.3"
+  }
+]
+[dry-run] would upload gs://proj-cm-payload/runs/smoke/GOLD/tasks.json and run_manifest.json
+[dry-run] gcloud run jobs execute cm-find-runner --region=us-central1 --project=proj --tasks=2 --task-timeout=172800s --update-env-vars=^##^EXPERIMENT_ID=smoke##RUN_ID=GOLD##CM_VERSION=0.11.0##EXPECTED_CM_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa##MODEL=gemini-3.8-flash##MODE=shallow##DEEP_WORKERS=##SEVERITY=CRITICAL,HIGH##VERIFY_LIMIT=2##FIX_LIMIT=0##FIX_FINDING_TIMEOUT=10800##FROM_FIND_RUN=##SOURCE_FIND_EXPERIMENT=##FROM_VERIFY_RUN=##SOURCE_VERIFY_EXPERIMENT=##INCLUDE_UNVERIFIED=0##FINDING_IDS=##EXTRA_CM_ARGS=--a 1, --b##JOB_TIMEOUT=172800##TOKEN_STATS_WORKERS=8 --async --format=json
+[dry-run] would then run verify --from-find-run smoke/GOLD

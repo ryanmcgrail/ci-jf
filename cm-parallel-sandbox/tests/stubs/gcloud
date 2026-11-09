@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Stub gcloud: emulates `gcloud storage cat|cp|ls` over $GCS_EMU (create-only)."""
+import os, pathlib, shutil, sys
+emu = pathlib.Path(os.environ["GCS_EMU"])
+log = os.environ.get("GCLOUD_STUB_LOG")
+if log:
+  with open(log, "a") as f: f.write(" ".join(sys.argv[1:]) + "\n")
+a = sys.argv[1:]
+def p(uri): return emu / uri[len("gs://"):]
+def bucket(uri): return uri[len("gs://"):].split("/", 1)[0]
+deny_w = set(filter(None, os.environ.get("GCS_DENY_WRITE", "").split(",")))
+deny_r = set(filter(None, os.environ.get("GCS_DENY_READ", "").split(",")))
+def denied(msg): sys.exit("ERROR: HTTPError 403: " + msg)
+real_auth = os.environ.get("GCLOUD_STUB_REAL_AUTH")
+if a[:1] == ["auth"] and real_auth:
+  os.execv(real_auth, [real_auth] + a)
+if a[:3] == ["auth", "application-default", "print-access-token"]:
+  print(os.environ.get("GCLOUD_STUB_TOKEN", "stub-token")); sys.exit(0)
+if a[:2] == ["auth", "print-access-token"]:
+  print("stub-token"); sys.exit(0)
+if a[:2] == ["storage", "cat"]:
+  if bucket(a[-1]) in deny_r: denied(a[-1])
+  src = p(a[-1])
+  if not src.is_file(): sys.exit("ERROR: not found: " + a[-1])
+  sys.stdout.write(src.read_text()); sys.exit(0)
+if a[:2] == ["storage", "cp"]:
+  args = [x for x in a[2:] if not x.startswith("-")]
+  srcs, dst = args[:-1], args[-1]
+  def put(local, uri):
+    if bucket(uri) in deny_w: denied(uri)
+    target = p(uri)
+    if target.exists(): sys.exit("ERROR: HTTPError 403: overwrite denied " + uri)
+    target.parent.mkdir(parents=True, exist_ok=True); shutil.copyfile(local, target)
+  for s in srcs:
+    if s.startswith("gs://"):
+      if bucket(s) in deny_r: denied(s)
+      s_clean = s[:-2] if s.endswith("/*") else (s[:-1] if s.endswith("*") else s)
+      sp = p(s_clean)
+      if sp.is_dir():
+        d = pathlib.Path(dst)
+        d.mkdir(parents=True, exist_ok=True)
+        for f in sorted(sp.rglob("*")):
+          if f.is_file():
+            rel = f.relative_to(sp)
+            target = d / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(f, target)
+      elif sp.is_file():
+        d = pathlib.Path(dst); d.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(sp, d / pathlib.Path(s_clean).name if d.is_dir() else d)
+      else:
+        sys.exit("ERROR: not found: " + s)
+    else:
+      sp = pathlib.Path(s)
+      if sp.is_dir():
+        for f in sorted(sp.rglob("*")):
+          if f.is_file(): put(f, dst.rstrip("/") + "/" + sp.name + "/" + str(f.relative_to(sp)))
+      else:
+        put(sp, dst + sp.name if dst.endswith("/") else dst)
+  sys.exit(0)
+if a[:2] == ["storage", "ls"]:
+  targets = [x for x in a[2:] if not x.startswith("-")]
+  target = targets[-1] if targets else a[-1]
+  if bucket(target) in deny_r: denied(target)
+  target_clean = target[:-2] if target.endswith("/*") else (target[:-1] if target.endswith("*") else target)
+  src = p(target_clean.rstrip("/"))
+  sys.exit(0 if src.exists() else 1)
+sys.exit("stub gcloud: unsupported " + " ".join(a))

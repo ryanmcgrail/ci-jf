@@ -1,0 +1,12 @@
+__pycache__/
+.venv/
+*.tfplan
+out/
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.tfstate.lock.info
+*.auto.tfvars
+terraform.tfvars
+# Lock files belong in root configurations, not reusable modules.
+terraform/modules/**/.terraform.lock.hcl

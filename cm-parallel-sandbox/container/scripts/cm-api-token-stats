@@ -1,0 +1,1049 @@
+#!/usr/bin/env python3
+"""
+cm-api-token-stats: Accurately queries and aggregates API billing token metrics
+for CodeMender sessions directly from the Vertex AI Agent Platform Interactions API.
+Corrects the single-turn undercounting bug in standard 'cm stats'.
+"""
+
+import argparse
+import concurrent.futures
+import datetime
+import glob
+import http.client
+import itertools
+import json
+import os
+import random
+import re
+import socket
+import sqlite3
+import subprocess
+import sys
+import time
+import urllib.parse
+import urllib.request
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+socket.setdefaulttimeout(15)
+
+BASE_URL = "https://aiplatform.googleapis.com"
+API_REVISION = "2026-05-20"
+
+# Sessions fetched concurrently by default. Turns within a session stay
+# sequential because each step resumes from the previous step's event ID.
+DEFAULT_WORKERS = 8
+
+# Retry configuration for transient step (turn) failures such as rate limiting.
+# Backoff intervals grow as 1s, 2s, 4s, 8s, 16s, 32s, 60s (~123s total), which
+# comfortably outlasts the 60-second Vertex AI quota replenishment window.
+MAX_STEP_RETRIES = 7
+BASE_RETRY_DELAY = 1.0
+MAX_RETRY_DELAY = 60.0
+RETRYABLE_HTTP_CODES = frozenset({408, 429, 500, 502, 503, 504})
+# A step whose stream emits events and then goes silent past the socket timeout
+# sits at the live edge of a session cm orphaned mid-step (e.g. it exited while
+# WAITING_FOR_TOOL). Retrying cannot complete it, so allow one retry to ride out
+# a slow backend, then record the step as incomplete instead of backing off ~4 min.
+MAX_STALL_RETRIES = 1
+
+# Mirror cm's iapi terminalStatuses and isTransientStreamingError so a step that
+# ends without 'interaction.completed' is classified the same way cm does.
+TERMINAL_STATUSES = frozenset(
+    {"completed", "failed", "cancelled", "incomplete", "budget_exceeded"}
+)
+TRANSIENT_STREAM_ERRORS = (
+    "A retriable error could not be retried",
+    "Extensible Stubs memory limits",
+    "stream_broken",
+    "Connection to server broken",
+    "transport is closing",
+    "connection reset",
+    "broken pipe",
+)
+
+BANNER = r"""  ____ __  __ _____     _              ____  _        _       
+ / ___|  \/  |_   _|__ | | _____ _ __ / ___|| |_ __ _| |_ ___ 
+| |   | |\/| | | |/ _ \| |/ / _ \ '_ \\___ \| __/ _` | __/ __|
+| |___| |  | | | | (_) |   <  __/ | | |___) | || (_| | |_\__ \
+ \____|_|  |_| |_|\___/|_|\_\___|_| |_|____/ \__\__,_|\__|___/"""
+
+
+def get_access_token() -> str:
+    """Resolves OAuth2 bearer token from env or gcloud ADC."""
+    if tok := os.environ.get("ACCESS_TOKEN"):
+        return tok.strip()
+    try:
+        res = subprocess.run(
+            ["gcloud", "auth", "application-default", "print-access-token"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        if tok := res.stdout.strip():
+            return tok
+    except Exception:
+        pass
+    try:
+        res = subprocess.run(
+            ["gcloud", "auth", "print-access-token"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        if tok := res.stdout.strip():
+            return tok
+    except Exception:
+        pass
+    sys.exit(
+        "Error: No valid Google Cloud access token found.\n"
+        "Please authenticate with 'gcloud auth application-default login' or export ACCESS_TOKEN."
+    )
+
+
+def get_project_id(explicit_project: Optional[str]) -> str:
+    """Resolves project ID from CLI flag or active gcloud config."""
+    if explicit_project:
+        return explicit_project
+    try:
+        res = subprocess.run(
+            ["gcloud", "config", "get-value", "project"],
+            capture_output=True,
+            text=True,
+        )
+        if proj := res.stdout.strip():
+            return proj
+    except Exception:
+        pass
+    sys.exit(
+        "Error: Google Cloud project ID is required.\n"
+        "Please specify a project via '--project <project_id>' or configure 'gcloud config set project <project_id>'."
+    )
+
+
+def get_cm_home() -> str:
+    """Returns $CM_HOME (CodeMender >= 0.10.0), else ~/.codemender."""
+    return os.path.expanduser(os.environ.get("CM_HOME", "").strip() or "~/.codemender")
+
+
+def get_db_path() -> str:
+    """Returns the CodeMender state database path under the cm home."""
+    return os.path.join(get_cm_home(), "state.db")
+
+
+def format_number(n: int) -> str:
+    """Formats numbers with k / M suffixes matching cm stats convention."""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    elif n >= 1_000:
+        return f"{n / 1_000:.1f}k"
+    return str(n)
+
+
+def format_duration(seconds: int) -> str:
+    """Formats seconds into MMm SSs or HHh MMm SSs."""
+    h, rem = divmod(max(0, int(seconds)), 3600)
+    m, s = divmod(rem, 60)
+    if h > 0:
+        return f"{h:02d}h {m:02d}m {s:02d}s"
+    return f"{m:02d}m {s:02d}s"
+
+
+def parse_duration(dur_str: str) -> datetime.timedelta:
+    """Parses duration strings like 24h, 168h0m0s, 7d into timedelta."""
+    total = 0
+    if m := re.search(r"(\d+)d", dur_str):
+        total += int(m.group(1)) * 86400
+    if m := re.search(r"(\d+)h", dur_str):
+        total += int(m.group(1)) * 3600
+    if m := re.search(r"(\d+)m", dur_str):
+        total += int(m.group(1)) * 60
+    if m := re.search(r"(\d+)s", dur_str):
+        total += int(m.group(1))
+    return datetime.timedelta(seconds=total if total > 0 else 168 * 3600)
+
+
+def compute_percentage(part: int, total: int) -> float:
+    """Computes a percentage value with zero-division protection."""
+    return (part / total * 100.0) if total > 0 else 0.0
+
+
+def positive_int(value: str) -> int:
+    """argparse type for an integer >= 1."""
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid int value: '{value}'")
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"must be >= 1, got {n}")
+    return n
+
+
+# Matches cm's per-session start line; anchored on stable tokens only.
+_ACCEPTED_SESSION_RE = re.compile(r"^(\S+)\s.*\bStartSession\b.*\baccepted\b.*\bsession=(Ch[\w-]+)")
+
+
+def get_logged_sessions() -> Dict[str, str]:
+    """Maps session IDs from 'StartSession accepted' lines in $CM_HOME/logs to their timestamp.
+
+    cm can drop state.db rows under concurrent --deep workers (SQLITE_BUSY), so the
+    logs are the only record of those sessions. Returns {} when no logs exist.
+    """
+    sessions: Dict[str, str] = {}
+    for path in glob.glob(os.path.join(get_cm_home(), "logs", "*.log")):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if m := _ACCEPTED_SESSION_RE.search(line):
+                        sessions.setdefault(m.group(2), m.group(1))
+        except OSError:
+            continue
+    return sessions
+
+
+def get_candidate_sessions(
+    since: Optional[datetime.timedelta] = None, limit: Optional[int] = None
+) -> List[Tuple[str, str]]:
+    """Retrieves all candidate sessions across any command/session type within duration.
+
+    state.db rows are merged with sessions recorded only in the cm logs (see
+    get_logged_sessions), which are counted as 'find'.
+    """
+    cutoff = None
+    if since is not None:
+        cutoff = (datetime.datetime.now(datetime.timezone.utc) - since).isoformat()
+    found: List[Tuple[str, str, str]] = []
+    db_path = get_db_path()
+    if os.path.isfile(db_path):
+        try:
+            conn = sqlite3.connect(db_path)
+            try:
+                query = "SELECT session_id, session_type, created_at FROM sessions"
+                params: List[Any] = []
+                if cutoff is not None:
+                    query += " WHERE created_at >= ?"
+                    params.append(cutoff)
+                query += " ORDER BY created_at DESC"
+                rows = conn.execute(query, tuple(params)).fetchall()
+                found = [
+                    (sid, (stype or "session").lower(), created or "")
+                    for sid, stype, created in rows
+                ]
+            finally:
+                conn.close()
+        except Exception:
+            found = []
+    known = {sid for sid, _, _ in found}
+    for sid, ts in get_logged_sessions().items():
+        if sid not in known and (cutoff is None or ts >= cutoff):
+            found.append((sid, "find", ts))
+    found.sort(key=lambda s: s[2], reverse=True)
+    if limit and limit > 0:
+        found = found[:limit]
+    return [(sid, stype) for sid, stype, _ in found]
+
+
+def resolve_logged_session_id(target: str) -> Optional[Tuple[str, str]]:
+    """Resolves a full ID or unique prefix against sessions recorded only in the cm logs."""
+    logged = get_logged_sessions()
+    matches = [sid for sid in logged if sid == target] or [
+        sid for sid in logged if sid.startswith(target)
+    ]
+    if len(matches) > 1:
+        sys.exit(
+            f"Error: Multiple sessions match prefix '{target}'. Please provide the full session ID."
+        )
+    return (matches[0], "find") if matches else None
+
+
+def resolve_session_id(session_input: str) -> Tuple[str, str]:
+    """Resolves a full or short session ID prefix against the cm home's state.db.
+
+    Falls back to the cm logs only when state.db has no matching session.
+    """
+    target = session_input.strip()
+    db_path = get_db_path()
+    if not os.path.isfile(db_path):
+        if logged := resolve_logged_session_id(target):
+            return logged
+        sys.exit(
+            f"Error: CodeMender state database not found at {db_path}."
+        )
+
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            # 1. Exact match
+            row = conn.execute(
+                "SELECT session_id, session_type FROM sessions WHERE session_id = ?",
+                (target,),
+            ).fetchone()
+            if row:
+                return row[0], (row[1] or "session").lower()
+
+            # 2. Exact-case prefix match
+            matches = conn.execute(
+                "SELECT session_id, session_type FROM sessions WHERE substr(session_id, 1, length(?)) = ?",
+                (target, target),
+            ).fetchall()
+
+            if len(matches) == 1:
+                return matches[0][0], (matches[0][1] or "session").lower()
+            elif len(matches) > 1:
+                sys.exit(
+                    f"Error: Multiple sessions match prefix '{target}'. Please provide the full session ID."
+                )
+            elif logged := resolve_logged_session_id(target):
+                return logged
+            else:
+                sys.exit(
+                    f"Error: Session '{target}' not found in {db_path}."
+                )
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        sys.exit(f"Error querying database {db_path}: {e}")
+
+
+def get_session_command_type(session_id: str) -> str:
+    """Finds the dynamic command type for a single session."""
+    _, cmd_type = resolve_session_id(session_id)
+    return cmd_type
+
+
+class StepStreamError(Exception):
+    """Raised when a step's event stream terminates before completion."""
+
+
+class StepStalledError(StepStreamError):
+    """Raised when a step's stream emitted events, then went silent until the read timeout."""
+
+
+def parse_retry_after(err: urllib.error.HTTPError) -> Optional[float]:
+    """Extracts a numeric Retry-After header (in seconds) from an HTTP error."""
+    try:
+        value = err.headers.get("Retry-After") if err.headers else None
+    except Exception:
+        return None
+    if not value:
+        return None
+    try:
+        return max(0.0, float(str(value).strip()))
+    except (TypeError, ValueError):
+        return None
+
+
+def compute_backoff_delay(attempt: int, retry_after: Optional[float] = None) -> float:
+    """Computes the exponential backoff delay (with jitter) for a retry attempt."""
+    delay = min(MAX_RETRY_DELAY, BASE_RETRY_DELAY * (2**attempt))
+    delay += random.uniform(0, 0.5)
+    if retry_after is not None:
+        delay = max(delay, retry_after)
+    return delay
+
+
+def step_end_status(event: str, payload: Dict[str, Any]) -> Optional[str]:
+    """Returns the status if a non-completion SSE event ends a step, else None.
+
+    Mirrors cm's parseEvent for 'interaction.status_update' and 'error';
+    'interaction.completed' is handled directly by fetch_step_stream.
+    """
+    if event == "interaction.status_update":
+        status = payload.get("status")
+        if status == "requires_action" or status in TERMINAL_STATUSES:
+            return status
+    elif event == "error":
+        msg = (payload.get("error") or {}).get("message", "")
+        if not any(s in msg for s in TRANSIENT_STREAM_ERRORS):
+            return "failed"
+    return None
+
+
+def fetch_step_stream(
+    url: str, token: str, project_id: str
+) -> Tuple[Optional[Dict[str, Any]], str, Optional[str], bool]:
+    """Streams a single step and returns (completion event, tool name, last seen event ID, saw any event).
+
+    A returned completion event of None means the stream closed without an
+    'interaction.completed' event: the caller inspects the 'saw any event' flag
+    to distinguish an idle end-of-session stream from a truncated one.
+    """
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Api-Revision": API_REVISION,
+            "X-Goog-User-Project": project_id,
+        },
+    )
+
+    current_event = None
+    tool_name = "model_output"
+    comp_event = None
+    latest_event_id: Optional[str] = None
+    saw_any_event = False
+    # Used only when the step never emits 'interaction.completed' (e.g. a
+    # session that failed or was abandoned mid-step).
+    fallback: Optional[Dict[str, Any]] = None
+
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        try:
+            for line in resp:
+                line_str = line.decode("utf-8", errors="replace").rstrip("\r\n")
+                if line_str.startswith("event:"):
+                    current_event = line_str[6:].strip()
+                    saw_any_event = True
+                elif line_str.startswith("data:") and current_event:
+                    data_str = line_str[5:].strip()
+                    try:
+                        payload = json.loads(data_str)
+                        if event_id := payload.get("event_id"):
+                            latest_event_id = event_id
+                        if (
+                            current_event == "step.start"
+                            and payload.get("step", {}).get("type") == "function_call"
+                        ):
+                            tool_name = payload["step"].get("name", "tool")
+                        elif current_event == "interaction.completed":
+                            comp_event = payload
+                        elif status := step_end_status(current_event, payload):
+                            usage = payload.get("usage") or payload.get(
+                                "interaction", {}
+                            ).get("usage", {})
+                            fallback = {
+                                "fallback": True,
+                                "interaction": {"status": status, "usage": usage},
+                            }
+                    except Exception:
+                        pass
+        except (
+            TimeoutError,
+            urllib.error.URLError,
+            http.client.HTTPException,
+            OSError,
+        ) as e:
+            # A stream that drops after emitting events is a truncated step and
+            # is retryable; an idle stream with no events is a clean end of session.
+            if saw_any_event and not (comp_event or fallback):
+                if isinstance(e, (TimeoutError, socket.timeout)):  # aliases on 3.10+
+                    raise StepStalledError(f"stream stalled: {e}") from e
+                raise StepStreamError(f"stream truncated: {e}") from e
+
+    return comp_event or fallback, tool_name, latest_event_id, saw_any_event
+
+
+def fetch_session_turns(
+    session_id: str,
+    project_id: str,
+    token: str,
+    quiet: bool,
+    show_progress: bool = True,
+) -> Optional[List[Dict[str, Any]]]:
+    """Streams and parses all turns for a given CodeMender session from Vertex AI.
+
+    Each step is retried with exponential backoff on transient failures (such as
+    HTTP 429 rate limiting). A step that keeps failing is recorded as an errored
+    turn rather than aborting collection of the remaining turns.
+
+    quiet suppresses all stderr output; show_progress=False only suppresses the
+    per-turn progress line, which would interleave across concurrent sessions.
+    """
+    progress = show_progress and not quiet and sys.stderr.isatty()
+    turns: List[Dict[str, Any]] = []
+    last_event_id = None
+    seen_event_ids: Set[str] = set()
+
+    for turn in itertools.count(1):
+        url = f"{BASE_URL}/v1beta1/projects/{project_id}/locations/global/interactions/{session_id}?stream=true"
+        if last_event_id:
+            url += f"&last_event_id={urllib.parse.quote(last_event_id)}"
+
+        comp_event: Optional[Dict[str, Any]] = None
+        tool_name = "model_output"
+        fallback_event_id: Optional[str] = None
+        stream_exhausted = False
+        last_error: Optional[str] = None
+        stalls = 0
+
+        for attempt in range(MAX_STEP_RETRIES + 1):
+            if progress:
+                sys.stderr.write(
+                    f"\r\033[K[INFO] Fetching turn {turn} for session {session_id}..."
+                )
+                sys.stderr.flush()
+
+            retry_after: Optional[float] = None
+            try:
+                (
+                    comp_event,
+                    tool_name,
+                    fallback_event_id,
+                    saw_any_event,
+                ) = fetch_step_stream(url, token, project_id)
+                if comp_event:
+                    last_error = None
+                    break
+                if saw_any_event:
+                    raise StepStreamError("stream closed before interaction.completed")
+                # No events at all: the session has no further turns.
+                stream_exhausted = True
+                break
+            except urllib.error.HTTPError as e:
+                if turn == 1 and e.code == 404:
+                    if not quiet:
+                        sys.stderr.write(
+                            f"\r\033[K[WARNING] Session {session_id} expired on backend (HTTP 404). Skipping.\n"
+                        )
+                    return None
+                last_error = f"HTTP Error {e.code}: {e.reason}"
+                if e.code not in RETRYABLE_HTTP_CODES:
+                    break
+                retry_after = parse_retry_after(e)
+            except StepStalledError as e:
+                last_error = str(e)
+                stalls += 1
+                if stalls > MAX_STALL_RETRIES:
+                    break
+            except StepStreamError as e:
+                last_error = str(e)
+            except (
+                TimeoutError,
+                urllib.error.URLError,
+                http.client.HTTPException,
+                OSError,
+            ) as e:
+                last_error = f"{type(e).__name__}: {e}"
+            except Exception as e:
+                last_error = f"{type(e).__name__}: {e}"
+                break
+
+            if attempt >= MAX_STEP_RETRIES:
+                break
+
+            delay = compute_backoff_delay(attempt, retry_after)
+            if not quiet:
+                sys.stderr.write(
+                    f"\r\033[K[WARN] Step {turn} for {session_id} failed ({last_error}); "
+                    f"retrying in {delay:.1f}s (attempt {attempt + 1}/{MAX_STEP_RETRIES}).\n"
+                )
+                sys.stderr.flush()
+            time.sleep(delay)
+
+        if stream_exhausted:
+            break
+
+        if not comp_event:
+            orphaned = stalls > MAX_STALL_RETRIES
+            if not quiet:
+                if orphaned:
+                    sys.stderr.write(
+                        f"\r\033[K[WARN] Step {turn} for {session_id} stalled without completing; "
+                        "recording it as incomplete (session orphaned mid-step or still running).\n"
+                    )
+                else:
+                    sys.stderr.write(
+                        f"\r\033[K[ERROR] Step {turn} for {session_id} failed after retries: {last_error}\n"
+                    )
+            turns.append(
+                {
+                    "turn": turn,
+                    "tool": tool_name,
+                    "status": "incomplete" if orphaned else "error",
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "thought_tokens": 0,
+                    "cached_tokens": 0,
+                    "total_tokens": 0,
+                    "created": None,
+                    "updated": None,
+                }
+            )
+            if orphaned:
+                # The step never completed, so the session has no later turns.
+                break
+            # Continue from the last event observed on the failed step so a
+            # single bad step does not truncate the rest of the session.
+            if fallback_event_id and fallback_event_id not in seen_event_ids:
+                seen_event_ids.add(fallback_event_id)
+                last_event_id = fallback_event_id
+                continue
+            break
+
+        interaction = comp_event.get("interaction", {})
+        usage = interaction.get("usage", {})
+        next_event_id = comp_event.get("event_id") or interaction.get("event_id")
+        status = interaction.get("status", "completed")
+
+        turns.append(
+            {
+                "turn": turn,
+                "tool": tool_name,
+                "status": status,
+                "input_tokens": usage.get("total_input_tokens", 0),
+                "output_tokens": usage.get("total_output_tokens", 0),
+                "thought_tokens": usage.get("total_thought_tokens", 0),
+                "cached_tokens": usage.get("total_cached_tokens", 0),
+                "total_tokens": usage.get("total_tokens", 0),
+                "created": interaction.get("created"),
+                "updated": interaction.get("updated"),
+            }
+        )
+
+        if (
+            (status == "completed" and tool_name == "model_output")
+            # A step that ended without 'interaction.completed' means the
+            # session failed or was abandoned; there are no further turns.
+            or comp_event.get("fallback")
+            or not next_event_id
+            or next_event_id in seen_event_ids
+        ):
+            break
+
+        seen_event_ids.add(next_event_id)
+        last_event_id = next_event_id
+
+    if progress:
+        sys.stderr.write("\r\033[K")
+        sys.stderr.flush()
+
+    return turns
+
+
+def fetch_all_sessions(
+    sessions: List[Tuple[str, str]],
+    project_id: str,
+    token: str,
+    workers: int,
+    quiet: bool,
+) -> List[Optional[List[Dict[str, Any]]]]:
+    """Fetches turns for each (session ID, type) on up to `workers` threads.
+
+    Results align with `sessions` order, so aggregating them gives the same
+    output as a sequential run. A session whose fetch raises is logged and
+    returned as None, like an expired session, instead of aborting the run.
+    """
+    if not sessions:
+        return []
+
+    concurrent_mode = workers > 1
+    show_counter = concurrent_mode and not quiet and sys.stderr.isatty()
+
+    def fetch_one(session_id: str) -> Optional[List[Dict[str, Any]]]:
+        try:
+            return fetch_session_turns(
+                session_id, project_id, token, quiet, show_progress=not concurrent_mode
+            )
+        except Exception as e:
+            if not quiet:
+                sys.stderr.write(
+                    f"\r\033[K[WARNING] Session {session_id} failed: "
+                    f"{type(e).__name__}: {e}. Skipping.\n"
+                )
+            return None
+
+    results: List[Optional[List[Dict[str, Any]]]] = [None] * len(sessions)
+    pool = concurrent.futures.ThreadPoolExecutor(
+        max_workers=min(workers, len(sessions)), thread_name_prefix="cm-token-stats"
+    )
+    try:
+        futures = {
+            pool.submit(fetch_one, sid): i for i, (sid, _) in enumerate(sessions)
+        }
+        for done, future in enumerate(concurrent.futures.as_completed(futures), 1):
+            results[futures[future]] = future.result()
+            if show_counter:
+                sys.stderr.write(
+                    f"\r\033[K[INFO] Fetched {done}/{len(sessions)} sessions..."
+                )
+                sys.stderr.flush()
+    finally:
+        # Drop queued sessions if interrupted; in-flight ones finish on their own.
+        pool.shutdown(wait=False, cancel_futures=True)
+        if show_counter:
+            sys.stderr.write("\r\033[K")
+            sys.stderr.flush()
+    return results
+
+
+def parse_session_duration(turns: List[Dict[str, Any]]) -> int:
+    """Computes session duration in seconds from first created and last updated timestamps."""
+    if not turns:
+        return 0
+    # Errored steps carry no timestamps, so fall back to the nearest turns that do.
+    t0_str = next((t.get("created") for t in turns if t.get("created")), None)
+    t1_str = next((t.get("updated") for t in reversed(turns) if t.get("updated")), None)
+    if t0_str and t1_str:
+        try:
+            t0 = datetime.datetime.fromisoformat(t0_str.replace("Z", "+00:00"))
+            t1 = datetime.datetime.fromisoformat(t1_str.replace("Z", "+00:00"))
+            return max(0, int((t1 - t0).total_seconds()))
+        except Exception:
+            pass
+    return 0
+
+
+def main():
+    no_flags = len(sys.argv) == 1
+
+    parser = argparse.ArgumentParser(
+        prog="cm-api-token-stats",
+        description=f"{BANNER}\n\nCodeMender Billing Token Usage Statistics\n\n"
+        "Aggregates actual LLM token usage across all turns from the Vertex AI\n"
+        "Agent Platform API for CodeMender sessions, fixing the single-turn undercount\n"
+        "in standard 'cm stats'.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--json", action="store_true", help="Output statistics as JSON")
+    parser.add_argument(
+        "--session",
+        dest="session_id",
+        type=str,
+        default=None,
+        help="Drill down into a specific session ID (accepts full ID or short prefix from 'cm session list')",
+    )
+    parser.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        help="Include only activity from the last duration (e.g. 24h, 168h) (default: all sessions)",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Maximum number of candidate sessions to process from database (default: all sessions)",
+    )
+    parser.add_argument(
+        "--project",
+        dest="project_id",
+        type=str,
+        default=None,
+        help="Google Cloud project ID (or set active gcloud project)",
+    )
+    parser.add_argument(
+        "--workers",
+        type=positive_int,
+        default=DEFAULT_WORKERS,
+        help=f"Number of sessions to fetch concurrently (default: {DEFAULT_WORKERS}; 1 = sequential)",
+    )
+
+    args = parser.parse_args()
+
+    since_delta = parse_duration(args.since) if args.since else None
+
+    sessions_to_process: List[Tuple[str, str]] = []
+    if args.session_id:
+        resolved_id, cmd_type = resolve_session_id(args.session_id)
+        if resolved_id != args.session_id and not args.json:
+            sys.stderr.write(
+                f"[INFO] Resolved short session ID '{args.session_id}' -> '{resolved_id}'\n"
+            )
+        args.session_id = resolved_id
+        sessions_to_process.append((resolved_id, cmd_type))
+    else:
+        sessions_to_process = get_candidate_sessions(since_delta, limit=args.limit)
+
+    if not sessions_to_process:
+        since_label = args.since or "all"
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "since": since_label,
+                        "total_turns": 0,
+                        "command_types": 0,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "cached_tokens": 0,
+                        "thought_tokens": 0,
+                        "tool_calls": 0,
+                        "total_tokens": 0,
+                        "cache_hit_percent": 0.0,
+                        "think_ratio_percent": 0.0,
+                        "duration_seconds": 0,
+                        "duration_formatted": "00m 00s",
+                        "buckets": [],
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            if args.since:
+                print(f"No active CodeMender sessions found within duration {args.since}.")
+            else:
+                print("No active CodeMender sessions found in state database.")
+        return
+
+    token = get_access_token()
+    project_id = get_project_id(args.project_id)
+
+    if no_flags and not args.json:
+        print("Grabbing stats across all runs...\n")
+
+    # Aggregators across sessions
+    grand_input = 0
+    grand_output = 0
+    grand_thought = 0
+    grand_cached = 0
+    grand_total = 0
+    grand_turns = 0
+    grand_tool_calls = 0
+    grand_duration = 0
+    active_sessions_count = 0
+
+    cmd_stats: Dict[str, Dict[str, Any]] = {}
+    drilldown_turns: Optional[List[Dict[str, Any]]] = None
+    drilldown_cmd_type = "session"
+    drilldown_peak = 0
+
+    all_turns = fetch_all_sessions(
+        sessions_to_process, project_id, token, workers=args.workers, quiet=args.json
+    )
+    for (sid, stype), turns in zip(sessions_to_process, all_turns):
+        if not turns:
+            continue
+
+        active_sessions_count += 1
+        dur = parse_session_duration(turns)
+
+        s_inp = sum(t["input_tokens"] for t in turns)
+        s_out = sum(t["output_tokens"] for t in turns)
+        s_th = sum(t["thought_tokens"] for t in turns)
+        s_ca = sum(t["cached_tokens"] for t in turns)
+        s_tot = sum(t["total_tokens"] for t in turns)
+        s_tools = sum(1 for t in turns if t["tool"] != "model_output")
+        s_peak = max((t["total_tokens"] for t in turns), default=0)
+
+        grand_turns += len(turns)
+        grand_input += s_inp
+        grand_output += s_out
+        grand_thought += s_th
+        grand_cached += s_ca
+        grand_total += s_tot
+        grand_tool_calls += s_tools
+        grand_duration += dur
+
+        if stype not in cmd_stats:
+            cmd_stats[stype] = {
+                "requests": 0,
+                "input": 0,
+                "output": 0,
+                "cached": 0,
+                "thought": 0,
+                "tool_calls": 0,
+                "total": 0,
+                "duration": 0,
+            }
+
+        c_bucket = cmd_stats[stype]
+        c_bucket["requests"] += len(turns)
+        c_bucket["input"] += s_inp
+        c_bucket["output"] += s_out
+        c_bucket["cached"] += s_ca
+        c_bucket["thought"] += s_th
+        c_bucket["tool_calls"] += s_tools
+        c_bucket["total"] += s_tot
+        c_bucket["duration"] += dur
+
+        if args.session_id:
+            drilldown_turns = turns
+            drilldown_cmd_type = stype
+            drilldown_peak = s_peak
+
+    if active_sessions_count == 0:
+        since_label = args.since or "all"
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "since": since_label,
+                        "total_turns": 0,
+                        "command_types": 0,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "cached_tokens": 0,
+                        "thought_tokens": 0,
+                        "tool_calls": 0,
+                        "total_tokens": 0,
+                        "cache_hit_percent": 0.0,
+                        "think_ratio_percent": 0.0,
+                        "duration_seconds": 0,
+                        "duration_formatted": "00m 00s",
+                        "buckets": [],
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            if args.since:
+                print(f"No active sessions could be retrieved from the Vertex AI backend within duration {args.since}.")
+            else:
+                print("No active sessions could be retrieved from the Vertex AI backend.")
+        return
+
+    # Overall ratios
+    grand_cache_hit = compute_percentage(grand_cached, grand_input)
+    grand_think_ratio = compute_percentage(grand_thought, grand_output + grand_thought)
+
+    # -------------------------------------------------------------------------
+    # JSON Mode
+    # -------------------------------------------------------------------------
+    if args.json:
+        buckets = [
+            {
+                "label": "total",
+                "requests": grand_turns,
+                "input_tokens": grand_input,
+                "output_tokens": grand_output,
+                "cached_tokens": grand_cached,
+                "thought_tokens": grand_thought,
+                "tool_calls": grand_tool_calls,
+                "total_tokens": grand_total,
+                "cache_hit_percent": grand_cache_hit,
+                "think_ratio_percent": grand_think_ratio,
+                "duration_seconds": grand_duration,
+                "duration_formatted": format_duration(grand_duration),
+            }
+        ]
+
+        for label, b in cmd_stats.items():
+            b_inp = b["input"]
+            b_ca = b["cached"]
+            b_out = b["output"]
+            b_th = b["thought"]
+            chp = compute_percentage(b_ca, b_inp)
+            trp = compute_percentage(b_th, b_out + b_th)
+            buckets.append(
+                {
+                    "label": label,
+                    "requests": b["requests"],
+                    "input_tokens": b_inp,
+                    "output_tokens": b_out,
+                    "cached_tokens": b_ca,
+                    "thought_tokens": b_th,
+                    "tool_calls": b["tool_calls"],
+                    "total_tokens": b["total"],
+                    "cache_hit_percent": chp,
+                    "think_ratio_percent": trp,
+                    "duration_seconds": b["duration"],
+                    "duration_formatted": format_duration(b["duration"]),
+                }
+            )
+
+        payload: Dict[str, Any] = {
+            "since": args.since or "all",
+            "total_turns": grand_turns,
+            "command_types": len(cmd_stats),
+            "input_tokens": grand_input,
+            "output_tokens": grand_output,
+            "cached_tokens": grand_cached,
+            "thought_tokens": grand_thought,
+            "tool_calls": grand_tool_calls,
+            "total_tokens": grand_total,
+            "cache_hit_percent": grand_cache_hit,
+            "think_ratio_percent": grand_think_ratio,
+            "duration_seconds": grand_duration,
+            "duration_formatted": format_duration(grand_duration),
+            "buckets": buckets,
+        }
+
+        if args.session_id and drilldown_turns:
+            payload["session_id"] = args.session_id
+            payload["turns"] = drilldown_turns
+
+        print(json.dumps(payload, indent=2))
+        return
+
+    # -------------------------------------------------------------------------
+    # Console Table Mode
+    # -------------------------------------------------------------------------
+    if args.session_id and drilldown_turns:
+        print("=" * 100)
+        print(
+            f"{'TURN':<6}  {'ACTION / TOOL':<30}  {'INPUT':<8}  {'OUTPUT':<8}  {'CACHED':<8}  {'THOUGHT':<8}  {'TOTAL':<8}  {'STATUS':<15}"
+        )
+        print("=" * 100)
+        for t in drilldown_turns:
+            print(
+                f"{t['turn']:<6}  "
+                f"{t['tool'][:30]:<30}  "
+                f"{format_number(t['input_tokens']):<8}  "
+                f"{format_number(t['output_tokens']):<8}  "
+                f"{format_number(t['cached_tokens']):<8}  "
+                f"{format_number(t['thought_tokens']):<8}  "
+                f"{format_number(t['total_tokens']):<8}  "
+                f"{t['status']:<15}"
+            )
+        print("=" * 100)
+        print()
+
+    # Summary Table
+    print(
+        f"{'COMMAND':<8} {'REQUESTS':<9} {'INPUT':<7} {'OUTPUT':<7} {'CACHED':<7} {'THOUGHT':<8} {'TOOL_CALLS':<11} {'TOTAL':<7} {'CACHE_HIT%':<11} {'THINK_RATIO%':<13} {'DURATION':<8}"
+    )
+    print(
+        "───────  ────────  ─────   ──────  ──────  ───────  ──────────  ─────   ──────────  ────────────  ────────"
+    )
+
+    print(
+        f"{'total':<8} "
+        f"{grand_turns:<9} "
+        f"{format_number(grand_input):<7} "
+        f"{format_number(grand_output):<7} "
+        f"{format_number(grand_cached):<7} "
+        f"{format_number(grand_thought):<8} "
+        f"{grand_tool_calls:<11} "
+        f"{format_number(grand_total):<7} "
+        f"{grand_cache_hit:.1f}%{'':<5} "
+        f"{grand_think_ratio:.1f}%{'':<7} "
+        f"{format_duration(grand_duration):<8}"
+    )
+
+    for stype, b in cmd_stats.items():
+        b_inp = b["input"]
+        b_ca = b["cached"]
+        b_out = b["output"]
+        b_th = b["thought"]
+        chp = compute_percentage(b_ca, b_inp)
+        trp = compute_percentage(b_th, b_out + b_th)
+        print(
+            f"cm {stype:<5} "
+            f"{b['requests']:<9} "
+            f"{format_number(b_inp):<7} "
+            f"{format_number(b_out):<7} "
+            f"{format_number(b_ca):<7} "
+            f"{format_number(b_th):<8} "
+            f"{b['tool_calls']:<11} "
+            f"{format_number(b['total']):<7} "
+            f"{chp:.1f}%{'':<5} "
+            f"{trp:.1f}%{'':<7} "
+            f"{format_duration(b['duration']):<8}"
+        )
+
+    print()
+    if args.session_id:
+        print(
+            f"Session {args.session_id} ({drilldown_cmd_type}) — {grand_turns} turn(s), "
+            f"Duration: {format_duration(grand_duration)}, Total: {format_number(grand_total)} tokens "
+            f"(Peak context: {format_number(drilldown_peak)} tokens)"
+        )
+    else:
+        if args.since:
+            print(
+                f"{grand_turns} turn(s) across {active_sessions_count} active session(s) in the last duration ({args.since})"
+            )
+        else:
+            print(
+                f"{grand_turns} turn(s) across {active_sessions_count} active session(s) in state database"
+            )
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.stderr.write("\nOperation cancelled by user.\n")
+        sys.stderr.flush()
+        sys.stdout.flush()
+        # os._exit skips joining in-flight session threads, which may sit in
+        # retry backoff for up to a minute.
+        os._exit(130)

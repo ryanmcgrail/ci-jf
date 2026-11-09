@@ -1,0 +1,30 @@
+server: {}
+scan:
+  extensions:
+    include: [
+      ".py", ".java", ".go", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx",
+      ".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".hh", ".hxx", ".inl", ".tpp",
+      ".rb", ".php",
+      ".cs", ".cshtml", ".razor",
+      ".kt", ".kts",
+      ".rs",
+      ".sol", ".tf", ".hcl",
+      ".svelte", ".vue"
+    ]
+    exclude: [".min.js", ".generated.go", ".pb.go"]
+  exclude_dirs: [
+    "vendor", "node_modules", ".git",
+    "target", "build", ".gradle", "bin", "obj",
+    "third_party", ".venv", "venv", "dist", "docs_src"
+  ]
+  max_file_size_kb: 1024
+  incremental: true
+tools:
+  confirm_commands: false
+  confirm_writes: false
+vcs:
+  type: git
+sandbox:
+  enabled: false
+output:
+  format: table
