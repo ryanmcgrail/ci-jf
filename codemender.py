@@ -227,6 +227,7 @@ class CodeMender:
       clean_files_file: Optional[str] = None,
       max_turns: int = 8,
       active_files: Optional[List[str]] = None,
+      deep_workers: int = 16,
   ) -> Any:
     """Runs the CodeMender find command on the target repository directory."""
     target = target_or_id if target_or_id is not None else self.repo_dir
@@ -297,6 +298,7 @@ class CodeMender:
         cmd_flags.append("--quick")
       if scan_mode == ScanMode.DEEP:
         cmd_flags.append("--deep")
+        cmd_flags.append(f"--deep-workers={deep_workers}")
       elif scan_mode == ScanMode.DIFF:
         cmd_flags.append("--diff")
       if extra_flags:
