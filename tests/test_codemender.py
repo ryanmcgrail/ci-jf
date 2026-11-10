@@ -12,7 +12,6 @@ from unittest.mock import patch
 
 import codemender
 from codemender import CodeMender
-from finding import Finding
 
 
 class CodeMenderTests(unittest.TestCase):
@@ -40,30 +39,6 @@ class CodeMenderTests(unittest.TestCase):
   def test_build_cm_command_requires_target(self):
     with self.assertRaises(ValueError):
       codemender.build_cm_command(cm_binary="cm", action="find", target_or_id=None)
-
-  def test_write_import_payload(self):
-    findings = [
-        Finding.from_dict({
-            "file_path": "src/main.py",
-            "start_line": 10,
-            "end_line": 12,
-            "title": "Bug",
-            "analysis": "Bad code",
-            "severity": "HIGH",
-            "vuln_type": "Injection",
-            "snippet": "code()",
-            "unexpected": "ignore",
-        })
-    ]
-    with tempfile.TemporaryDirectory() as tmpdir:
-      dest = os.path.join(tmpdir, "payload.json")
-      written = codemender.write_import_payload(findings, dest)
-      self.assertEqual(written, dest)
-      with open(dest, "r", encoding="utf-8") as f:
-        loaded = json.load(f)
-      self.assertEqual(len(loaded), 1)
-      self.assertEqual(loaded[0]["file_path"], "src/main.py")
-      self.assertNotIn("unexpected", loaded[0])
 
   def test_init_defaults(self):
     cm = CodeMender()
@@ -352,20 +327,6 @@ class CodeMenderTests(unittest.TestCase):
       findings = cm.list_findings()
     self.assertEqual(len(findings), 1)
     self.assertEqual(findings[0].finding_id, "cm-99")
-
-  def test_import_findings(self):
-    cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
-    before_raw = json.dumps([{"finding_id": "cm-1", "fingerprint": "fp-1"}])
-    proc_before = types.SimpleNamespace(returncode=0, stdout=before_raw)
-    proc_import = types.SimpleNamespace(returncode=0, stdout="Imported")
-    to_import = [Finding(finding_id="f-2", fingerprint="fp-2", file_path="src/main.py", title="Bug")]
-
-    with patch("codemender.run_command", side_effect=[proc_before, proc_import]) as mock_run:
-      imported = cm.import_findings(to_import)
-    self.assertEqual(imported, to_import)
-    import_cmd = mock_run.call_args_list[1].args[0]
-    temp_file_path = import_cmd[import_cmd.index("-f") + 1]
-    self.assertFalse(os.path.exists(temp_file_path))
 
   def test_db_returns_none_when_state_db_missing(self):
     with tempfile.TemporaryDirectory() as tmpdir:

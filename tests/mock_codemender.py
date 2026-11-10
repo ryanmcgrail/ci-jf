@@ -159,12 +159,6 @@ class MockCodeMender:
         self.list_findings_calls += 1
         return self._query_findings()
 
-    def import_findings(self, findings: Iterable[Finding]) -> list[Finding]:
-        before_fingerprints = {f.fingerprint for f in self._query_findings()}
-        newly_imported = [f for f in findings if f.fingerprint not in before_fingerprints]
-        self._insert_findings(newly_imported)
-        return newly_imported
-
     def __del__(self) -> None:
         if getattr(self, "_db", None) is not None:
             self._db.close()

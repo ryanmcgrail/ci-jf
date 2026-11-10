@@ -2,12 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping, Optional
 
-# --- Constants & Pattern Definitions ---
-
-_TRUTHY = frozenset({"true", "1", "yes", "on"})
-
-SKIPPED_STATUSES = frozenset({"SKIPPED_DUPLICATE", "PRE_EXISTING_IGNORED"})
-
 
 # --- Helper Conversion Functions ---
 
@@ -29,20 +23,6 @@ def _as_int(value: Any) -> Optional[int]:
     return int(value)
   except (TypeError, ValueError):
     return None
-
-
-def _as_bool(value: Any) -> Optional[bool]:
-  """Coerces a 0/1/'true' style value to bool, or None."""
-  if value is None:
-    return None
-  if isinstance(value, bool):
-    return value
-  if isinstance(value, (int, float)):
-    return bool(value)
-  text = _as_str(value)
-  if text is None:
-    return None
-  return text.lower() in _TRUTHY
 
 
 # --- Main Finding Class ---
@@ -75,15 +55,6 @@ class Finding:
     return _as_str(self._get("analysis"))
 
   @property
-  def confidence(self) -> Optional[int]:
-    return _as_int(self._get("confidence"))
-
-  @property
-  def confidence_level(self) -> Optional[str]:
-    val = _as_str(self._get("confidence_level"))
-    return val.upper() if val else None
-
-  @property
   def dismiss_reason(self) -> Optional[str]:
     return _as_str(self._get("dismiss_reason"))
 
@@ -104,40 +75,12 @@ class Finding:
     return _as_str(self._get("finding_id"))
 
   @property
-  def fingerprint(self) -> Optional[str]:
-    return _as_str(self._get("fingerprint"))
-
-  @property
   def gh_issue_number(self) -> Optional[Any]:
     return self._get("gh_issue_number")
 
   @property
-  def github_marker(self) -> Optional[str]:
-    return _as_str(self._get("github_marker"))
-
-  @property
-  def mute_reason(self) -> Optional[str]:
-    return _as_str(self._get("mute_reason"))
-
-  @property
-  def muted(self) -> Optional[bool]:
-    return _as_bool(self._get("muted"))
-
-  @property
   def raw_lines(self) -> Optional[Any]:
     return self._get("raw_lines")
-
-  @property
-  def repository(self) -> Optional[str]:
-    return _as_str(self._get("repository"))
-
-  @property
-  def scan_timestamp(self) -> Optional[str]:
-    return _as_str(self._get("scan_timestamp"))
-
-  @property
-  def session_id(self) -> Optional[str]:
-    return _as_str(self._get("session_id"))
 
   @property
   def severity(self) -> Optional[str]:
@@ -147,10 +90,6 @@ class Finding:
   @property
   def snippet(self) -> Optional[str]:
     return _as_str(self._get("snippet"))
-
-  @property
-  def source_stage(self) -> Optional[str]:
-    return _as_str(self._get("source_stage"))
 
   @property
   def start_line(self) -> Optional[int]:
@@ -164,14 +103,6 @@ class Finding:
   @property
   def title(self) -> Optional[str]:
     return _as_str(self._get("title"))
-
-  @property
-  def updated_at(self) -> Optional[str]:
-    return _as_str(self._get("updated_at"))
-
-  @property
-  def verified(self) -> Optional[bool]:
-    return _as_bool(self._get("verified"))
 
   @property
   def vuln_id(self) -> Optional[str]:
@@ -197,19 +128,6 @@ class Finding:
   def to_dict(self) -> Dict[str, Any]:
     """Returns a dictionary representation of the finding."""
     return dict(self._raw)
-
-  def to_cm_import_record(self) -> Dict[str, Any]:
-    """Converts finding to simple-JSON record accepted by CodeMender import."""
-    return {
-        "analysis": self.analysis,
-        "file_path": self.file_path,
-        "end_line": self.end_line,
-        "start_line": self.start_line,
-        "severity": self.severity,
-        "snippet": self.snippet,
-        "title": self.title,
-        "vuln_type": self.vuln_type,
-    }
 
   def __repr__(self) -> str:
     return f"Finding(finding_id={self.finding_id!r}, file_path={self.file_path!r}, status={self.status!r})"

@@ -10,7 +10,6 @@ class FindingTests(unittest.TestCase):
   def test_from_dict_and_to_dict(self):
     data = {
         "finding_id": "f-123",
-        "repository": "owner/repo",
         "file_path": "src/auth.py",
         "start_line": 15,
         "end_line": 20,
@@ -20,36 +19,18 @@ class FindingTests(unittest.TestCase):
         "status": "detected",
         "analysis": "Secret key found in source",
         "snippet": "SECRET = '123'",
-        "fingerprint": "fp-123",
     }
     f = Finding.from_dict(data)
     self.assertEqual(f.finding_id, "f-123")
-    self.assertEqual(f.repository, "owner/repo")
     self.assertEqual(f.file_path, "src/auth.py")
     self.assertEqual(f.start_line, 15)
     self.assertEqual(f.end_line, 20)
     self.assertEqual(f.title, "Hardcoded Secret")
+    self.assertEqual(f.vuln_type, "CWE-798")
     self.assertEqual(f.severity, "HIGH")
     self.assertEqual(f.status, "DETECTED")
     self.assertEqual(f.analysis, "Secret key found in source")
     self.assertEqual(f.snippet, "SECRET = '123'")
-    self.assertEqual(f.fingerprint, "fp-123")
-
-  def test_to_cm_import_record(self):
-    f = Finding(
-        finding_id="f-1",
-        file_path="src/main.py",
-        start_line=10,
-        title="XSS",
-        severity="HIGH",
-        analysis="XSS vulnerability",
-    )
-    rec = f.to_cm_import_record()
-    self.assertEqual(rec["file_path"], "src/main.py")
-    self.assertEqual(rec["start_line"], 10)
-    self.assertEqual(rec["title"], "XSS")
-    self.assertEqual(rec["severity"], "HIGH")
-    self.assertEqual(rec["analysis"], "XSS vulnerability")
 
   def test_property_access_and_no_dict_protocol(self):
     f = Finding(

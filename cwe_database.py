@@ -65,15 +65,12 @@ class Weakness:
 
     cwe_id: int
     name: str
-    abstraction: str = ""
-    status: str = ""
     child_of: set[int] = field(default_factory=set)
     parent_of: set[int] = field(default_factory=set)
     can_precede: set[int] = field(default_factory=set)
     can_follow: set[int] = field(default_factory=set)
     can_also_be: set[int] = field(default_factory=set)
     starts_with: set[int] = field(default_factory=set)
-    parents: set[int] = field(default_factory=set)
     children: set[int] = field(default_factory=set)
 
 
@@ -117,14 +114,10 @@ class CWEDatabase:
         for elem in root.findall(f"{prefix}Weaknesses/{prefix}Weakness", ns):
             cwe_id = int(elem.attrib["ID"])
             name = " ".join(elem.attrib.get("Name", "").split())
-            abstraction = elem.attrib.get("Abstraction", "")
-            status = elem.attrib.get("Status", "")
 
             weaknesses[cwe_id] = Weakness(
                 cwe_id=cwe_id,
                 name=name,
-                abstraction=abstraction,
-                status=status,
             )
 
             for rel in elem.findall(
@@ -145,45 +138,32 @@ class CWEDatabase:
                 # source is ChildOf target -> target is parent of source
                 source.child_of.add(target_id)
                 target.parent_of.add(source_id)
-                source.parents.add(target_id)
                 target.children.add(source_id)
             elif nature == "ParentOf":
                 # source is ParentOf target -> source is parent of target
                 source.parent_of.add(target_id)
                 target.child_of.add(source_id)
                 source.children.add(target_id)
-                target.parents.add(source_id)
             elif nature == "CanPrecede":
                 # source CanPrecede target -> source is parent of target
                 source.can_precede.add(target_id)
                 target.can_follow.add(source_id)
                 source.children.add(target_id)
-                target.parents.add(source_id)
             elif nature == "CanFollow":
                 # source CanFollow target -> target is parent of source
                 source.can_follow.add(target_id)
                 target.can_precede.add(source_id)
-                source.parents.add(target_id)
                 target.children.add(source_id)
             elif nature == "CanAlsoBe":
                 # source CanAlsoBe target -> target is parent of source
                 source.can_also_be.add(target_id)
-                source.parents.add(target_id)
                 target.children.add(source_id)
             elif nature == "StartsWith":
                 # source StartsWith target -> target is parent of source
                 source.starts_with.add(target_id)
-                source.parents.add(target_id)
                 target.children.add(source_id)
 
         return cls(weaknesses)
-
-    def get_weakness(self, cwe_id: int | str) -> Weakness | None:
-        """Return the Weakness record for cwe_id, or None if not found."""
-        parsed = parse_cwe_id(cwe_id)
-        if parsed is None:
-            return None
-        return self.weaknesses.get(parsed)
 
     def _shortest_distance(
         self,
@@ -259,8 +239,6 @@ class CWEDatabase:
             return id_b
 
         return min(id_a, id_b)
-
-    get_related_parent = find_parent
 
     def find_relationship_path(
         self, cwe_a: int | str, cwe_b: int | str

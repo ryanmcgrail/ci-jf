@@ -9,7 +9,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
 from finding import Finding
 
@@ -88,10 +88,6 @@ def build_cm_command(
     cmd = [cm_binary, "find", target_or_id]
     if extra_flags:
       cmd.extend(extra_flags)
-  elif action == "init":
-    cmd = [cm_binary, "init"]
-    if extra_flags:
-      cmd.extend(extra_flags)
   else:
     cmd = [cm_binary, action]
     if extra_flags:
@@ -164,17 +160,6 @@ def preprocess_report_for_context(raw_report: str) -> str:
           "snippet": finding.snippet,
       })
   return json.dumps(filtered, indent=2)
-
-
-def write_import_payload(findings: Iterable[Finding], dest_path: str) -> str:
-  """Writes a simple-JSON import payload, keeping only recognized fields."""
-  payload = []
-  for f in findings:
-    payload.append(f.to_cm_import_record())
-  os.makedirs(os.path.dirname(os.path.abspath(dest_path)), exist_ok=True)
-  with open(dest_path, "w", encoding="utf-8") as f:
-    json.dump(payload, f, indent=2)
-  return dest_path
 
 
 class CodeMender:
@@ -372,39 +357,6 @@ class CodeMender:
     json_findings = json.JSONDecoder().decode(res.stdout)
 
     return [Finding.from_dict(json_finding) for json_finding in json_findings]
-
-  def import_findings(
-      self,
-      findings: Iterable[Finding],
-  ) -> List[Finding]:
-    """Imports findings, ignoring the duplicates. Returns the list of newly imported findings."""
-    before_findings = self.list_findings()
-    before_fingerprints = set([f.fingerprint for f in before_findings])
-    findings_not_already_in_cm = [f for f in findings if f.fingerprint not in before_fingerprints]
-    if len(findings_not_already_in_cm) == 0:
-      return []
-
-    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp_file:
-      import_file = tmp_file.name
-
-    try:
-      write_import_payload(findings_not_already_in_cm, import_file)
-      import_cmd = build_cm_command(
-          self.cm_binary,
-          "report",
-          extra_flags=["import", "-f", import_file, "-p", self.repo_dir],
-      )
-      import_res = run_command(import_cmd, cwd=self.repo_dir, env=self.env, check=False)
-    finally:
-      if os.path.exists(import_file):
-        os.remove(import_file)
-
-    if import_res.returncode != 0:
-      raise RuntimeError(
-          f"'cm report import' exited {import_res.returncode}"
-      )
-
-    return findings_not_already_in_cm
 
   def __del__(self) -> None:
     if getattr(self, "_db", None) is not None:

@@ -47,22 +47,11 @@ from codemender import CodeMender, ScanMode
 from complete_scan import run_complete_scan
 from deduplication import (
     ACTIVE,
-    CM_TWIN_REASONS,
-    CWE_DB,
-    GITHUB_MARKER_RE,
-    RESOLVED,
-    code_lines,
     dedup,
-    dup_id,
-    is_duplicate,
     load_findings,
-    make_github_marker,
-    norm_rel_path,
-    now_rfc3339,
     remove_duplicates_in_db,
     status_of,
     summary_line,
-    unpack_findings,
 )
 from finding import Finding
 

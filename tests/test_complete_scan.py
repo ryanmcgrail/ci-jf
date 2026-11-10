@@ -9,8 +9,7 @@ from unittest.mock import patch
 
 from codemender import CodeMender
 from complete_scan import (
-    get_active_files,
-    get_clean_files,
+    get_latest_session_finding_counts,
     run_complete_scan,
 )
 
@@ -121,8 +120,10 @@ class CompleteScanTests(unittest.TestCase):
               "clean.py\nvuln.py\n",
           ],
       )
-      self.assertEqual(get_clean_files(cm), ["clean.py", "vuln.py"])
-      self.assertEqual(get_active_files(cm), ["multi.py"])
+      self.assertEqual(
+          get_latest_session_finding_counts(cm),
+          {"clean.py": 0, "vuln.py": 0, "multi.py": 1},
+      )
       self.assertFalse(os.path.exists(observed_clean_paths[0]))
       self.assertEqual(mock_run.call_count, 10)
       find_cmds = [

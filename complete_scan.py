@@ -45,18 +45,6 @@ def get_latest_session_finding_counts(cm: CodeMender) -> Dict[str, int]:
   return latest_counts
 
 
-def get_clean_files(cm: CodeMender) -> List[str]:
-  """Returns repo-relative paths of files whose most recent completed FIND session produced 0 active findings."""
-  counts = get_latest_session_finding_counts(cm)
-  return sorted(target for target, count in counts.items() if count == 0)
-
-
-def get_active_files(cm: CodeMender) -> List[str]:
-  """Returns repo-relative paths of files whose most recent completed FIND session produced >= 1 active findings."""
-  counts = get_latest_session_finding_counts(cm)
-  return sorted(target for target, count in counts.items() if count > 0)
-
-
 def deduplicate_db_findings(cm: CodeMender) -> None:
   """Deduplicates active findings in state.db so inter-pass duplicates do not keep files active."""
   con = cm.db
