@@ -293,6 +293,7 @@ class CodeMender:
         )
       cmd_flags.extend([
           "--enable-bash",
+          "--bypass-warning",
           "--deep-max-turns",
           str(max_turns),
           "--context",
