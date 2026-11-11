@@ -38,7 +38,7 @@ _FIND_CONTEXT_FOR_FIRST_PASS = """\
 - Never use any CWE ID from this discouraged/prohibited list: {discouraged_cwes}"""
 _FIND_CONTEXT_FOR_LATER_PASSES = f"""\
 # Initial Pre-Audit Check
-- First, run `jq -r '.[] | select(.file_path | endswith("<file>")) | .snippet' {{report_file}}` (replacing `<file>` with the target file's repo-relative path) to fetch preexisting finding snippets for this file.
+- First, run `jq -r '.[] | select(.file_path == "<file>") | .snippet' {{report_file}}` (replacing `<file>` with the target file's repo-relative path) to fetch preexisting finding snippets for this file.
 - Use `run_command` only for this single check and never query {{report_file}} for other files.
 - Skip all lines covered by any returned snippet (including lines between `...` within a snippet) and never report a finding overlapping those lines; if no uncovered vulnerable code remains, stop and report 0 vulnerabilities.
 
@@ -139,8 +139,30 @@ def run_command(
   return subprocess.CompletedProcess(cmd, return_code, "".join(stdout_lines), "")
 
 
-def preprocess_report_for_context(raw_report: str) -> str:
-  """Filters a raw `cm report --format json` output to OPEN/VERIFIED/REOPENED findings with only file_path and snippet."""
+def _normalize_report_file_path(file_path: str, repo_dir: str = "") -> str:
+  """Normalizes a finding file_path to a repo-relative path for exact jq matching."""
+  path = (file_path or "").strip().replace("\\", "/")
+  if not path:
+    return ""
+  roots = []
+  if repo_dir:
+    for candidate in (
+        repo_dir,
+        os.path.abspath(repo_dir),
+        os.path.realpath(repo_dir),
+    ):
+      norm_root = candidate.strip().replace("\\", "/").rstrip("/")
+      if norm_root and norm_root != "." and norm_root not in roots:
+        roots.append(norm_root)
+  for root in roots:
+    prefix = root + "/"
+    if path.startswith(prefix):
+      return path[len(prefix) :].lstrip("./")
+  return path.lstrip("./")
+
+
+def preprocess_report_for_context(raw_report: str, repo_dir: str = "") -> str:
+  """Filters a raw `cm report --format json` output to OPEN/VERIFIED/REOPENED findings with repo-relative file_path and snippet."""
   text = (raw_report or "").strip()
   if not text or text == "null":
     return "[]"
@@ -157,7 +179,7 @@ def preprocess_report_for_context(raw_report: str) -> str:
     finding = Finding.from_dict(item)
     if finding.status in _ACTIVE_REPORT_STATUSES:
       filtered.append({
-          "file_path": finding.file_path,
+          "file_path": _normalize_report_file_path(finding.file_path, repo_dir),
           "snippet": finding.snippet,
       })
   return json.dumps(filtered, indent=2)
@@ -216,7 +238,8 @@ class CodeMender:
         check=False,
     )
     preprocessed_report = preprocess_report_for_context(
-        getattr(report_res, "stdout", "") or ""
+        getattr(report_res, "stdout", "") or "",
+        repo_dir=self.repo_dir,
     )
     discouraged_cwes = _load_discouraged_cwes()
     has_prior_state = (preprocessed_report != "[]") or bool(active_files)

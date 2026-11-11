@@ -343,6 +343,45 @@ class CodeMenderTests(unittest.TestCase):
     self.assertEqual(fake_stdout.getvalue(), "hello from cm find\n")
     self.assertEqual(fake_stderr.getvalue(), "hello from cm find\n")
 
+  def test_preprocess_report_for_context_normalizes_repo_relative_paths(self):
+    raw = json.dumps([
+        {
+            "finding_id": "1",
+            "status": "OPEN",
+            "file_path": "/home/runner/workspace/repo/routes/order.ts",
+            "snippet": "sink1()",
+        },
+        {
+            "finding_id": "2",
+            "status": "OPEN",
+            "file_path": "/home/runner/workspace/repo/routes/b2bOrder.ts",
+            "snippet": "sink2()",
+        },
+        {
+            "finding_id": "3",
+            "status": "OPEN",
+            "file_path": "./order.ts",
+            "snippet": "sink3()",
+        },
+    ])
+    out = json.loads(
+        codemender.preprocess_report_for_context(
+            raw, repo_dir="/home/runner/workspace/repo"
+        )
+    )
+    self.assertEqual(
+        out,
+        [
+            {"file_path": "routes/order.ts", "snippet": "sink1()"},
+            {"file_path": "routes/b2bOrder.ts", "snippet": "sink2()"},
+            {"file_path": "order.ts", "snippet": "sink3()"},
+        ],
+    )
+    self.assertIn(
+        'select(.file_path == "<file>")',
+        codemender._FIND_CONTEXT_FOR_LATER_PASSES,
+    )
+
 
 if __name__ == "__main__":
   unittest.main()
