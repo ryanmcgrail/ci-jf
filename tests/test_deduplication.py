@@ -44,13 +44,15 @@ class TestDeduplication(unittest.TestCase):
             ("./src/Main.py", "", "src/main.py"),
             ("src\\utils\\Helper.py", "", "src/utils/helper.py"),
             ("/repo/root/./pkg/Server.go", "/repo/root/", "pkg/server.go"),
-            ("/tmp/run123/repo_checkout/lib/Auth.py", "", "lib/auth.py"),
-            ("/workspace/proj/internal/Handler.go", "", "internal/handler.go"),
-            ("/Users/alice/work/repo/custom/File.c", "", "custom/file.c"),
             (
-                "/opt/build/deep/nested/controllers/UserController.py",
-                "",
-                "controllers/usercontroller.py",
+                "frontend/src/app/search-result/search-result.component.ts",
+                "/Users/alice/juice-shop",
+                "frontend/src/app/search-result/search-result.component.ts",
+            ),
+            (
+                "backend/src/utils.ts",
+                "/Users/alice/monorepo",
+                "backend/src/utils.ts",
             ),
         ]
     )

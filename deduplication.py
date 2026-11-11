@@ -32,14 +32,6 @@ def norm_rel_path(file_path: str, repo_root: str = "") -> str:
         root = repo_root.strip().replace("\\", "/").rstrip("/") + "/"
         if p.startswith(root):
             return p[len(root):].lstrip("./").lower()
-    p = re.sub(r"^/tmp/[^/]+/(?:repo_checkout/)?", "", p)
-    p = re.sub(r"^/workspace/[^/]+/", "", p)
-    p = re.sub(r"^/(?:home|Users)/[^/]+/[^/]+/[^/]+/", "", p)
-    p = re.sub(r"^/(?:home|Users)/[^/]+/[^/]+/", "", p)
-    for marker in ("/src/", "/app/", "/lib/", "/pkg/", "/internal/", "/controllers/", "/routes/", "/services/"):
-        idx = p.find(marker)
-        if idx != -1:
-            return p[idx + 1:].lower()
     return p.lstrip("./").lower()
 
 
