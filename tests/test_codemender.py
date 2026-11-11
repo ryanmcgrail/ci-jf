@@ -93,9 +93,6 @@ class CodeMenderTests(unittest.TestCase):
     fake_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
     fake_tmp_path = fake_tmp.name
     fake_tmp.close()
-    fake_cwe_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
-    fake_cwe_tmp_path = fake_cwe_tmp.name
-    fake_cwe_tmp.close()
     fake_clean_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
     fake_clean_tmp_path = fake_clean_tmp.name
     fake_clean_tmp.close()
@@ -105,7 +102,6 @@ class CodeMenderTests(unittest.TestCase):
     ) as mock_run:
       mock_tmp.return_value.__enter__.side_effect = [
           types.SimpleNamespace(name=fake_tmp_path, write=written_report.append),
-          types.SimpleNamespace(name=fake_cwe_tmp_path, write=lambda _: None),
           types.SimpleNamespace(name=fake_clean_tmp_path, write=lambda _: None),
       ]
       res = cm.find()
@@ -138,17 +134,16 @@ class CodeMenderTests(unittest.TestCase):
               "--deep-max-turns",
               "8",
               "--context",
-              codemender._FIND_CONTEXT.format(
+              codemender._FIND_CONTEXT_FOR_LATER_PASSES.format(
                   report_file=fake_tmp_path,
-                  discouraged_cwes_file=fake_cwe_tmp_path,
                   clean_files_file=fake_clean_tmp_path,
+                  discouraged_cwes=codemender._load_discouraged_cwes(),
               ),
           ],
       )
       self.assertEqual(kwargs.get("cwd"), "/tmp/test_repo")
       self.assertEqual(res, proc_find)
       self.assertFalse(os.path.exists(fake_tmp_path))
-      self.assertFalse(os.path.exists(fake_cwe_tmp_path))
       self.assertFalse(os.path.exists(fake_clean_tmp_path))
 
   def test_find_custom_target(self):
@@ -163,20 +158,14 @@ class CodeMenderTests(unittest.TestCase):
   def test_find_scan_modes(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
     proc = types.SimpleNamespace(returncode=0, stdout="Success")
-    fake_tmp_path = "/tmp/fake_report.json"
-    with patch("codemender.tempfile.NamedTemporaryFile") as mock_tmp, patch(
-        "codemender.run_command", return_value=proc
-    ) as mock_run:
-      mock_tmp.return_value.__enter__.return_value.name = fake_tmp_path
+    with patch("codemender.run_command", return_value=proc) as mock_run:
       cm.find()
       cm.find(scan_mode=codemender.ScanMode.QUICK)
       cm.find(scan_mode=codemender.ScanMode.DEEP)
       cm.find(scan_mode=codemender.ScanMode.DIFF)
 
-    expected_ctx = codemender._FIND_CONTEXT.format(
-        report_file=fake_tmp_path,
-        discouraged_cwes_file=fake_tmp_path,
-        clean_files_file=fake_tmp_path,
+    expected_ctx = codemender._FIND_CONTEXT_FOR_FIRST_PASS.format(
+        discouraged_cwes=codemender._load_discouraged_cwes(),
     )
     self.assertEqual(
         mock_run.call_args_list[1].args[0],
@@ -187,7 +176,6 @@ class CodeMenderTests(unittest.TestCase):
             "--deep",
             "--deep-workers=16",
             "--model=gemini-4-argon",
-            "--enable-bash",
             "--bypass-warning",
             "--deep-max-turns",
             "8",
@@ -203,7 +191,6 @@ class CodeMenderTests(unittest.TestCase):
             "/tmp/test_repo",
             "--quick",
             "--model=gemini-4-argon",
-            "--enable-bash",
             "--bypass-warning",
             "--deep-max-turns",
             "8",
@@ -220,7 +207,6 @@ class CodeMenderTests(unittest.TestCase):
             "--deep",
             "--deep-workers=16",
             "--model=gemini-4-argon",
-            "--enable-bash",
             "--bypass-warning",
             "--deep-max-turns",
             "8",
@@ -236,7 +222,6 @@ class CodeMenderTests(unittest.TestCase):
             "/tmp/test_repo",
             "--diff",
             "--model=gemini-4-argon",
-            "--enable-bash",
             "--bypass-warning",
             "--deep-max-turns",
             "8",
@@ -271,17 +256,13 @@ class CodeMenderTests(unittest.TestCase):
     )
     proc_gcloud = types.SimpleNamespace(returncode=0, stdout="Credentials saved", stderr="")
     proc_success = types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
-    fake_tmp_path = "/tmp/fake_report.json"
-    with patch("codemender.tempfile.NamedTemporaryFile") as mock_tmp, patch(
+    with patch(
         "codemender.run_command",
         side_effect=[proc_report, proc_reauth, proc_gcloud, proc_success],
     ) as mock_run:
-      mock_tmp.return_value.__enter__.return_value.name = fake_tmp_path
       res = cm.find(scan_mode=codemender.ScanMode.QUICK)
-    expected_ctx = codemender._FIND_CONTEXT.format(
-        report_file=fake_tmp_path,
-        discouraged_cwes_file=fake_tmp_path,
-        clean_files_file=fake_tmp_path,
+    expected_ctx = codemender._FIND_CONTEXT_FOR_FIRST_PASS.format(
+        discouraged_cwes=codemender._load_discouraged_cwes(),
     )
     self.assertEqual(res, proc_success)
     self.assertEqual(mock_run.call_count, 4)
@@ -297,7 +278,6 @@ class CodeMenderTests(unittest.TestCase):
             "/tmp/test_repo",
             "--quick",
             "--model=gemini-4-argon",
-            "--enable-bash",
             "--bypass-warning",
             "--deep-max-turns",
             "8",
@@ -317,7 +297,6 @@ class CodeMenderTests(unittest.TestCase):
             "/tmp/test_repo",
             "--quick",
             "--model=gemini-4-argon",
-            "--enable-bash",
             "--bypass-warning",
             "--deep-max-turns",
             "8",

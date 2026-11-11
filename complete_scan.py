@@ -104,7 +104,7 @@ def run_complete_scan(
           target_or_id=target_or_id,
           scan_mode=ScanMode.DEEP,
           extra_flags=extra_flags,
-          clean_files_file=clean_files_file,
+          clean_files_file=clean_files_file if scan_index > 0 else None,
           max_turns=12 if scan_index > 0 else 8,
           active_files=active_files or None,
       )

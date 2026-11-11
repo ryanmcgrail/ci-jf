@@ -26,30 +26,39 @@ _DISCOURAGED_CWES_PATH = os.path.join(
     "discouraged_cwes.txt",
 )
 _ACTIVE_REPORT_STATUSES = frozenset({"OPEN", "VERIFIED", "REOPENED"})
-_FIND_CONTEXT = """\
-# 1. Initial Pre-Audit Check
-- First, run `grep -Fxq "<file>" {clean_files_file} && echo "ALREADY_AUDITED" || jq -r '.[] | select(.file_path | endswith("<file>")) | .snippet' {report_file}` (replacing <file> with the currently scanned repo-relative file path) to check if the file was already completely audited or to get the snippets of all preexisting findings for that file.
-- Never query {clean_files_file} or {report_file} for any other file.
+_FIND_CONTEXT_FOR_FIRST_PASS = """\
+# File Audit & Cross-File Lookup Strategy
+- Audit every uncovered line in the target file itself from top to bottom (cataloguing every uncovered function, route, middleware, handler, secret, cryptographic call, regex, query, and statement) to collect all candidate vulnerabilities across the entire file before making any cross-file tool calls.
+- Report at most one finding per distinct code block/line range, and report all distinct vulnerabilities on uncovered lines in a single pass rather than stopping after the first issue.
+- Spend at most 2–3 tool turns total on cross-file `grep_search` or `read_file` lookups only when strictly necessary to confirm an external sink or middleware.
+
+# CWE Selection & Validation
+- Always assign exactly one CWE ID (`CWE-<number>`) to each finding; it is invalid to omit a CWE ID or to assign multiple CWE IDs to a single finding.
+- Select a specific, allowed CWE ID and never report any CWE ID from the following discouraged/prohibited CWE list: {discouraged_cwes}
+
+# Tool & File Restrictions
+- Never run git, diff, node, npm, ts-node, tsx, python, or rg commands via `run_command`.
+- Never read or search test files, package manifests, dependency directories, challenge metadata (.info.yml, challenges.yml), or .codemender files."""
+_FIND_CONTEXT_FOR_LATER_PASSES = f"""\
+# Initial Pre-Audit Check
+- First, run `grep -Fxq "<file>" {{clean_files_file}} && echo "ALREADY_AUDITED" || jq -r '.[] | select(.file_path | endswith("<file>")) | .snippet' {{report_file}}` (replacing <file> with the currently scanned repo-relative file path) to check if the file was already completely audited or to get the snippets of all preexisting findings for that file.
+- Never query {{clean_files_file}} or {{report_file}} for any other file, and use `run_command` only for this single initial check.
 - If the command outputs ALREADY_AUDITED, stop immediately and report 0 vulnerabilities.
 
-# 2. Preexisting Snippet & Line Coverage Rules
+# Preexisting Snippet & Line Coverage Rules
 - Treat every line of code contained in any returned snippet (including any lines in the file between parts of a snippet separated by `...`) as already having a finding associated with it—determined solely by the snippet text, never by `start_line` or `end_line`—and completely skip checking or reporting vulnerabilities on those lines.
-- Never report a finding whose snippet or sink overlaps any line in a returned snippet, and report at most one finding per distinct code block/line range.
+- Never report a finding whose snippet or sink overlaps any line in a returned snippet.
 - Only check lines of code in the file that are not covered by any returned snippet; if all executable code in the file is covered by the returned snippets, or if the remaining uncovered lines in the file are benign, stop immediately and report 0 vulnerabilities.
 
-# 3. File Audit & Cross-File Lookup Strategy
-- Otherwise, first audit every remaining uncovered line in the target file itself from top to bottom (cataloguing every uncovered function, route, middleware, handler, secret, cryptographic call, regex, query, and statement) to collect all candidate vulnerabilities across the entire file before making any cross-file tool calls.
-- Spend at most 2–3 tool turns total on cross-file `grep_search` or `read_file` lookups only when strictly necessary to confirm an external sink or middleware.
-- Report all distinct vulnerabilities on uncovered lines in a single pass rather than stopping after the first issue.
+{_FIND_CONTEXT_FOR_FIRST_PASS}"""
 
-# 4. CWE Selection & Validation
-- Never read or dump {discouraged_cwes_file} upfront.
-- Only after identifying all candidate vulnerabilities in the file and right before reporting them, run a single batched check `grep -Ex "CWE-(<id1>|<id2>|...)" {discouraged_cwes_file}` covering all candidate CWE IDs at once.
-- For any CWE ID listed in {discouraged_cwes_file}, select a more specific, allowed CWE ID instead.
 
-# 5. Tool & File Restrictions
-- Use `run_command` only for that single initial check and single final batched CWE `grep` check—never run git, diff, node, npm, ts-node, tsx, python, or rg commands.
-- Never read or search test files, package manifests, dependency directories, challenge metadata (.info.yml, challenges.yml), or .codemender files."""
+def _load_discouraged_cwes() -> str:
+  """Loads the discouraged CWE IDs from discouraged_cwes.txt as a comma-separated string."""
+  if not os.path.exists(_DISCOURAGED_CWES_PATH):
+    return ""
+  with open(_DISCOURAGED_CWES_PATH, "r", encoding="utf-8") as cwe_f:
+    return ", ".join(cwe_f.read().split())
 
 
 class ScanMode(str, enum.Enum):
@@ -215,55 +224,43 @@ class CodeMender:
         env=self.env,
         check=False,
     )
+    preprocessed_report = preprocess_report_for_context(
+        getattr(report_res, "stdout", "") or ""
+    )
+    discouraged_cwes = _load_discouraged_cwes()
+    has_prior_state = (preprocessed_report != "[]") or (clean_files_file is not None)
     temp_dir = self.repo_dir if os.path.isdir(self.repo_dir) else None
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix="",
-        dir=temp_dir,
-        delete=False,
-        encoding="utf-8",
-    ) as tmp_file:
-      tmp_file.write(
-          preprocess_report_for_context(getattr(report_res, "stdout", "") or "")
-      )
-      report_file = tmp_file.name
-      report_ref = os.path.basename(report_file) if temp_dir else report_file
+    report_file: Optional[str] = None
+    own_clean_files_file = False
 
-    discouraged_cwes_content = ""
-    if os.path.exists(_DISCOURAGED_CWES_PATH):
-      with open(_DISCOURAGED_CWES_PATH, "r", encoding="utf-8") as cwe_f:
-        discouraged_cwes_content = cwe_f.read()
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix="",
-        dir=temp_dir,
-        delete=False,
-        encoding="utf-8",
-    ) as cwe_tmp_file:
-      cwe_tmp_file.write(discouraged_cwes_content)
-      discouraged_cwes_file = cwe_tmp_file.name
-      discouraged_cwes_ref = (
-          os.path.basename(discouraged_cwes_file)
-          if temp_dir
-          else discouraged_cwes_file
-      )
-
-    own_clean_files_file = clean_files_file is None
-    if own_clean_files_file:
+    if has_prior_state:
       with tempfile.NamedTemporaryFile(
           mode="w",
           suffix="",
           dir=temp_dir,
           delete=False,
           encoding="utf-8",
-      ) as clean_tmp_file:
-        clean_tmp_file.write("")
-        clean_files_file = clean_tmp_file.name
-    clean_files_ref = (
-        os.path.basename(clean_files_file)
-        if temp_dir
-        else clean_files_file
-    )
+      ) as tmp_file:
+        tmp_file.write(preprocessed_report)
+        report_file = tmp_file.name
+        report_ref = os.path.basename(report_file) if temp_dir else report_file
+
+      own_clean_files_file = clean_files_file is None
+      if own_clean_files_file:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix="",
+            dir=temp_dir,
+            delete=False,
+            encoding="utf-8",
+        ) as clean_tmp_file:
+          clean_tmp_file.write("")
+          clean_files_file = clean_tmp_file.name
+      clean_files_ref = (
+          os.path.basename(clean_files_file)
+          if temp_dir
+          else clean_files_file
+      )
 
     try:
       cmd_flags: List[str] = []
@@ -281,18 +278,23 @@ class CodeMender:
         cmd_flags.append(f"--model={model}")
       if extra_flags:
         cmd_flags.extend(extra_flags)
-      context_str = _FIND_CONTEXT.format(
-          report_file=report_ref,
-          discouraged_cwes_file=discouraged_cwes_ref,
-          clean_files_file=clean_files_ref,
-      )
+      if has_prior_state:
+        context_str = _FIND_CONTEXT_FOR_LATER_PASSES.format(
+            report_file=report_ref,
+            clean_files_file=clean_files_ref,
+            discouraged_cwes=discouraged_cwes,
+        )
+        cmd_flags.append("--enable-bash")
+      else:
+        context_str = _FIND_CONTEXT_FOR_FIRST_PASS.format(
+            discouraged_cwes=discouraged_cwes,
+        )
       if active_files:
         scoped_targets = ", ".join(f"`{f}`" for f in active_files)
         context_str = (
             f"{context_str} Only audit these remaining files: {scoped_targets}."
         )
       cmd_flags.extend([
-          "--enable-bash",
           "--bypass-warning",
           "--deep-max-turns",
           str(max_turns),
@@ -321,7 +323,9 @@ class CodeMender:
         returncode = getattr(result, "returncode", 0)
         stdout = getattr(result, "stdout", "")
     finally:
-      cleanup_paths = [report_file, discouraged_cwes_file]
+      cleanup_paths = []
+      if report_file is not None:
+        cleanup_paths.append(report_file)
       if own_clean_files_file and clean_files_file is not None:
         cleanup_paths.append(clean_files_file)
       for tmp_path in cleanup_paths:

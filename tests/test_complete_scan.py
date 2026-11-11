@@ -95,10 +95,12 @@ class CompleteScanTests(unittest.TestCase):
 
       def spy_find(*args, **kwargs):
         clean_path = kwargs.get("clean_files_file")
+        observed_clean_paths.append(clean_path)
         if clean_path is not None:
-          observed_clean_paths.append(clean_path)
           with open(clean_path, "r", encoding="utf-8") as fh:
             observed_clean_contents.append(fh.read())
+        else:
+          observed_clean_contents.append(None)
         return orig_find(*args, **kwargs)
 
       with patch("codemender.run_command", side_effect=fake_run_command) as mock_run, patch.object(
@@ -109,11 +111,12 @@ class CompleteScanTests(unittest.TestCase):
       self.assertEqual(res.returncode, 0)
       self.assertEqual(find_scan_num, 5)
       self.assertEqual(len(observed_clean_paths), 5)
-      self.assertEqual(len(set(observed_clean_paths)), 1)
+      self.assertIsNone(observed_clean_paths[0])
+      self.assertEqual(len(set(observed_clean_paths[1:])), 1)
       self.assertEqual(
           observed_clean_contents,
           [
-              "",
+              None,
               "clean.py\n",
               "clean.py\nvuln.py\n",
               "clean.py\nvuln.py\n",
@@ -124,7 +127,7 @@ class CompleteScanTests(unittest.TestCase):
           get_latest_session_finding_counts(cm),
           {"clean.py": 0, "vuln.py": 0, "multi.py": 1},
       )
-      self.assertFalse(os.path.exists(observed_clean_paths[0]))
+      self.assertFalse(os.path.exists(observed_clean_paths[1]))
       self.assertEqual(mock_run.call_count, 10)
       find_cmds = [
           call.args[0]
@@ -133,11 +136,21 @@ class CompleteScanTests(unittest.TestCase):
       ]
       self.assertEqual(len(find_cmds), 5)
       self.assertEqual(find_cmds[0][find_cmds[0].index("--deep-max-turns") + 1], "8")
+      self.assertNotIn("--enable-bash", find_cmds[0])
+      self.assertNotIn(
+          "# Initial Pre-Audit Check",
+          find_cmds[0][find_cmds[0].index("--context") + 1],
+      )
       self.assertNotIn(
           "Only audit these remaining files:",
           find_cmds[0][find_cmds[0].index("--context") + 1],
       )
       self.assertEqual(find_cmds[1][find_cmds[1].index("--deep-max-turns") + 1], "12")
+      self.assertIn("--enable-bash", find_cmds[1])
+      self.assertIn(
+          "# Initial Pre-Audit Check",
+          find_cmds[1][find_cmds[1].index("--context") + 1],
+      )
       self.assertTrue(
           find_cmds[1][find_cmds[1].index("--context") + 1].endswith(
               "Only audit these remaining files: `multi.py`, `vuln.py`."
