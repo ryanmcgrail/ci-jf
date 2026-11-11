@@ -152,7 +152,6 @@ class TestCWEDatabase(unittest.TestCase):
             (79, 79, 79),
             ("CWE-125", 125, 125),
             (284, 707, None),
-            (80, 83, None),
             (999999, 125, None),
         ]
     )
@@ -163,6 +162,30 @@ class TestCWEDatabase(unittest.TestCase):
         expected_parent: int | None,
     ) -> None:
         """Verify identical CWEs return themselves and unrelated/unknown CWEs return None."""
+        self.assertEqual(self.db.find_parent(cwe_a, cwe_b), expected_parent)
+
+    @parameterized(
+        [
+            # Sibling Variants under Base CWE-79 (Cross-site Scripting)
+            (80, 83, 79),
+            (83, 80, 79),
+            (80, 82, 79),
+            (82, 80, 79),
+            # Sibling Variants under Base CWE-798 (Use of Hard-coded Credentials): Hard-coded Password (259) and Key (321)
+            (259, 321, 798),
+            (321, 259, 798),
+            # Sibling Variants under Base CWE-22 (Path Traversal): '../filedir' (24) and '/../filedir' (37)
+            (24, 37, 22),
+            (37, 24, 22),
+        ]
+    )
+    def test_sibling_variants_share_common_base_ancestor(
+        self,
+        cwe_a: int | str,
+        cwe_b: int | str,
+        expected_parent: int,
+    ) -> None:
+        """Verify sibling/cousin Variants within distance <= 2 resolve to their shared Base ancestor."""
         self.assertEqual(self.db.find_parent(cwe_a, cwe_b), expected_parent)
 
     @parameterized(
@@ -180,7 +203,7 @@ class TestCWEDatabase(unittest.TestCase):
         cwe_a: int | str,
         cwe_b: int | str,
     ) -> None:
-        """Verify unrelated Weaknesses that share a Root Pillar are not treated as parent/child."""
+        """Verify unrelated Weaknesses that share a Root Pillar or Class umbrella are not treated as related."""
         self.assertIsNone(self.db.find_parent(cwe_a, cwe_b))
 
     @parameterized(
@@ -243,7 +266,9 @@ class TestCWEDatabase(unittest.TestCase):
             for cwe_b in all_ids:
                 result = self.db.find_parent(cwe_a, cwe_b)
                 if result is not None:
-                    self.assertIn(result, (cwe_a, cwe_b))
+                    self.assertIn(result, self.db.weaknesses)
+                    if result not in (cwe_a, cwe_b):
+                        self.assertEqual(self.db.weaknesses[result].abstraction, "Base")
 
     def test_discouraged_cwes_extraction_and_file(self) -> None:
         """Verify discouraged and prohibited CWE IDs are extracted and match discouraged_cwes.txt."""

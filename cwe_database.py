@@ -81,6 +81,7 @@ class CWEDatabase:
     def __init__(self, weaknesses: dict[int, Weakness]) -> None:
         self.weaknesses: dict[int, Weakness] = weaknesses
         self._distance_cache: dict[tuple[int, bool], dict[int, int]] = {}
+        self._ancestors_le2_cache: dict[int, dict[int, int]] | None = None
         # Directed edges from (parent_id, child_id) -> set of relationship labels
         self._edge_natures: dict[tuple[int, int], set[str]] = {}
         for w in self.weaknesses.values():
@@ -197,19 +198,59 @@ class CWEDatabase:
             self._distance_cache[cache_key] = distances
         return distances.get(child_id)
 
+    def _get_ancestors_within_2(self) -> dict[int, dict[int, int]]:
+        """Return per-node map of Base hierarchical ancestors within distance <= 2."""
+        if self._ancestors_le2_cache is None:
+            cache: dict[int, dict[int, int]] = {
+                cid: {} for cid in self.weaknesses
+            }
+            for anc_id, anc_w in self.weaknesses.items():
+                if anc_w.abstraction != "Base":
+                    continue
+                self._shortest_distance(anc_id, anc_id, strict_hierarchy_only=True)
+                strict_dists = self._distance_cache[(anc_id, True)]
+                for child_id, dist in strict_dists.items():
+                    if 1 <= dist <= 2:
+                        cache[child_id][anc_id] = dist
+            self._ancestors_le2_cache = cache
+        return self._ancestors_le2_cache
+
+    def _find_common_base_ancestor(self, id_a: int, id_b: int) -> int | None:
+        """Find the lowest shared Base ancestor at distance <= 2 from both id_a and id_b."""
+        anc_map = self._get_ancestors_within_2()
+        anc_a = anc_map.get(id_a)
+        anc_b = anc_map.get(id_b)
+        if not anc_a or not anc_b:
+            return None
+        common_ids = anc_a.keys() & anc_b.keys()
+        if not common_ids:
+            return None
+
+        def _rank(anc_id: int) -> tuple[int, int, int]:
+            dist_a = anc_a[anc_id]
+            dist_b = anc_b[anc_id]
+            return (
+                dist_a + dist_b,
+                max(dist_a, dist_b),
+                anc_id,
+            )
+
+        return min(common_ids, key=_rank)
+
     def find_parent(
         self,
         cwe_a: int | str | Finding,
         cwe_b: int | str | Finding,
     ) -> int | None:
-        """Determine if cwe_a and cwe_b are related and return whichever is the parent.
+        """Determine if cwe_a and cwe_b are related and return their parent/common ancestor.
 
         A Weakness P is considered the parent of C if there is a directed chain of one or
         more steps from P to C where each step is a ParentOf/CanPrecede relationship from
         parent to child, or a ChildOf/CanFollow/StartsWith/CanAlsoBe relationship from
-        child to parent.
+        child to parent. If neither Weakness is a direct/multi-step ancestor of the other,
+        falls back to their lowest shared Base ancestor within distance <= 2 per side.
 
-        Returns the parent CWE ID as an int, or None if the Weaknesses are unrelated.
+        Returns the parent/ancestor CWE ID as an int, or None if the Weaknesses are unrelated.
         """
         id_a = parse_cwe_id(cwe_a)
         id_b = parse_cwe_id(cwe_b)
@@ -228,7 +269,7 @@ class CWEDatabase:
         if dist_b_to_a is not None and dist_a_to_b is None:
             return id_b
         if dist_a_to_b is None and dist_b_to_a is None:
-            return None
+            return self._find_common_base_ancestor(id_a, id_b)
 
         # Both directions are reachable (e.g. a CanPrecede cycle with ChildOf):
         # prefer the shorter path, then pure ChildOf/ParentOf hierarchy, then lower ID.
@@ -247,6 +288,31 @@ class CWEDatabase:
 
         return min(id_a, id_b)
 
+    def _shortest_path_steps(
+        self, start_id: int, target_id: int
+    ) -> list[tuple[int, str, int]] | None:
+        """Return shortest chain of (parent_id, nature, child_id) steps from start_id to target_id."""
+        if start_id == target_id:
+            return []
+        queue: deque[tuple[int, list[tuple[int, str, int]]]] = deque([(start_id, [])])
+        visited: set[int] = {start_id}
+
+        while queue:
+            curr_id, path = queue.popleft()
+            curr = self.weaknesses[curr_id]
+            for next_id in sorted(curr.children):
+                next_w = self.weaknesses.get(next_id)
+                if next_w is not None and next_w.abstraction == "Pillar":
+                    continue
+                natures = sorted(self._edge_natures.get((curr_id, next_id), {"ParentOf"}))
+                step = (curr_id, "/".join(natures), next_id)
+                if next_id == target_id:
+                    return path + [step]
+                if next_id not in visited:
+                    visited.add(next_id)
+                    queue.append((next_id, path + [step]))
+        return None
+
     def find_relationship_path(
         self, cwe_a: int | str, cwe_b: int | str
     ) -> list[tuple[int, str, int]] | None:
@@ -260,26 +326,13 @@ class CWEDatabase:
         if id_a == id_b:
             return []
 
-        child_id = id_b if parent_id == id_a else id_a
-        queue: deque[tuple[int, list[tuple[int, str, int]]]] = deque([(parent_id, [])])
-        visited: set[int] = {parent_id}
+        if parent_id in (id_a, id_b):
+            child_id = id_b if parent_id == id_a else id_a
+            return self._shortest_path_steps(parent_id, child_id)
 
-        while queue:
-            curr_id, path = queue.popleft()
-            curr = self.weaknesses[curr_id]
-            for next_id in sorted(curr.children):
-                next_w = self.weaknesses.get(next_id)
-                if next_w is not None and next_w.abstraction == "Pillar":
-                    continue
-                natures = sorted(self._edge_natures.get((curr_id, next_id), {"ParentOf"}))
-                step = (curr_id, "/".join(natures), next_id)
-                if next_id == child_id:
-                    return path + [step]
-                if next_id not in visited:
-                    visited.add(next_id)
-                    queue.append((next_id, path + [step]))
-
-        return None
+        path_a = self._shortest_path_steps(parent_id, id_a) or []
+        path_b = self._shortest_path_steps(parent_id, id_b) or []
+        return path_a + path_b
 
 
 def load_cwe_database(xml_path: str | Path = DEFAULT_XML_PATH) -> CWEDatabase:
