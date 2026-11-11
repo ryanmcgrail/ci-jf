@@ -145,10 +145,21 @@ def get_latest_session_finding_counts(
 
     if has_children or is_root_target:
       # Promoted parent/root session: its original per-file `s.target` was
-      # overwritten to the repo root by `cm`. Recover any active findings
-      # recorded under this session_id by grouping on `findings.file_path`.
+      # overwritten to the repo root by `cm` (unless already restored on a
+      # previous pass). Recover any active findings recorded under this
+      # session_id by grouping on `findings.file_path`.
       latest_parent_id = sid
       parent_finding_targets.setdefault(sid, set())
+      if not is_root_target:
+        rel_target = _rel_target_path(
+            target_str, cm.repo_dir, repo_real, proj_root_str
+        )
+        if rel_target:
+          latest_counts[rel_target] = (
+              int(finding_count) if is_completed else max(int(finding_count), 1)
+          )
+          if int(finding_count) > 0:
+            parent_finding_targets[sid].add(rel_target)
       if has_file_path_col and int(finding_count) > 0:
         try:
           f_rows = con.execute(
@@ -224,6 +235,7 @@ def get_latest_session_finding_counts(
         if latest_parent_id
         else set()
     )
+    unaccounted_clean: List[str] = []
     for rel_file in known_last_pass_files:
       if (
           rel_file
@@ -232,6 +244,31 @@ def get_latest_session_finding_counts(
           and rel_file not in failed_stdout_files
       ):
         latest_counts[rel_file] = 0
+        if rel_file not in unaccounted_clean:
+          unaccounted_clean.append(rel_file)
+    if latest_parent_id and not latest_parent_with_findings:
+      promoted_target: Optional[str] = None
+      if len(unaccounted_clean) == 1:
+        promoted_target = unaccounted_clean[0]
+      elif last_pass_stdout:
+        stdout_unaccounted = [
+            f
+            for f in _extract_batch_files_from_stdout(last_pass_stdout)
+            if f not in latest_children
+            and f not in latest_parent_with_findings
+            and f not in failed_stdout_files
+        ]
+        if len(stdout_unaccounted) == 1:
+          promoted_target = stdout_unaccounted[0]
+      if promoted_target:
+        try:
+          con.execute(
+              "UPDATE sessions SET target = ? WHERE session_id = ?",
+              (promoted_target, latest_parent_id),
+          )
+          con.commit()
+        except sqlite3.Error:
+          pass
 
   return latest_counts
 
@@ -281,6 +318,7 @@ def run_complete_scan(
   try:
     result = None
     prev_active_files: Optional[List[str]] = None
+    cleared_files: Set[str] = set()
     for scan_index in range(complete_runs):
       active_files: Optional[List[str]] = None
       if scan_index > 0:
@@ -290,6 +328,9 @@ def run_complete_scan(
             last_pass_files=prev_active_files,
             last_pass_stdout=last_stdout,
         )
+        for cleared in cleared_files:
+          counts[cleared] = 0
+        cleared_files.update(t for t, c in counts.items() if c == 0)
         clean_files = sorted(t for t, c in counts.items() if c == 0)
         active_files = sorted(t for t, c in counts.items() if c > 0)
         if counts and not active_files:

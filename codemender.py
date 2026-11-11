@@ -284,11 +284,6 @@ class CodeMender:
         context_str = _FIND_CONTEXT_FOR_FIRST_PASS.format(
             discouraged_cwes=discouraged_cwes,
         )
-      if active_files:
-        scoped_targets = ", ".join(f"`{f}`" for f in active_files)
-        context_str = (
-            f"{context_str} Only audit these remaining files: {scoped_targets}."
-        )
       cmd_flags.extend([
           "--bypass-warning",
           "--deep-max-turns",
