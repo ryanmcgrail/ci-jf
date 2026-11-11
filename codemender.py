@@ -30,7 +30,7 @@ _FIND_CONTEXT_FOR_FIRST_PASS = """\
 # File Audit & Cross-File Lookup Strategy
 - Audit every uncovered line in the target file itself from top to bottom (cataloguing every uncovered function, route, middleware, handler, secret, cryptographic call, regex, query, and statement) to collect all candidate vulnerabilities across the entire file before making any cross-file tool calls.
 - Report at most one finding per distinct code block/line range, and report all distinct vulnerabilities on uncovered lines in a single pass rather than stopping after the first issue.
-- Spend at most 2–3 tool turns total on cross-file `grep_search` or `read_file` lookups only when strictly necessary to confirm an external sink or middleware.
+- Spend at most 2-3 tool turns total on cross-file `grep_search` or `read_file` lookups only when strictly necessary to confirm an external sink or middleware.
 
 # CWE Selection & Validation
 - Always assign exactly one CWE ID (`CWE-<number>`) to each finding; it is invalid to omit a CWE ID or to assign multiple CWE IDs to a single finding.
@@ -41,9 +41,8 @@ _FIND_CONTEXT_FOR_FIRST_PASS = """\
 - Never read or search test files, package manifests, dependency directories, challenge metadata (.info.yml, challenges.yml), or .codemender files."""
 _FIND_CONTEXT_FOR_LATER_PASSES = f"""\
 # Initial Pre-Audit Check
-- First, run `grep -Fxq "<file>" {{clean_files_file}} && echo "ALREADY_AUDITED" || jq -r '.[] | select(.file_path | endswith("<file>")) | .snippet' {{report_file}}` (replacing <file> with the currently scanned repo-relative file path) to check if the file was already completely audited or to get the snippets of all preexisting findings for that file.
-- Never query {{clean_files_file}} or {{report_file}} for any other file, and use `run_command` only for this single initial check.
-- If the command outputs ALREADY_AUDITED, stop immediately and report 0 vulnerabilities.
+- First, run `jq -r '.[] | select(.file_path | endswith("<file>")) | .snippet' {{report_file}}` (replacing <file> with the currently scanned repo-relative file path) to get the snippets of all preexisting findings for that file.
+- Never query {{report_file}} for any other file, and use `run_command` only for this single initial check.
 
 # Preexisting Snippet & Line Coverage Rules
 - Treat every line of code contained in any returned snippet (including any lines in the file between parts of a snippet separated by `...`) as already having a finding associated with it—determined solely by the snippet text, never by `start_line` or `end_line`—and completely skip checking or reporting vulnerabilities on those lines.
@@ -205,7 +204,6 @@ class CodeMender:
       target_or_id: Optional[str] = None,
       scan_mode: ScanMode = ScanMode.DEEP,
       extra_flags: Optional[List[str]] = None,
-      clean_files_file: Optional[str] = None,
       max_turns: int = 8,
       active_files: Optional[List[str]] = None,
       deep_workers: int = 16,
@@ -228,10 +226,9 @@ class CodeMender:
         getattr(report_res, "stdout", "") or ""
     )
     discouraged_cwes = _load_discouraged_cwes()
-    has_prior_state = (preprocessed_report != "[]") or (clean_files_file is not None)
+    has_prior_state = (preprocessed_report != "[]") or bool(active_files)
     temp_dir = self.repo_dir if os.path.isdir(self.repo_dir) else None
     report_file: Optional[str] = None
-    own_clean_files_file = False
 
     if has_prior_state:
       with tempfile.NamedTemporaryFile(
@@ -244,23 +241,6 @@ class CodeMender:
         tmp_file.write(preprocessed_report)
         report_file = tmp_file.name
         report_ref = os.path.basename(report_file) if temp_dir else report_file
-
-      own_clean_files_file = clean_files_file is None
-      if own_clean_files_file:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            suffix="",
-            dir=temp_dir,
-            delete=False,
-            encoding="utf-8",
-        ) as clean_tmp_file:
-          clean_tmp_file.write("")
-          clean_files_file = clean_tmp_file.name
-      clean_files_ref = (
-          os.path.basename(clean_files_file)
-          if temp_dir
-          else clean_files_file
-      )
 
     try:
       cmd_flags: List[str] = []
@@ -281,7 +261,6 @@ class CodeMender:
       if has_prior_state:
         context_str = _FIND_CONTEXT_FOR_LATER_PASSES.format(
             report_file=report_ref,
-            clean_files_file=clean_files_ref,
             discouraged_cwes=discouraged_cwes,
         )
         cmd_flags.append("--enable-bash")
@@ -323,14 +302,8 @@ class CodeMender:
         returncode = getattr(result, "returncode", 0)
         stdout = getattr(result, "stdout", "")
     finally:
-      cleanup_paths = []
-      if report_file is not None:
-        cleanup_paths.append(report_file)
-      if own_clean_files_file and clean_files_file is not None:
-        cleanup_paths.append(clean_files_file)
-      for tmp_path in cleanup_paths:
-        if os.path.exists(tmp_path):
-          os.remove(tmp_path)
+      if report_file is not None and os.path.exists(report_file):
+        os.remove(report_file)
 
     if returncode and not is_ci_gate_exit(returncode, stdout or ""):
       raise RuntimeError(f"cm find failed with exit code {returncode}")

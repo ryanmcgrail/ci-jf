@@ -2,7 +2,6 @@
 
 import os
 import sqlite3
-import tempfile
 import types
 from typing import Any, Dict, List, Optional
 
@@ -76,16 +75,16 @@ def run_complete_scan(
     extra_flags: Optional[List[str]] = None,
     complete_runs: int = 5,
 ) -> Any:
-  """Runs sequential deep scans, tracking clean files, scoping follow-up passes to active files, and stopping early when converged."""
-  temp_dir = cm.repo_dir if os.path.isdir(cm.repo_dir) else None
-  with tempfile.NamedTemporaryFile(
-      mode="w",
-      suffix="",
-      dir=temp_dir,
-      delete=False,
-      encoding="utf-8",
-  ) as clean_tmp_file:
-    clean_files_file = clean_tmp_file.name
+  """Runs sequential deep scans, tracking clean files in .cmignore, scoping follow-up passes to active files, and stopping early when converged."""
+  cmignore_path = (
+      os.path.join(cm.repo_dir, ".cmignore")
+      if os.path.isdir(cm.repo_dir)
+      else None
+  )
+  orig_cmignore: Optional[str] = None
+  if cmignore_path and os.path.exists(cmignore_path):
+    with open(cmignore_path, "r", encoding="utf-8") as fh:
+      orig_cmignore = fh.read()
 
   try:
     result = None
@@ -97,20 +96,27 @@ def run_complete_scan(
         active_files = sorted(t for t, c in counts.items() if c > 0)
         if counts and not active_files:
           break
-        with open(clean_files_file, "w", encoding="utf-8") as clean_f:
-          if clean_files:
-            clean_f.write("\n".join(clean_files) + "\n")
+        if cmignore_path:
+          base = orig_cmignore or ""
+          if base and not base.endswith("\n"):
+            base += "\n"
+          extra = "".join(f"{f}\n" for f in clean_files)
+          with open(cmignore_path, "w", encoding="utf-8") as clean_f:
+            clean_f.write(base + extra)
       result = cm.find(
           target_or_id=target_or_id,
           scan_mode=ScanMode.DEEP,
           extra_flags=extra_flags,
-          clean_files_file=clean_files_file if scan_index > 0 else None,
           max_turns=12 if scan_index > 0 else 8,
           active_files=active_files or None,
       )
       deduplicate_db_findings(cm)
     return result
   finally:
-    if os.path.exists(clean_files_file):
-      os.remove(clean_files_file)
+    if cmignore_path:
+      if orig_cmignore is not None:
+        with open(cmignore_path, "w", encoding="utf-8") as fh:
+          fh.write(orig_cmignore)
+      elif os.path.exists(cmignore_path):
+        os.remove(cmignore_path)
 

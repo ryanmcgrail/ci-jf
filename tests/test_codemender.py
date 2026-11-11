@@ -93,16 +93,12 @@ class CodeMenderTests(unittest.TestCase):
     fake_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
     fake_tmp_path = fake_tmp.name
     fake_tmp.close()
-    fake_clean_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
-    fake_clean_tmp_path = fake_clean_tmp.name
-    fake_clean_tmp.close()
     written_report = []
     with patch("codemender.tempfile.NamedTemporaryFile") as mock_tmp, patch(
         "codemender.run_command", side_effect=[proc_report, proc_find]
     ) as mock_run:
       mock_tmp.return_value.__enter__.side_effect = [
           types.SimpleNamespace(name=fake_tmp_path, write=written_report.append),
-          types.SimpleNamespace(name=fake_clean_tmp_path, write=lambda _: None),
       ]
       res = cm.find()
       self.assertEqual(mock_run.call_count, 2)
@@ -136,7 +132,6 @@ class CodeMenderTests(unittest.TestCase):
               "--context",
               codemender._FIND_CONTEXT_FOR_LATER_PASSES.format(
                   report_file=fake_tmp_path,
-                  clean_files_file=fake_clean_tmp_path,
                   discouraged_cwes=codemender._load_discouraged_cwes(),
               ),
           ],
@@ -144,7 +139,6 @@ class CodeMenderTests(unittest.TestCase):
       self.assertEqual(kwargs.get("cwd"), "/tmp/test_repo")
       self.assertEqual(res, proc_find)
       self.assertFalse(os.path.exists(fake_tmp_path))
-      self.assertFalse(os.path.exists(fake_clean_tmp_path))
 
   def test_find_custom_target(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")

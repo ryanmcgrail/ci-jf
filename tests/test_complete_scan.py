@@ -50,8 +50,11 @@ class CompleteScanTests(unittest.TestCase):
           env={"CM_HOME": cm_home},
       )
 
-      observed_clean_contents = []
-      observed_clean_paths = []
+      cmignore_path = os.path.join(repo_dir, ".cmignore")
+      with open(cmignore_path, "w", encoding="utf-8") as fh:
+        fh.write("existing_ignore/\n")
+
+      observed_cmignore_contents = []
       find_scan_num = 0
 
       def fake_run_command(cmd, **kwargs):
@@ -59,6 +62,11 @@ class CompleteScanTests(unittest.TestCase):
         if cmd[:2] == ["cm", "report"]:
           return types.SimpleNamespace(returncode=0, stdout="[]", stderr="")
         if cmd[:2] == ["cm", "find"]:
+          if os.path.exists(cmignore_path):
+            with open(cmignore_path, "r", encoding="utf-8") as fh:
+              observed_cmignore_contents.append(fh.read())
+          else:
+            observed_cmignore_contents.append(None)
           db_con = sqlite3.connect(db_path)
           if find_scan_num == 0:
             # Scan 0: clean.py has 0 findings, vuln.py has 1 finding, multi.py has 1 finding
@@ -91,43 +99,27 @@ class CompleteScanTests(unittest.TestCase):
           return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
         raise AssertionError(f"Unexpected command: {cmd}")
 
-      orig_find = cm.find
-
-      def spy_find(*args, **kwargs):
-        clean_path = kwargs.get("clean_files_file")
-        observed_clean_paths.append(clean_path)
-        if clean_path is not None:
-          with open(clean_path, "r", encoding="utf-8") as fh:
-            observed_clean_contents.append(fh.read())
-        else:
-          observed_clean_contents.append(None)
-        return orig_find(*args, **kwargs)
-
-      with patch("codemender.run_command", side_effect=fake_run_command) as mock_run, patch.object(
-          cm, "find", side_effect=spy_find
-      ):
+      with patch("codemender.run_command", side_effect=fake_run_command) as mock_run:
         res = run_complete_scan(cm, extra_flags=["--deep-workers=16"])
 
       self.assertEqual(res.returncode, 0)
       self.assertEqual(find_scan_num, 5)
-      self.assertEqual(len(observed_clean_paths), 5)
-      self.assertIsNone(observed_clean_paths[0])
-      self.assertEqual(len(set(observed_clean_paths[1:])), 1)
       self.assertEqual(
-          observed_clean_contents,
+          observed_cmignore_contents,
           [
-              None,
-              "clean.py\n",
-              "clean.py\nvuln.py\n",
-              "clean.py\nvuln.py\n",
-              "clean.py\nvuln.py\n",
+              "existing_ignore/\n",
+              "existing_ignore/\nclean.py\n",
+              "existing_ignore/\nclean.py\nvuln.py\n",
+              "existing_ignore/\nclean.py\nvuln.py\n",
+              "existing_ignore/\nclean.py\nvuln.py\n",
           ],
       )
       self.assertEqual(
           get_latest_session_finding_counts(cm),
           {"clean.py": 0, "vuln.py": 0, "multi.py": 1},
       )
-      self.assertFalse(os.path.exists(observed_clean_paths[1]))
+      with open(cmignore_path, "r", encoding="utf-8") as fh:
+        self.assertEqual(fh.read(), "existing_ignore/\n")
       self.assertEqual(mock_run.call_count, 10)
       find_cmds = [
           call.args[0]
