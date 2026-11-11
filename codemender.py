@@ -27,27 +27,19 @@ _DISCOURAGED_CWES_PATH = os.path.join(
 )
 _ACTIVE_REPORT_STATUSES = frozenset({"OPEN", "VERIFIED", "REOPENED"})
 _FIND_CONTEXT_FOR_FIRST_PASS = """\
-# File Audit & Cross-File Lookup Strategy
-- Audit every uncovered line in the target file itself from top to bottom (cataloguing every uncovered function, route, middleware, handler, secret, cryptographic call, regex, query, and statement) to collect all candidate vulnerabilities across the entire file before making any cross-file tool calls.
-- Report at most one finding per distinct code block/line range, and report all distinct vulnerabilities on uncovered lines in a single pass rather than stopping after the first issue.
-- Spend at most 2-3 tool turns total on cross-file `grep_search` or `read_file` lookups only when strictly necessary to confirm an external sink or middleware.
+# Audit Strategy
+- Audit the entire target file top to bottom and report all distinct vulnerabilities in a single pass (at most one finding per code block/line range).
+- Collect all candidate issues in the target file before making cross-file `grep_search` or `read_file` calls (at most 2-3 turns, only when needed to verify an external sink or helper).
+- Ignore test files, package manifests, dependency directories, and `.codemender` files.
 
-# CWE Selection & Validation
-- Always assign exactly one CWE ID (`CWE-<number>`) to each finding; it is invalid to omit a CWE ID or to assign multiple CWE IDs to a single finding.
-- Select a specific, allowed CWE ID and never report any CWE ID from the following discouraged/prohibited CWE list: {discouraged_cwes}
-
-# Tool & File Restrictions
-- Never run git, diff, node, npm, ts-node, tsx, python, or rg commands via `run_command`.
-- Never read or search test files, package manifests, dependency directories, challenge metadata (.info.yml, challenges.yml), or .codemender files."""
+# CWE Requirements
+- Assign exactly one CWE ID (`CWE-<number>`) to each finding; omitting a CWE ID or assigning multiple is invalid.
+- Never use any CWE ID from this discouraged/prohibited list: {discouraged_cwes}"""
 _FIND_CONTEXT_FOR_LATER_PASSES = f"""\
 # Initial Pre-Audit Check
-- First, run `jq -r '.[] | select(.file_path | endswith("<file>")) | .snippet' {{report_file}}` (replacing <file> with the currently scanned repo-relative file path) to get the snippets of all preexisting findings for that file.
-- Never query {{report_file}} for any other file, and use `run_command` only for this single initial check.
-
-# Preexisting Snippet & Line Coverage Rules
-- Treat every line of code contained in any returned snippet (including any lines in the file between parts of a snippet separated by `...`) as already having a finding associated with it—determined solely by the snippet text, never by `start_line` or `end_line`—and completely skip checking or reporting vulnerabilities on those lines.
-- Never report a finding whose snippet or sink overlaps any line in a returned snippet.
-- Only check lines of code in the file that are not covered by any returned snippet; if all executable code in the file is covered by the returned snippets, or if the remaining uncovered lines in the file are benign, stop immediately and report 0 vulnerabilities.
+- First, run `jq -r '.[] | select(.file_path | endswith("<file>")) | .snippet' {{report_file}}` (replacing `<file>` with the target file's repo-relative path) to fetch preexisting finding snippets for this file.
+- Use `run_command` only for this single check and never query {{report_file}} for other files.
+- Skip all lines covered by any returned snippet (including lines between `...` within a snippet) and never report a finding overlapping those lines; if no uncovered vulnerable code remains, stop and report 0 vulnerabilities.
 
 {_FIND_CONTEXT_FOR_FIRST_PASS}"""
 
