@@ -65,6 +65,7 @@ class Weakness:
 
     cwe_id: int
     name: str
+    abstraction: str = ""
     child_of: set[int] = field(default_factory=set)
     parent_of: set[int] = field(default_factory=set)
     can_precede: set[int] = field(default_factory=set)
@@ -114,10 +115,12 @@ class CWEDatabase:
         for elem in root.findall(f"{prefix}Weaknesses/{prefix}Weakness", ns):
             cwe_id = int(elem.attrib["ID"])
             name = " ".join(elem.attrib.get("Name", "").split())
+            abstraction = elem.attrib.get("Abstraction", "")
 
             weaknesses[cwe_id] = Weakness(
                 cwe_id=cwe_id,
                 name=name,
+                abstraction=abstraction,
             )
 
             for rel in elem.findall(
@@ -184,6 +187,10 @@ class CWEDatabase:
                     continue
                 next_ids = curr.parent_of if strict_hierarchy_only else curr.children
                 for next_id in next_ids:
+                    next_w = self.weaknesses.get(next_id)
+                    # Prevent transitions from stepping into/through Pillar nodes
+                    if next_w is not None and next_w.abstraction == "Pillar":
+                        continue
                     if next_id not in distances:
                         distances[next_id] = dist + 1
                         queue.append((next_id, dist + 1))
@@ -261,6 +268,9 @@ class CWEDatabase:
             curr_id, path = queue.popleft()
             curr = self.weaknesses[curr_id]
             for next_id in sorted(curr.children):
+                next_w = self.weaknesses.get(next_id)
+                if next_w is not None and next_w.abstraction == "Pillar":
+                    continue
                 natures = sorted(self._edge_natures.get((curr_id, next_id), {"ParentOf"}))
                 step = (curr_id, "/".join(natures), next_id)
                 if next_id == child_id:

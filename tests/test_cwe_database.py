@@ -263,6 +263,38 @@ class TestCWEDatabase(unittest.TestCase):
             write_discouraged_cwes_file(dest_path=dest)
             self.assertEqual(dest.read_text(encoding="utf-8").splitlines(), lines)
 
+    def test_transitions_cannot_step_through_pillar_nodes(self) -> None:
+        """Verify that transitions cannot step into or through a Pillar node to reach unrelated CWEs."""
+        xml_content = """<?xml version="1.0" encoding="UTF-8"?>
+<Weakness_Catalog xmlns="http://cwe.mitre.org/cwe-7" Name="CWE" Version="4.20">
+  <Weaknesses>
+    <Weakness ID="100" Name="Root Pillar" Abstraction="Pillar" Status="Stable"/>
+    <Weakness ID="200" Name="Branch A Base" Abstraction="Base" Status="Stable">
+      <Related_Weaknesses>
+        <Related_Weakness Nature="CanPrecede" CWE_ID="100" View_ID="1000"/>
+      </Related_Weaknesses>
+    </Weakness>
+    <Weakness ID="300" Name="Branch B Base" Abstraction="Base" Status="Stable">
+      <Related_Weaknesses>
+        <Related_Weakness Nature="ChildOf" CWE_ID="100" View_ID="1000"/>
+      </Related_Weaknesses>
+    </Weakness>
+  </Weaknesses>
+</Weakness_Catalog>
+"""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            xml_path = Path(tmp_dir) / "test_pillar.xml"
+            xml_path.write_text(xml_content, encoding="utf-8")
+            db = CWEDatabase.from_xml(xml_path)
+
+        # Starting at the Pillar (100) still reaches its child (300),
+        # but 200 cannot step through Pillar 100 to reach 300.
+        self.assertEqual(db.find_parent(100, 300), 100)
+        self.assertIsNone(db.find_parent(200, 300))
+        self.assertIsNone(db.find_parent(300, 200))
+        # Also verify in the real catalog that 681 (CanPrecede Pillar 682) cannot step through 682 to reach sibling 1335.
+        self.assertIsNone(self.db.find_parent(681, 1335))
+
 
 if __name__ == "__main__":
     unittest.main()

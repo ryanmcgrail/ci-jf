@@ -29,6 +29,7 @@ _ACTIVE_REPORT_STATUSES = frozenset({"OPEN", "VERIFIED", "REOPENED"})
 _FIND_CONTEXT_FOR_FIRST_PASS = """\
 # Audit Strategy
 - Audit the entire target file top to bottom and report all distinct vulnerabilities in a single pass (at most one finding per code block/line range).
+- Scope each finding's snippet and line range strictly to the minimal vulnerable sink lines, never the entire enclosing function or method.
 - Collect all candidate issues in the target file before making cross-file `grep_search` or `read_file` calls (at most 2-3 turns, only when needed to verify an external sink or helper).
 - Ignore test files, package manifests, dependency directories, and `.codemender` files.
 
