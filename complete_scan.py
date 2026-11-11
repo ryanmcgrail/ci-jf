@@ -16,6 +16,12 @@ _DEEP_BATCH_LINE_RE = re.compile(
     r"^\[\d+/\d+\s+batches\]\s+\S+\s+(\S+)\s+\([^)]+\)\s+\|.*-\s+\d+\s+vulnerabilit",
     re.MULTILINE,
 )
+# Matches per-batch failure lines emitted by `cm find --deep`, e.g.:
+#   [2/12 batches] ❌ routes/auth.js — session failed
+_DEEP_FAILED_BATCH_LINE_RE = re.compile(
+    r"^\[\d+/\d+\s+batches\]\s+(?:❌|✗|FAIL)\S*\s+(\S+)",
+    re.MULTILINE,
+)
 
 
 def _rel_target_path(
@@ -51,26 +57,36 @@ def _extract_batch_files_from_stdout(stdout: str) -> List[str]:
   return ordered
 
 
+def _extract_failed_batch_files_from_stdout(stdout: str) -> Set[str]:
+  """Extracts repo-relative file paths from failed `cm find --deep` batch lines."""
+  if not stdout:
+    return set()
+  return {
+      match.group(1).strip().lstrip("./")
+      for match in _DEEP_FAILED_BATCH_LINE_RE.finditer(stdout)
+      if match.group(1).strip().lstrip("./")
+  }
+
+
 def get_latest_session_finding_counts(
     cm: CodeMender,
     last_pass_files: Optional[Iterable[str]] = None,
     last_pass_stdout: Optional[str] = None,
 ) -> Dict[str, int]:
-  """Returns the active finding count of the most recent completed per-file FIND session per target.
+  """Returns the active finding count of the most recent FIND session per target.
 
-  In every `cm find --deep` pass of N files, `cm`'s `finalizePrimarySession`
-  promotes the first worker session that finishes (`batch [1/N]`) to be the
-  parent session for the whole pass, overwriting its `sessions.target` from the
-  scanned file path to the repository root (`project_root`) and setting
-  `parent_session_id = ''`. To prevent losing that promoted file's scan outcome:
-    1. For any parent/repo-root session, we attribute its active findings back
-       to their per-file `findings.file_path` so a promoted session with >= 1
-       findings is never dropped from `active_files`.
-    2. For the most recent pass, any file known to have been scanned in that
-       pass (via `last_pass_files` or parsed from `last_pass_stdout` batch
-       lines) that neither appears as a child session of that pass nor has
-       active findings on the pass's parent session was the promoted session
-       with 0 findings, so its latest count is recorded as 0.
+  Handles two important edge cases in `cm find --deep`:
+    1. Promoted parent sessions: In every pass of N files, `cm`'s
+       `finalizePrimarySession` promotes the first worker session that finishes
+       (`batch [1/N]`) to be the parent session for the whole pass, overwriting
+       its `sessions.target` to the repository root (`project_root`) and setting
+       `parent_session_id = ''`. We attribute active findings on parent sessions
+       back to their `findings.file_path`, and recover 0-finding promoted
+       sessions via `last_pass_files` / `last_pass_stdout`.
+    2. Failed, timed-out, or incomplete per-file sessions (`status != 'COMPLETED'`):
+       Included in the query and assigned a minimum count of 1 so they remain in
+       `active_files` (and out of `.cmignore`) and are retried on the next pass
+       rather than being silently dropped or causing premature convergence.
   """
   con = cm.db
   if con is None:
@@ -80,6 +96,7 @@ def get_latest_session_finding_counts(
     session_rows = con.execute(
         """
         SELECT s.session_id,
+               s.status,
                s.target,
                s.project_root,
                s.parent_session_id,
@@ -91,7 +108,6 @@ def get_latest_session_finding_counts(
                   AND f.status IN ('OPEN', 'VERIFIED', 'REOPENED')) AS finding_count
         FROM sessions s
         WHERE s.session_type = 'FIND'
-          AND s.status = 'COMPLETED'
           AND s.target != ''
           AND (s.project_root = '' OR s.project_root = ? OR s.project_root = ?)
         ORDER BY s.updated_at ASC, s.created_at ASC, s.rowid ASC
@@ -113,6 +129,7 @@ def get_latest_session_finding_counts(
 
   for (
       session_id,
+      status,
       target,
       project_root,
       parent_session_id,
@@ -120,6 +137,7 @@ def get_latest_session_finding_counts(
       finding_count,
   ) in session_rows:
     sid = str(session_id)
+    is_completed = str(status or "").upper() == "COMPLETED"
     target_str = str(target or "")
     proj_root_str = str(project_root or "")
     parent_id_str = str(parent_session_id or "")
@@ -159,19 +177,32 @@ def get_latest_session_finding_counts(
           target_str, cm.repo_dir, repo_real, proj_root_str
       )
       if rel_target:
-        latest_counts[rel_target] = int(finding_count)
+        # If the per-file session did not complete (e.g. FAILED, CANCELLED,
+        # INTERRUPTED), assign a count >= 1 so the file stays in `active_files`
+        # and is re-audited on the next pass.
+        latest_counts[rel_target] = (
+            int(finding_count) if is_completed else max(int(finding_count), 1)
+        )
         if parent_id_str:
           latest_parent_id = parent_id_str
           child_targets_by_parent.setdefault(parent_id_str, set()).add(
               rel_target
           )
 
+  failed_stdout_files = (
+      _extract_failed_batch_files_from_stdout(last_pass_stdout)
+      if last_pass_stdout
+      else set()
+  )
+  for failed_file in failed_stdout_files:
+    latest_counts[failed_file] = max(latest_counts.get(failed_file, 0), 1)
+
   # Recover the 0-finding promoted session for the most recent pass:
   # Any file known to have been audited in the latest pass (from `last_pass_files`
   # on Pass 2+ or from `[i/N batches]` stdout lines on Pass 1+) that did not
-  # appear as a child session of the latest pass and had 0 active findings on
-  # the latest parent session must have been the promoted parent session with
-  # 0 findings.
+  # appear as a child session of the latest pass, did not fail, and had 0 active
+  # findings on the latest parent session must have been the promoted parent
+  # session with 0 findings.
   known_last_pass_files: List[str] = []
   if last_pass_files:
     known_last_pass_files.extend(
@@ -198,6 +229,7 @@ def get_latest_session_finding_counts(
           rel_file
           and rel_file not in latest_children
           and rel_file not in latest_parent_with_findings
+          and rel_file not in failed_stdout_files
       ):
         latest_counts[rel_file] = 0
 

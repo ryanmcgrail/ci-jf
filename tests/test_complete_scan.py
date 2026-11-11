@@ -353,6 +353,103 @@ class CompleteScanTests(unittest.TestCase):
           )
       )
 
+  def test_failed_or_incomplete_sessions_are_retried_until_completed(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      repo_dir = os.path.join(tmpdir, "repo")
+      cm_home = os.path.join(tmpdir, "cm_home")
+      os.makedirs(repo_dir)
+      os.makedirs(cm_home)
+      db_path = os.path.join(cm_home, "state.db")
+      con = sqlite3.connect(db_path)
+      con.execute(
+          "CREATE TABLE sessions ("
+          "session_id TEXT PRIMARY KEY, "
+          "session_type TEXT, "
+          "status TEXT, "
+          "target TEXT, "
+          "created_at TEXT, "
+          "updated_at TEXT, "
+          "project_root TEXT, "
+          "parent_session_id TEXT)"
+      )
+      con.execute(
+          "CREATE TABLE findings ("
+          "finding_id TEXT PRIMARY KEY, "
+          "session_id TEXT, "
+          "status TEXT, "
+          "file_path TEXT, "
+          "vuln_type TEXT, "
+          "start_line INTEGER, "
+          "end_line INTEGER, "
+          "snippet TEXT)"
+      )
+      con.commit()
+      con.close()
+
+      cm = CodeMender(
+          cm_binary="cm",
+          repo_dir=repo_dir,
+          env={"CM_HOME": cm_home},
+      )
+
+      find_scan_num = 0
+      observed_cmignore = []
+
+      def fake_run_command(cmd, **kwargs):
+        nonlocal find_scan_num
+        if cmd[:2] == ["cm", "report"]:
+          return types.SimpleNamespace(returncode=0, stdout="[]", stderr="")
+        if cmd[:2] == ["cm", "find"]:
+          cmignore_path = os.path.join(repo_dir, ".cmignore")
+          if os.path.exists(cmignore_path):
+            with open(cmignore_path, "r", encoding="utf-8") as fh:
+              observed_cmignore.append(fh.read())
+          else:
+            observed_cmignore.append(None)
+
+          db_con = sqlite3.connect(db_path)
+          if find_scan_num == 0:
+            # Pass 1: `clean.py` completes with 0 findings, while `flaky.py` fails (0 findings).
+            # Even though no findings were reported, `flaky.py` must be retried in Pass 2.
+            db_con.executemany(
+                "INSERT INTO sessions VALUES (?, 'FIND', ?, ?, 't0', 't0', ?, 'parent-0')",
+                [
+                    ("s0-clean", "COMPLETED", "clean.py", repo_dir),
+                    ("s0-flaky", "FAILED", "flaky.py", repo_dir),
+                ],
+            )
+          elif find_scan_num == 1:
+            # Pass 2: `flaky.py` now completes cleanly with 0 findings.
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s1-flaky', 'FIND', 'COMPLETED', 'flaky.py', 't1', 't1', ?, 'parent-1')",
+                (repo_dir,),
+            )
+          else:
+            raise AssertionError("Should have converged after Pass 2 once flaky.py completed")
+          db_con.commit()
+          db_con.close()
+          find_scan_num += 1
+          return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+      with patch("codemender.run_command", side_effect=fake_run_command) as mock_run:
+        res = run_complete_scan(cm, complete_runs=5)
+
+      self.assertEqual(res.returncode, 0)
+      self.assertEqual(find_scan_num, 2)
+      self.assertEqual(observed_cmignore, [None, "clean.py\n"])
+      find_cmds = [
+          call.args[0]
+          for call in mock_run.call_args_list
+          if call.args[0][:2] == ["cm", "find"]
+      ]
+      self.assertEqual(len(find_cmds), 2)
+      self.assertTrue(
+          find_cmds[1][find_cmds[1].index("--context") + 1].endswith(
+              "Only audit these remaining files: `flaky.py`."
+          )
+      )
+
 
 if __name__ == "__main__":
   unittest.main()
