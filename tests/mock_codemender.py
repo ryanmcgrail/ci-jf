@@ -145,6 +145,8 @@ class MockCodeMender:
         clean_files_file: str | None = None,
         max_turns: int = 8,
         active_files: list[str] | None = None,
+        critical_high_only: bool = False,
+        **_kwargs: Any,
     ) -> Any:
         self.find_calls.append((target_or_id, scan_mode))
         if self._scheduled_error is not None:

@@ -656,6 +656,168 @@ class TestCmCi(unittest.TestCase):
                 rc = cm_ci.cmd_fix(["--repo", tmpdir, "cm-1"])
             self.assertEqual(rc, 3)
 
+    def test_cmd_find_critical_high_mode_filters_summary_counts_and_listed_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_dir = os.path.join(tmpdir, ".codemender")
+            initial_findings = [
+                Finding(
+                    finding_id="old-fixed-high",
+                    file_path="src/reopen_high.py",
+                    vuln_type="CWE-89",
+                    start_line=10,
+                    end_line=15,
+                    severity="HIGH",
+                    status="FIXED",
+                ),
+                Finding(
+                    finding_id="old-fixed-low",
+                    file_path="src/reopen_low.py",
+                    vuln_type="CWE-532",
+                    start_line=1,
+                    end_line=5,
+                    severity="LOW",
+                    status="FIXED",
+                ),
+                Finding(
+                    finding_id="old-open-med",
+                    file_path="src/existing_med.py",
+                    vuln_type="CWE-79",
+                    start_line=20,
+                    end_line=25,
+                    severity="MEDIUM",
+                    status="OPEN",
+                ),
+            ]
+            new_batch = [
+                Finding(
+                    finding_id="new-crit",
+                    file_path="src/rce.py",
+                    vuln_type="CWE-78",
+                    start_line=30,
+                    end_line=35,
+                    severity="CRITICAL",
+                    title="Command Injection",
+                    status="OPEN",
+                ),
+                Finding(
+                    finding_id="new-high",
+                    file_path="src/ssrf.py",
+                    vuln_type="CWE-918",
+                    start_line=40,
+                    end_line=45,
+                    severity="HIGH",
+                    title="SSRF Issue",
+                    status="OPEN",
+                ),
+                Finding(
+                    finding_id="new-med",
+                    file_path="src/xss.js",
+                    vuln_type="CWE-79",
+                    start_line=50,
+                    end_line=55,
+                    severity="MEDIUM",
+                    title="Stored XSS",
+                    status="OPEN",
+                ),
+                Finding(
+                    finding_id="reopen-high",
+                    file_path="src/reopen_high.py",
+                    vuln_type="CWE-89",
+                    start_line=11,
+                    end_line=14,
+                    severity="HIGH",
+                    title="Reopened SQLi",
+                    status="OPEN",
+                ),
+                Finding(
+                    finding_id="reopen-low",
+                    file_path="src/reopen_low.py",
+                    vuln_type="CWE-532",
+                    start_line=2,
+                    end_line=4,
+                    severity="LOW",
+                    title="Reopened Log Leak",
+                    status="OPEN",
+                ),
+            ]
+
+            mock_cm = MockCodeMender(
+                repo_dir=os.path.realpath(tmpdir),
+                initial_findings=initial_findings,
+            )
+
+            def _fake_complete_scan(cm: Any, **_kwargs: Any) -> None:
+                cm._insert_findings(new_batch)
+
+            stdout_ch = io.StringIO()
+            with (
+                patch.object(cm_ci, "need"),
+                patch.object(cm_ci, "check_config", return_value=True),
+                patch.object(cm_ci, "CodeMender", return_value=mock_cm),
+                patch.object(cm_ci, "run_complete_scan", side_effect=_fake_complete_scan),
+                patch("sys.stdout", stdout_ch),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                rc = cm_ci.cmd_find(["--repo", tmpdir, "--out-dir", out_dir, "--complete"])
+
+            self.assertEqual(rc, 0)
+            out_text = stdout_ch.getvalue()
+            self.assertIn(
+                "(CRITICAL/HIGH mode) →",
+                out_text,
+            )
+            self.assertIn(
+                "(3 CRITICAL/HIGH active finding(s))",
+                out_text,
+            )
+            self.assertIn(
+                "CRITICAL/HIGH Summary — Existing: 1 | Current: 3 | Duplicates suppressed: 0"
+                " | New to file: 2 (1 CRITICAL, 1 HIGH) | Reopened: 1",
+                out_text,
+            )
+            self.assertIn("(+3 new CRITICAL/HIGH, 5 total entries)", out_text)
+            self.assertIn("Command Injection", out_text)
+            self.assertIn("SSRF Issue", out_text)
+            self.assertIn("Reopened SQLi", out_text)
+            self.assertNotIn("Stored XSS", out_text)
+            self.assertNotIn("Reopened Log Leak", out_text)
+
+            # Verify --no-critical-high-only restores full all-severity summary and listing
+            out_dir_all = os.path.join(tmpdir, ".codemender_all")
+            mock_cm_all = MockCodeMender(
+                repo_dir=os.path.realpath(tmpdir),
+                initial_findings=initial_findings,
+            )
+            stdout_all = io.StringIO()
+            with (
+                patch.object(cm_ci, "need"),
+                patch.object(cm_ci, "check_config", return_value=True),
+                patch.object(cm_ci, "CodeMender", return_value=mock_cm_all),
+                patch.object(cm_ci, "run_complete_scan", side_effect=_fake_complete_scan),
+                patch("sys.stdout", stdout_all),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                rc_all = cm_ci.cmd_find(
+                    [
+                        "--repo",
+                        tmpdir,
+                        "--out-dir",
+                        out_dir_all,
+                        "--complete",
+                        "--no-critical-high-only",
+                    ]
+                )
+
+            self.assertEqual(rc_all, 0)
+            out_all_text = stdout_all.getvalue()
+            self.assertNotIn("CRITICAL/HIGH Summary", out_all_text)
+            self.assertIn(
+                "Existing: 3 | Current: 5 | Duplicates suppressed: 0 | New to file: 3 | Reopened: 2",
+                out_all_text,
+            )
+            self.assertIn("Stored XSS", out_all_text)
+            self.assertIn("Reopened Log Leak", out_all_text)
+
 
 if __name__ == "__main__":
     unittest.main()

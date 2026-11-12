@@ -14,6 +14,7 @@ CWE_DB = load_cwe_database()
 GITHUB_MARKER_RE = re.compile(r"<!--\s*cm-dedup:v1:(\{.*?\})\s*-->", re.DOTALL)
 ACTIVE = {"OPEN", "REOPENED", "VERIFIED", ""}
 RESOLVED = {"FIXED", "CLOSED"}
+CRITICAL_HIGH_SEVERITIES = frozenset({"CRITICAL", "HIGH"})
 CM_TWIN_REASONS = (
     "Duplicate un-fingerprinted streamed entry",
     "Duplicate finding entry",
@@ -160,7 +161,28 @@ def dedup(existing: List[Finding], current: List[Finding], repo_root: str) -> Di
     return res
 
 
-def summary_line(existing_n: int, current_n: int, res: Dict[str, List[Finding]]) -> str:
+def is_critical_high(f: Finding) -> bool:
+    return str(f.severity or "").strip().upper() in CRITICAL_HIGH_SEVERITIES
+
+
+def summary_line(
+    existing_n: int,
+    current_n: int,
+    res: Dict[str, List[Finding]],
+    critical_high_only: bool = False,
+) -> str:
+    if critical_high_only:
+        suppressed_ch = [f for f in res["suppressed_duplicates"] if is_critical_high(f)]
+        new_ch = [f for f in res["findings"] if is_critical_high(f)]
+        reopened_ch = [f for f in res["reopened"] if is_critical_high(f)]
+        crit_n = sum(1 for f in new_ch if str(f.severity or "").strip().upper() == "CRITICAL")
+        high_n = len(new_ch) - crit_n
+        return (
+            f"CRITICAL/HIGH Summary — Existing: {existing_n} | Current: {current_n}"
+            f" | Duplicates suppressed: {len(suppressed_ch)}"
+            f" | New to file: {len(new_ch)} ({crit_n} CRITICAL, {high_n} HIGH)"
+            f" | Reopened: {len(reopened_ch)}"
+        )
     return (
         f"Existing: {existing_n} | Current: {current_n} | Duplicates suppressed: {len(res['suppressed_duplicates'])}"
         f" | New to file: {len(res['findings'])} | Reopened: {len(res['reopened'])}"

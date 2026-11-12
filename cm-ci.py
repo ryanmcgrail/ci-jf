@@ -21,7 +21,7 @@ find wrapper options (everything else is forwarded to `cm find` unchanged):
   --known FILE      running list of known findings (default .codemender/known_findings.json)
   --out-dir DIR     where findings.json / new_findings.json go (default .codemender)
   --fail-on SEVS    exit 4 if a new or reopened finding has one of these severities
-  --critical-high-only[=BOOL]  whether --complete focuses only on CRITICAL/HIGH issues (default: true)
+  --critical-high-only[=BOOL]  focus on CRITICAL/HIGH issues (default: true for --complete, false otherwise)
   --no-update       do not append this run's new findings to --known
   --no-dedup        only run cm find + export
 fix options:
@@ -49,6 +49,7 @@ from complete_scan import run_complete_scan
 from deduplication import (
     ACTIVE,
     dedup,
+    is_critical_high,
     load_findings,
     remove_duplicates_in_db,
     status_of,
@@ -263,7 +264,7 @@ def cmd_find(argv: List[str]) -> int:
     target: Optional[str] = None
     extra_cm_flags: List[str] = []
     complete_runs = int(opts["--complete-runs"]) if opts.get("--complete-runs") is not None else 5
-    critical_high_only = True
+    critical_high_flag: Optional[bool] = None
     idx = 0
     while idx < len(cm_args):
         arg = cm_args[idx]
@@ -282,19 +283,20 @@ def cmd_find(argv: List[str]) -> int:
             complete_runs = int(arg.split("=", 1)[1])
         elif arg == "--critical-high-only":
             if idx + 1 < len(cm_args) and cm_args[idx + 1].strip().lower() in _BOOL_LITERALS:
-                critical_high_only = _parse_bool_flag(arg, cm_args[idx + 1])
+                critical_high_flag = _parse_bool_flag(arg, cm_args[idx + 1])
                 idx += 1
             else:
-                critical_high_only = True
+                critical_high_flag = True
         elif arg.startswith("--critical-high-only="):
-            critical_high_only = _parse_bool_flag("--critical-high-only", arg.split("=", 1)[1])
+            critical_high_flag = _parse_bool_flag("--critical-high-only", arg.split("=", 1)[1])
         elif arg == "--no-critical-high-only":
-            critical_high_only = False
+            critical_high_flag = False
         elif not arg.startswith("-") and target is None:
             target = arg
         else:
             extra_cm_flags.append(arg)
         idx += 1
+    critical_high_only = critical_high_flag if critical_high_flag is not None else is_complete_scan
     print(f"cm-ci: cm find {' '.join(cm_args)}".rstrip(), flush=True)
     try:
         if is_complete_scan:
@@ -312,6 +314,8 @@ def cmd_find(argv: List[str]) -> int:
             }
             if extra_cm_flags:
                 find_kwargs["extra_flags"] = extra_cm_flags
+            if critical_high_only:
+                find_kwargs["critical_high_only"] = True
             ctx.cm.find(**find_kwargs)
     except RuntimeError as e:
         print(f"cm-ci: {e}", file=sys.stderr)
@@ -320,9 +324,13 @@ def cmd_find(argv: List[str]) -> int:
 
     after = ctx.report()
     this_run = [f for f in after if str(f.finding_id or "") not in before_ids and status_of(f) in ACTIVE]
+    this_run_shown = [f for f in this_run if is_critical_high(f)] if critical_high_only else this_run
     findings_path = os.path.join(out_dir, "findings.json")
     write_json(findings_path, this_run)
-    print(f"cm-ci: this run → {findings_path} ({len(this_run)} active finding(s))")
+    if critical_high_only:
+        print(f"cm-ci: this run (CRITICAL/HIGH mode) → {findings_path} ({len(this_run_shown)} CRITICAL/HIGH active finding(s))")
+    else:
+        print(f"cm-ci: this run → {findings_path} ({len(this_run)} active finding(s))")
     if opts["--no-dedup"]:
         return 0
 
@@ -343,9 +351,16 @@ def cmd_find(argv: List[str]) -> int:
             if key in seen:
                 continue
             seen.add(key); pool.append(f)
-    print("cm-ci: dedup against " + ", ".join(f"{name} ({len(items)})" for name, items in sources))
+    if critical_high_only:
+        print("cm-ci: dedup against " + ", ".join(f"{name} ({sum(1 for f in items if is_critical_high(f))} CRITICAL/HIGH)" for name, items in sources))
+    else:
+        print("cm-ci: dedup against " + ", ".join(f"{name} ({len(items)})" for name, items in sources))
     res = dedup(pool, this_run, ctx.repo)
-    print(summary_line(len(pool), len(this_run), res))
+    if critical_high_only:
+        existing_ch_n = sum(1 for f in pool if is_critical_high(f))
+        print(summary_line(existing_ch_n, len(this_run_shown), res, critical_high_only=True))
+    else:
+        print(summary_line(len(pool), len(this_run), res))
     new_path = os.path.join(out_dir, "new_findings.json")
     write_json(new_path, res)
     print(f"cm-ci: → {new_path} (findings = file these; reopened = fixed before, back again; suppressed_duplicates = already known)")
@@ -362,17 +377,23 @@ def cmd_find(argv: List[str]) -> int:
         known_ids = {str(f.finding_id) for f in known}
         added = [f for f in res["findings"] + res["reopened"] if str(f.finding_id) not in known_ids]
         write_json(known_path, known + added)
-        print(f"cm-ci: updated {known_path} ({len(known) + len(added)} entries) — commit it so the next run knows these")
+        if critical_high_only:
+            added_ch = [f for f in added if is_critical_high(f)]
+            print(f"cm-ci: updated {known_path} (+{len(added_ch)} new CRITICAL/HIGH, {len(known) + len(added)} total entries) — commit it so the next run knows these")
+        else:
+            print(f"cm-ci: updated {known_path} ({len(known) + len(added)} entries) — commit it so the next run knows these")
 
-    for f in res["reopened"]:
+    shown_reopened = [f for f in res["reopened"] if is_critical_high(f)] if critical_high_only else res["reopened"]
+    shown_findings = [f for f in res["findings"] if is_critical_high(f)] if critical_high_only else res["findings"]
+    for f in shown_reopened:
         print(f"  ♻ REOPENED {f.severity or ''} {f.file_path}:{f.start_line or ''} {f.title or ''} (was {f.duplicate_of})")
-    for f in res["findings"]:
+    for f in shown_findings:
         print(f"  🆕 NEW      {f.severity or ''} {f.file_path}:{f.start_line or ''} {f.title or ''}")
 
     fail_on = opts.get("--fail-on")
     if fail_on:
         sevs = {s.strip().upper() for s in fail_on.split(",") if s.strip()}
-        hits = [f for f in res["findings"] + res["reopened"] if str(f.severity or "").upper() in sevs]
+        hits = [f for f in shown_findings + shown_reopened if str(f.severity or "").upper() in sevs]
         if hits:
             print(f"cm-ci: {len(hits)} new/reopened finding(s) at severity {fail_on} — failing", file=sys.stderr)
             return 4
