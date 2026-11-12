@@ -174,28 +174,36 @@ class TestCWEDatabase(unittest.TestCase):
             # Sibling Variants under Base CWE-798 (Use of Hard-coded Credentials): Hard-coded Password (259) and Key (321)
             (259, 321, 798),
             (321, 259, 798),
-            # Sibling Variants under Base CWE-22 (Path Traversal): '../filedir' (24) and '/../filedir' (37)
-            (24, 37, 22),
-            (37, 24, 22),
+            # Sibling/Cousin under Class CWE-285 (Improper Authorization): Missing Authorization (862) and IDOR (639)
+            (862, 639, 285),
+            (639, 862, 285),
+            (862, 863, 285),
+            (863, 862, 285),
+            # Sibling Variants under Class CWE-138 (Improper Neutralization of Special Elements): Null Byte (158 vs 626)
+            (158, 626, 138),
+            (626, 158, 138),
+            # Sibling Bases under Class CWE-200 (Exposure of Sensitive Information): 201 and 497
+            (201, 497, 200),
+            (497, 201, 200),
         ]
     )
-    def test_sibling_variants_share_common_base_ancestor(
+    def test_sibling_weaknesses_share_common_non_pillar_ancestor(
         self,
         cwe_a: int | str,
         cwe_b: int | str,
         expected_parent: int,
     ) -> None:
-        """Verify sibling/cousin Variants within distance <= 2 resolve to their shared Base ancestor."""
+        """Verify sibling/cousin Weaknesses within distance <= 2 resolve to their lowest Class/Base ancestor."""
         self.assertEqual(self.db.find_parent(cwe_a, cwe_b), expected_parent)
 
     @parameterized(
         [
-            # Both under Pillar CWE-284 (Improper Access Control), but in separate branches
-            (256, 291),
-            (291, 256),
-            # Both under Pillar CWE-707 (Improper Neutralization), but in separate branches
-            (79, 89),
-            (89, 79),
+            # Both under Pillar CWE-284 (Improper Access Control), but in separate Class branches (306 vs 862)
+            (306, 862),
+            (862, 306),
+            # Both under Pillar CWE-707 (Improper Neutralization), but in separate Class branches (79 vs 626)
+            (79, 626),
+            (626, 79),
         ]
     )
     def test_unrelated_weaknesses_in_same_pillar_return_none(
@@ -203,7 +211,7 @@ class TestCWEDatabase(unittest.TestCase):
         cwe_a: int | str,
         cwe_b: int | str,
     ) -> None:
-        """Verify unrelated Weaknesses that share a Root Pillar or Class umbrella are not treated as related."""
+        """Verify unrelated Weaknesses that share only a Root Pillar are not treated as related."""
         self.assertIsNone(self.db.find_parent(cwe_a, cwe_b))
 
     @parameterized(
@@ -268,7 +276,7 @@ class TestCWEDatabase(unittest.TestCase):
                 if result is not None:
                     self.assertIn(result, self.db.weaknesses)
                     if result not in (cwe_a, cwe_b):
-                        self.assertEqual(self.db.weaknesses[result].abstraction, "Base")
+                        self.assertIn(self.db.weaknesses[result].abstraction, ("Class", "Base"))
 
     def test_discouraged_cwes_extraction_and_file(self) -> None:
         """Verify discouraged and prohibited CWE IDs are extracted and match discouraged_cwes.txt."""

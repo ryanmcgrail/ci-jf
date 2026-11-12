@@ -199,13 +199,13 @@ class CWEDatabase:
         return distances.get(child_id)
 
     def _get_ancestors_within_2(self) -> dict[int, dict[int, int]]:
-        """Return per-node map of Base hierarchical ancestors within distance <= 2."""
+        """Return per-node map of non-Pillar (Class/Base) hierarchical ancestors within distance <= 2."""
         if self._ancestors_le2_cache is None:
             cache: dict[int, dict[int, int]] = {
                 cid: {} for cid in self.weaknesses
             }
             for anc_id, anc_w in self.weaknesses.items():
-                if anc_w.abstraction != "Base":
+                if anc_w.abstraction not in ("Class", "Base"):
                     continue
                 self._shortest_distance(anc_id, anc_id, strict_hierarchy_only=True)
                 strict_dists = self._distance_cache[(anc_id, True)]
@@ -215,8 +215,8 @@ class CWEDatabase:
             self._ancestors_le2_cache = cache
         return self._ancestors_le2_cache
 
-    def _find_common_base_ancestor(self, id_a: int, id_b: int) -> int | None:
-        """Find the lowest shared Base ancestor at distance <= 2 from both id_a and id_b."""
+    def _find_common_non_pillar_ancestor(self, id_a: int, id_b: int) -> int | None:
+        """Find the lowest shared Class/Base ancestor at distance <= 2 from both id_a and id_b."""
         anc_map = self._get_ancestors_within_2()
         anc_a = anc_map.get(id_a)
         anc_b = anc_map.get(id_b)
@@ -226,12 +226,16 @@ class CWEDatabase:
         if not common_ids:
             return None
 
-        def _rank(anc_id: int) -> tuple[int, int, int]:
+        def _rank(anc_id: int) -> tuple[int, int, int, int]:
             dist_a = anc_a[anc_id]
             dist_b = anc_b[anc_id]
+            abstraction_rank = (
+                0 if self.weaknesses[anc_id].abstraction == "Base" else 1
+            )
             return (
                 dist_a + dist_b,
                 max(dist_a, dist_b),
+                abstraction_rank,
                 anc_id,
             )
 
@@ -248,7 +252,8 @@ class CWEDatabase:
         more steps from P to C where each step is a ParentOf/CanPrecede relationship from
         parent to child, or a ChildOf/CanFollow/StartsWith/CanAlsoBe relationship from
         child to parent. If neither Weakness is a direct/multi-step ancestor of the other,
-        falls back to their lowest shared Base ancestor within distance <= 2 per side.
+        falls back to their lowest shared non-Pillar (Class/Base) ancestor within distance
+        <= 2 per side.
 
         Returns the parent/ancestor CWE ID as an int, or None if the Weaknesses are unrelated.
         """
@@ -269,7 +274,7 @@ class CWEDatabase:
         if dist_b_to_a is not None and dist_a_to_b is None:
             return id_b
         if dist_a_to_b is None and dist_b_to_a is None:
-            return self._find_common_base_ancestor(id_a, id_b)
+            return self._find_common_non_pillar_ancestor(id_a, id_b)
 
         # Both directions are reachable (e.g. a CanPrecede cycle with ChildOf):
         # prefer the shorter path, then pure ChildOf/ParentOf hierarchy, then lower ID.

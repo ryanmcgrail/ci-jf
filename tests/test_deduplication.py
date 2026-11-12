@@ -150,7 +150,7 @@ class TestDeduplication(unittest.TestCase):
                 ),
                 Finding(
                     file_path="src/db.py",
-                    vuln_type="CWE-79",
+                    vuln_type="CWE-22",
                     start_line=10,
                     end_line=15,
                 ),
