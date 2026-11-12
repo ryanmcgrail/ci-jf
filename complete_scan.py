@@ -1,9 +1,11 @@
 """Multi-pass complete scan orchestration on top of CodeMender deep scans."""
 
+import json
 import os
 import re
 import sqlite3
 import types
+import uuid
 from typing import Any, Dict, Iterable, List, Optional, Set
 
 from codemender import CodeMender, ScanMode
@@ -273,6 +275,121 @@ def get_latest_session_finding_counts(
   return latest_counts
 
 
+def _snapshot_db_findings(cm: CodeMender) -> Dict[str, Dict[str, Any]]:
+  """Captures a snapshot of existing rows in state.db findings keyed by finding_id."""
+  con = cm.db
+  if con is None:
+    return {}
+  try:
+    cur = con.execute("SELECT * FROM findings ORDER BY rowid ASC")
+    col_names = [desc[0] for desc in (cur.description or [])]
+    rows = cur.fetchall()
+  except sqlite3.Error:
+    return {}
+  if not rows or "finding_id" not in col_names:
+    return {}
+  snapshot: Dict[str, Dict[str, Any]] = {}
+  for row in rows:
+    row_dict = dict(zip(col_names, row))
+    fid = row_dict.get("finding_id")
+    if fid:
+      snapshot[str(fid)] = row_dict
+  return snapshot
+
+
+def _reconcile_overwritten_findings(
+    cm: CodeMender,
+    pre_pass_rows: Dict[str, Dict[str, Any]],
+) -> None:
+  """Reconciles findings overwritten in-place by cm when a fingerprint collides across passes."""
+  if not pre_pass_rows:
+    return
+  con = cm.db
+  if con is None:
+    return
+  try:
+    cur = con.execute("SELECT * FROM findings ORDER BY rowid ASC")
+    col_names = [desc[0] for desc in (cur.description or [])]
+    rows = cur.fetchall()
+  except sqlite3.Error:
+    return
+  if not rows or "finding_id" not in col_names or "session_id" not in col_names:
+    return
+
+  changed = False
+  for row in rows:
+    cur_row = dict(zip(col_names, row))
+    fid = str(cur_row.get("finding_id") or "")
+    if not fid or fid not in pre_pass_rows:
+      continue
+    old_row = pre_pass_rows[fid]
+    old_sid = old_row.get("session_id")
+    cur_sid = cur_row.get("session_id")
+    if not old_sid or not cur_sid or cur_sid == old_sid:
+      continue
+
+    try:
+      old_sl = int(old_row.get("start_line") or 0)
+    except (TypeError, ValueError):
+      old_sl = 0
+    try:
+      old_el = max(int(old_row.get("end_line") or old_sl), old_sl)
+    except (TypeError, ValueError):
+      old_el = old_sl
+    try:
+      cur_sl = int(cur_row.get("start_line") or 0)
+    except (TypeError, ValueError):
+      cur_sl = 0
+    try:
+      cur_el = max(int(cur_row.get("end_line") or cur_sl), cur_sl)
+    except (TypeError, ValueError):
+      cur_el = cur_sl
+
+    if old_sl > 0 and cur_sl > 0 and (old_el < cur_sl or cur_el < old_sl):
+      # Distinct non-overlapping sinks in the same file collided on identical snippet text.
+      # Re-insert the overwritten prior finding under a disambiguated finding_id.
+      disambiguated_id = str(
+          uuid.uuid5(uuid.NAMESPACE_DNS, f"{fid}:{old_sl}:{old_el}")
+      )
+      restored = dict(old_row)
+      restored["finding_id"] = disambiguated_id
+      if isinstance(restored.get("finding_json"), str) and restored["finding_json"]:
+        try:
+          fjson = json.loads(restored["finding_json"])
+          if isinstance(fjson, dict):
+            fjson["finding_id"] = disambiguated_id
+            restored["finding_json"] = json.dumps(fjson)
+        except json.JSONDecodeError:
+          pass
+      placeholders = ", ".join("?" * len(col_names))
+      cols_sql = ", ".join(col_names)
+      try:
+        con.execute(
+            f"INSERT OR IGNORE INTO findings ({cols_sql}) VALUES ({placeholders})",
+            [restored.get(c) for c in col_names],
+        )
+        changed = True
+      except sqlite3.Error:
+        pass
+    else:
+      # Same vulnerability re-reported in a later pass: restore original session_id
+      # so get_latest_session_finding_counts does not treat it as a new finding.
+      try:
+        con.execute(
+            "UPDATE findings SET session_id = ? WHERE finding_id = ?",
+            (old_sid, fid),
+        )
+        changed = True
+      except sqlite3.Error:
+        pass
+
+  if changed:
+    try:
+      con.commit()
+    except sqlite3.Error:
+      pass
+
+
 def deduplicate_db_findings(cm: CodeMender) -> None:
   """Deduplicates active findings in state.db so inter-pass duplicates do not keep files active."""
   con = cm.db
@@ -342,6 +459,7 @@ def run_complete_scan(
           extra = "".join(f"{f}\n" for f in clean_files)
           with open(cmignore_path, "w", encoding="utf-8") as clean_f:
             clean_f.write(base + extra)
+      pre_pass_rows = _snapshot_db_findings(cm) if scan_index > 0 else {}
       result = cm.find(
           target_or_id=target_or_id,
           scan_mode=ScanMode.DEEP,
@@ -350,6 +468,8 @@ def run_complete_scan(
           active_files=active_files or None,
       )
       prev_active_files = active_files
+      if scan_index > 0:
+        _reconcile_overwritten_findings(cm, pre_pass_rows)
       deduplicate_db_findings(cm)
     return result
   finally:

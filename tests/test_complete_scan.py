@@ -572,6 +572,118 @@ class CompleteScanTests(unittest.TestCase):
           find_cmds[1][find_cmds[1].index("--context") + 1],
       )
 
+  def test_overwritten_findings_reconcile_same_sink_and_disjoint_sink_collisions(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      repo_dir = os.path.join(tmpdir, "repo")
+      cm_home = os.path.join(tmpdir, "cm_home")
+      os.makedirs(repo_dir)
+      os.makedirs(cm_home)
+      db_path = os.path.join(cm_home, "state.db")
+      con = sqlite3.connect(db_path)
+      con.execute(
+          "CREATE TABLE sessions ("
+          "session_id TEXT PRIMARY KEY, "
+          "session_type TEXT, "
+          "status TEXT, "
+          "target TEXT, "
+          "created_at TEXT, "
+          "updated_at TEXT, "
+          "project_root TEXT, "
+          "parent_session_id TEXT)"
+      )
+      con.execute(
+          "CREATE TABLE findings ("
+          "finding_id TEXT PRIMARY KEY, "
+          "session_id TEXT, "
+          "status TEXT, "
+          "file_path TEXT, "
+          "vuln_type TEXT, "
+          "start_line INTEGER, "
+          "end_line INTEGER, "
+          "snippet TEXT)"
+      )
+      con.commit()
+      con.close()
+
+      cm = CodeMender(
+          cm_binary="cm",
+          repo_dir=repo_dir,
+          env={"CM_HOME": cm_home},
+      )
+
+      find_scan_num = 0
+
+      def fake_run_command(cmd, **kwargs):
+        nonlocal find_scan_num
+        if cmd[:2] == ["cm", "report"]:
+          return types.SimpleNamespace(returncode=0, stdout="[]", stderr="")
+        if cmd[:2] == ["cm", "find"]:
+          db_con = sqlite3.connect(db_path)
+          if find_scan_num == 0:
+            # Pass 1:
+            # - `same_sink.py` has finding `fid-same` at line 10.
+            # - `hashing.java` has finding `fid-prng` at line 53 (getMd5).
+            db_con.executemany(
+                "INSERT INTO sessions VALUES (?, 'FIND', 'COMPLETED', ?, 't0', 't0', ?, 'parent-0')",
+                [
+                    ("s0-same", "same_sink.py", repo_dir),
+                    ("s0-hash", "hashing.java", repo_dir),
+                ],
+            )
+            db_con.executemany(
+                "INSERT INTO findings VALUES (?, ?, 'OPEN', ?, 'CWE-338', ?, ?, ?)",
+                [
+                    ("fid-same", "s0-same", "same_sink.py", 10, 12, "String x = new Random().nextInt();"),
+                    ("fid-prng", "s0-hash", "hashing.java", 53, 53, "String secret = SECRETS[new Random().nextInt(SECRETS.length)];"),
+                ],
+            )
+          elif find_scan_num == 1:
+            # Pass 2:
+            # - `same_sink.py` re-reports `fid-same` at the same line 10..12,
+            #   and cm overwrites `session_id` to `s1-same` in-place.
+            # - `hashing.java` reports `getSha256` at line 71..71 with the identical snippet,
+            #   and cm overwrites `fid-prng` in-place (`start_line=71, session_id=s1-hash`).
+            db_con.executemany(
+                "INSERT INTO sessions VALUES (?, 'FIND', 'COMPLETED', ?, 't1', 't1', ?, 'parent-1')",
+                [
+                    ("s1-same", "same_sink.py", repo_dir),
+                    ("s1-hash", "hashing.java", repo_dir),
+                ],
+            )
+            db_con.execute(
+                "UPDATE findings SET session_id = 's1-same' WHERE finding_id = 'fid-same'"
+            )
+            db_con.execute(
+                "UPDATE findings SET session_id = 's1-hash', start_line = 71, end_line = 71 WHERE finding_id = 'fid-prng'"
+            )
+          elif find_scan_num == 2:
+            # Pass 3: `same_sink.py` must ALREADY be cleared (0 new findings in Pass 2),
+            # while `hashing.java` runs once more and reports 0 new findings.
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s2-hash', 'FIND', 'COMPLETED', 'hashing.java', 't2', 't2', ?, 'parent-2')",
+                (repo_dir,),
+            )
+          else:
+            raise AssertionError("Should have converged after Pass 3")
+          db_con.commit()
+          db_con.close()
+          find_scan_num += 1
+          return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+      with patch("codemender.run_command", side_effect=fake_run_command):
+        run_complete_scan(cm, complete_runs=5)
+
+      self.assertEqual(find_scan_num, 3)
+      rows = cm.db.execute(
+          "SELECT finding_id, session_id, file_path, start_line, end_line FROM findings ORDER BY file_path, start_line"
+      ).fetchall()
+      self.assertEqual(len(rows), 3)
+      self.assertEqual(rows[0][2:], ("hashing.java", 53, 53))
+      self.assertEqual(rows[0][1], "s0-hash")
+      self.assertEqual(rows[1], ("fid-prng", "s1-hash", "hashing.java", 71, 71))
+      self.assertEqual(rows[2], ("fid-same", "s0-same", "same_sink.py", 10, 12))
+
 
 if __name__ == "__main__":
   unittest.main()

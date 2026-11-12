@@ -30,10 +30,10 @@ _FIND_CONTEXT_FOR_FIRST_PASS = """\
 # Audit Strategy
 - Audit the entire target file top to bottom and report all distinct vulnerabilities in a single pass (at most one finding per code block/line range).
 - Report each distinct vulnerable route, endpoint, or function as its own separate finding rather than grouping multiple endpoints into a single finding.
-- Scope each finding's snippet and line range strictly to the minimal vulnerable sink lines, never the entire enclosing function or method.
+- Scope each finding's snippet and line range strictly to the minimal contiguous vulnerable sink lines, never the entire enclosing function or method; never use `...` to bridge non-contiguous lines in a snippet.
 - Collect all candidate issues in the target file before making cross-file `grep_search` or `read_file` calls (at most 2-3 turns); always inspect cross-file consumers when the target file generates/encodes tokens, state, or cookies before concluding 0 vulnerabilities.
 - When a handler relies on a repository-local security/auth helper (e.g., `security.*`), always inspect that helper's definition before assuming it enforces authentication, role authorization, or ownership.
-- Ignore test files, package manifests, dependency directories, and `.codemender` files.
+- Ignore test files, package manifests, dependency/vendor directories, vendored or minified third-party libraries (stop immediately and report 0 vulnerabilities if the target file is a vendored third-party library), and `.codemender` files.
 
 # Vulnerabilities to Report
 - **Secrets & Cryptography:** Always report hardcoded secrets, passwords, API keys, salts, or cryptographic keys and weak cryptographic, hashing, or encoding primitives directly in the target file where they are defined or used, rather than deferring the finding to another file that decodes or verifies the value.
@@ -54,8 +54,8 @@ _FIND_CONTEXT_FOR_FIRST_PASS = """\
 _FIND_CONTEXT_FOR_LATER_PASSES = f"""\
 # Initial Pre-Audit Check
 - First, run `jq -r '.[] | select(.file_path == "<file>") | .snippet' {{report_file}}` (replacing `<file>` with the target file's repo-relative path) to fetch preexisting finding snippets for this file.
-- Use `run_command` only for this single check and never query {{report_file}} for other files.
-- Skip all lines covered by any returned snippet (including lines between `...` within a snippet) and never report a finding overlapping those lines; if no uncovered vulnerable code remains, stop and report 0 vulnerabilities.
+- Use `run_command` strictly for this single `jq` check; never invoke `node`, `python`, `sh`, or any other shell command, and never query {{report_file}} for other files.
+- Skip every preexisting vulnerability returned for this file (its sink lines, as well as its enclosing declaration or caller lines) and never report it again; still audit the rest of the file (including other lines in the same function or between `...` in a prior snippet) for distinct vulnerabilities, and if none remain, stop and report 0 vulnerabilities.
 
 {_FIND_CONTEXT_FOR_FIRST_PASS}"""
 
