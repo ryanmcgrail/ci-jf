@@ -32,6 +32,8 @@ _FIND_CONTEXT_FOR_FIRST_PASS = """\
 - Scope each finding's snippet and line range strictly to the minimal vulnerable sink lines, never the entire enclosing function or method.
 - Collect all candidate issues in the target file before making cross-file `grep_search` or `read_file` calls (at most 2-3 turns); always inspect cross-file consumers or repo-local security helpers/middlewares when the target file generates/encodes tokens, state, or cookies or delegates authentication, authorization, or sanitization before concluding 0 vulnerabilities.
 - Always report hardcoded secrets/salts/keys or weak cryptographic/encoding primitives directly in the target file where they are used, rather than deferring the finding to another file that decodes or verifies the value.
+- In frontend routers, guards, and components, report client-side-only access control or unverified token decoding, obfuscated or hidden privileged routes, and exposed debug or sandbox routes.
+- When database/ORM records are serialized into tokens, sessions, or responses, inspect the model schema for remaining sensitive fields (such as password hashes or secrets, even if another field was cleared), and report cleartext database storage of authentication secrets or keys.
 - Ignore test files, package manifests, dependency directories, and `.codemender` files.
 
 # CWE Requirements
