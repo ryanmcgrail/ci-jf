@@ -29,8 +29,10 @@ _ACTIVE_REPORT_STATUSES = frozenset({"OPEN", "VERIFIED", "REOPENED"})
 _FIND_CONTEXT_FOR_FIRST_PASS = """\
 # Audit Strategy
 - Audit the entire target file top to bottom and report all distinct vulnerabilities in a single pass (at most one finding per code block/line range).
+- Report each distinct vulnerable route, endpoint, or function as its own separate finding rather than grouping multiple endpoints into a single finding.
 - Scope each finding's snippet and line range strictly to the minimal vulnerable sink lines, never the entire enclosing function or method.
-- Collect all candidate issues in the target file before making cross-file `grep_search` or `read_file` calls (at most 2-3 turns); always inspect cross-file consumers or repo-local security helpers/middlewares when the target file generates/encodes tokens, state, or cookies or delegates authentication, authorization, or sanitization before concluding 0 vulnerabilities.
+- Collect all candidate issues in the target file before making cross-file `grep_search` or `read_file` calls (at most 2-3 turns); always inspect cross-file consumers when the target file generates/encodes tokens, state, or cookies before concluding 0 vulnerabilities.
+- When a handler relies on a repository-local security/auth helper (e.g., `security.*`), always inspect that helper's definition before assuming it enforces authentication, role authorization, or ownership.
 - Ignore test files, package manifests, dependency directories, and `.codemender` files.
 
 # Vulnerabilities to Report
