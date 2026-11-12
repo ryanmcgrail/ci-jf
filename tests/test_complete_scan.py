@@ -992,6 +992,112 @@ class CompleteScanTests(unittest.TestCase):
           {"users.controller.ts": 0},
       )
 
+  def test_preexisting_sessions_and_findings_are_excluded_from_current_complete_scan(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      repo_dir = os.path.join(tmpdir, "repo")
+      cm_home = os.path.join(tmpdir, "cm_home")
+      os.makedirs(repo_dir)
+      os.makedirs(cm_home)
+      db_path = os.path.join(cm_home, "state.db")
+      con = sqlite3.connect(db_path)
+      con.execute(
+          "CREATE TABLE sessions ("
+          "session_id TEXT PRIMARY KEY, "
+          "session_type TEXT, "
+          "status TEXT, "
+          "target TEXT, "
+          "created_at TEXT, "
+          "updated_at TEXT, "
+          "project_root TEXT, "
+          "parent_session_id TEXT)"
+      )
+      con.execute(
+          "CREATE TABLE findings ("
+          "finding_id TEXT PRIMARY KEY, "
+          "session_id TEXT, "
+          "status TEXT, "
+          "severity TEXT, "
+          "file_path TEXT, "
+          "vuln_type TEXT, "
+          "start_line INTEGER, "
+          "end_line INTEGER, "
+          "snippet TEXT)"
+      )
+      # Preexisting session and finding from a previous scan
+      con.execute(
+          "INSERT INTO sessions VALUES ('s-old', 'FIND', 'COMPLETED', 'legacy.py', 't-old', 't-old', ?, 'parent-old')",
+          (repo_dir,),
+      )
+      con.execute(
+          "INSERT INTO findings VALUES ('f-old', 's-old', 'OPEN', 'HIGH', 'legacy.py', 'CWE-89', 5, 8, 'old_sink()')"
+      )
+      con.commit()
+      con.close()
+
+      cm = CodeMender(
+          cm_binary="cm",
+          repo_dir=repo_dir,
+          env={"CM_HOME": cm_home},
+      )
+
+      find_scan_num = 0
+      pass2_report_payloads = []
+
+      def fake_run_command(cmd, **kwargs):
+        nonlocal find_scan_num
+        if cmd[:2] == ["cm", "report"]:
+          db_con = sqlite3.connect(db_path)
+          cur = db_con.execute(
+              "SELECT finding_id, session_id, status, severity, file_path, vuln_type, start_line, end_line, snippet FROM findings"
+          )
+          cols = [d[0] for d in cur.description]
+          items = [dict(zip(cols, r)) for r in cur.fetchall()]
+          db_con.close()
+          import json as _json
+          return types.SimpleNamespace(returncode=0, stdout=_json.dumps(items), stderr="")
+        if cmd[:2] == ["cm", "find"]:
+          ctx_arg = cmd[cmd.index("--context") + 1]
+          db_con = sqlite3.connect(db_path)
+          if find_scan_num == 0:
+            # Pass 1 must NOT use later-pass context even though f-old is in state.db
+            self.assertNotIn("--enable-bash", cmd)
+            self.assertNotIn("# Initial Pre-Audit Check", ctx_arg)
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s0-cur', 'FIND', 'COMPLETED', 'app.py', 't0', 't0', ?, 'parent-0')",
+                (repo_dir,),
+            )
+            db_con.execute(
+                "INSERT INTO findings VALUES ('f0-cur', 's0-cur', 'OPEN', 'HIGH', 'app.py', 'CWE-79', 10, 12, 'cur_sink()')"
+            )
+          elif find_scan_num == 1:
+            self.assertIn("--enable-bash", cmd)
+            self.assertIn("# Initial Pre-Audit Check", ctx_arg)
+            for fname in os.listdir(repo_dir):
+              if fname.startswith("tmp"):
+                with open(os.path.join(repo_dir, fname), "r", encoding="utf-8") as fh:
+                  import json as _json
+                  pass2_report_payloads.append(_json.load(fh))
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s1-cur', 'FIND', 'COMPLETED', 'app.py', 't1', 't1', ?, 'parent-1')",
+                (repo_dir,),
+            )
+          else:
+            raise AssertionError("Should have converged after Pass 2")
+          db_con.commit()
+          db_con.close()
+          find_scan_num += 1
+          return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+      with patch("codemender.run_command", side_effect=fake_run_command):
+        run_complete_scan(cm, complete_runs=5, critical_high_only=True)
+
+      self.assertEqual(find_scan_num, 2)
+      self.assertEqual(
+          pass2_report_payloads,
+          [[{"file_path": "app.py", "snippet": "cur_sink()"}]],
+      )
+
 
 if __name__ == "__main__":
   unittest.main()

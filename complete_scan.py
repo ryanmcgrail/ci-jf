@@ -93,6 +93,8 @@ def get_latest_session_finding_counts(
     last_pass_files: Optional[Iterable[str]] = None,
     last_pass_stdout: Optional[str] = None,
     critical_high_only: bool = True,
+    exclude_session_ids: Optional[Set[str]] = None,
+    exclude_finding_ids: Optional[Set[str]] = None,
 ) -> Dict[str, int]:
   """Returns the active finding count of the most recent FIND session per target.
 
@@ -113,6 +115,7 @@ def get_latest_session_finding_counts(
   if con is None:
     return {}
   repo_real = os.path.realpath(cm.repo_dir)
+  excluded_fids = {str(fid) for fid in exclude_finding_ids if fid} if exclude_finding_ids else set()
   try:
     finding_cols = {
         desc[1]
@@ -126,6 +129,13 @@ def get_latest_session_finding_counts(
         if filter_by_severity
         else ""
     )
+    fid_excl_clause = ""
+    fid_excl_params: List[str] = []
+    if excluded_fids and "finding_id" in finding_cols:
+      sorted_fids = sorted(excluded_fids)
+      placeholders = ", ".join("?" * len(sorted_fids))
+      fid_excl_clause = f" AND COALESCE(f.finding_id, '') NOT IN ({placeholders})"
+      fid_excl_params = sorted_fids
     session_rows = con.execute(
         f"""
         SELECT s.session_id,
@@ -138,10 +148,10 @@ def get_latest_session_finding_counts(
                ) AS has_children,
                (SELECT COUNT(*) FROM findings f
                 WHERE f.session_id = s.session_id
-                  AND f.status IN ('OPEN', 'VERIFIED', 'REOPENED'){sev_clause}) AS finding_count,
+                  AND f.status IN ('OPEN', 'VERIFIED', 'REOPENED'){sev_clause}{fid_excl_clause}) AS finding_count,
                (SELECT COUNT(*) FROM findings f
                 WHERE f.session_id = s.session_id
-                  AND f.status IN ('OPEN', 'VERIFIED', 'REOPENED')) AS any_finding_count
+                  AND f.status IN ('OPEN', 'VERIFIED', 'REOPENED'){fid_excl_clause}) AS any_finding_count
         FROM sessions s
         WHERE s.session_type = 'FIND'
           AND s.target != ''
@@ -151,7 +161,7 @@ def get_latest_session_finding_counts(
                  s.created_at ASC,
                  s.rowid ASC
         """,
-        (cm.repo_dir, repo_real),
+        [*fid_excl_params, *fid_excl_params, cm.repo_dir, repo_real],
     ).fetchall()
   except sqlite3.Error:
     return {}
@@ -172,6 +182,8 @@ def get_latest_session_finding_counts(
       any_finding_count,
   ) in session_rows:
     sid = str(session_id)
+    if exclude_session_ids and sid in exclude_session_ids:
+      continue
     is_completed = str(status or "").upper() == "COMPLETED"
     target_str = str(target or "")
     proj_root_str = str(project_root or "")
@@ -207,12 +219,12 @@ def get_latest_session_finding_counts(
               SELECT f.file_path, {count_expr}
               FROM findings f
               WHERE f.session_id = ?
-                AND f.status IN ('OPEN', 'VERIFIED', 'REOPENED')
+                AND f.status IN ('OPEN', 'VERIFIED', 'REOPENED'){fid_excl_clause}
                 AND f.file_path IS NOT NULL
                 AND f.file_path != ''
               GROUP BY f.file_path
               """,
-              (sid,),
+              [sid, *fid_excl_params],
           ).fetchall()
         except sqlite3.Error:
           f_rows = []
@@ -325,7 +337,22 @@ def get_latest_session_finding_counts(
   return latest_counts
 
 
-def _snapshot_db_findings(cm: CodeMender) -> Dict[str, Dict[str, Any]]:
+def _snapshot_db_session_ids(cm: CodeMender) -> Set[str]:
+  """Captures the set of existing session_ids in state.db sessions."""
+  con = cm.db
+  if con is None:
+    return set()
+  try:
+    rows = con.execute("SELECT session_id FROM sessions").fetchall()
+  except sqlite3.Error:
+    return set()
+  return {str(r[0]) for r in rows if r and r[0]}
+
+
+def _snapshot_db_findings(
+    cm: CodeMender,
+    exclude_finding_ids: Optional[Set[str]] = None,
+) -> Dict[str, Dict[str, Any]]:
   """Captures a snapshot of existing rows in state.db findings keyed by finding_id."""
   con = cm.db
   if con is None:
@@ -343,8 +370,40 @@ def _snapshot_db_findings(cm: CodeMender) -> Dict[str, Dict[str, Any]]:
     row_dict = dict(zip(col_names, row))
     fid = row_dict.get("finding_id")
     if fid:
-      snapshot[str(fid)] = row_dict
+      fid_str = str(fid)
+      if exclude_finding_ids and fid_str in exclude_finding_ids:
+        continue
+      snapshot[fid_str] = row_dict
   return snapshot
+
+
+def _active_preexisting_finding_ids(
+    cm: CodeMender,
+    pre_scan_finding_ids: Set[str],
+    pre_scan_session_ids: Set[str],
+) -> Set[str]:
+  """Returns preexisting finding_ids that have not been re-found by a current-scan session."""
+  if not pre_scan_finding_ids:
+    return set()
+  con = cm.db
+  if con is None:
+    return set(pre_scan_finding_ids)
+  try:
+    cur = con.execute("SELECT * FROM findings")
+    col_names = [desc[0] for desc in (cur.description or [])]
+    rows = cur.fetchall()
+  except sqlite3.Error:
+    return set(pre_scan_finding_ids)
+  if "finding_id" not in col_names or "session_id" not in col_names:
+    return set(pre_scan_finding_ids)
+  still_preexisting: Set[str] = set()
+  for row in rows:
+    rd = dict(zip(col_names, row))
+    fid = str(rd.get("finding_id") or "")
+    sid = str(rd.get("session_id") or "")
+    if fid in pre_scan_finding_ids and (not sid or sid in pre_scan_session_ids):
+      still_preexisting.add(fid)
+  return still_preexisting
 
 
 def _reconcile_overwritten_findings(
@@ -472,7 +531,10 @@ def _has_disjoint_positive_lines(a: Finding, b: Finding) -> bool:
   return sla > 0 and slb > 0 and (ela < slb or elb < sla)
 
 
-def deduplicate_db_findings(cm: CodeMender) -> None:
+def deduplicate_db_findings(
+    cm: CodeMender,
+    exclude_finding_ids: Optional[Set[str]] = None,
+) -> None:
   """Deduplicates active findings in state.db so inter-pass duplicates do not keep files active, upgrading severity when a duplicate has higher severity."""
   con = cm.db
   if con is None:
@@ -486,6 +548,12 @@ def deduplicate_db_findings(cm: CodeMender) -> None:
   if not rows or "file_path" not in col_names:
     return
   row_dicts = [dict(zip(col_names, row)) for row in rows]
+  if exclude_finding_ids:
+    row_dicts = [
+        rd
+        for rd in row_dicts
+        if str(rd.get("finding_id") or "") not in exclude_finding_ids
+    ]
   findings = [Finding.from_dict(rd) for rd in row_dicts]
   raw_by_id = {
       str(rd.get("finding_id")): rd
@@ -570,6 +638,9 @@ def run_complete_scan(
     result = None
     prev_active_files: Optional[List[str]] = None
     cleared_files: Set[str] = set()
+    pre_scan_session_ids = _snapshot_db_session_ids(cm)
+    pre_scan_finding_ids = set(_snapshot_db_findings(cm).keys())
+    excluded_finding_ids = set(pre_scan_finding_ids)
     for scan_index in range(complete_runs):
       active_files: Optional[List[str]] = None
       if scan_index > 0:
@@ -579,6 +650,8 @@ def run_complete_scan(
             last_pass_files=prev_active_files,
             last_pass_stdout=last_stdout,
             critical_high_only=critical_high_only,
+            exclude_session_ids=pre_scan_session_ids or None,
+            exclude_finding_ids=excluded_finding_ids or None,
         )
         for cleared in cleared_files:
           counts[cleared] = 0
@@ -594,7 +667,11 @@ def run_complete_scan(
           extra = "".join(f"{f}\n" for f in clean_files)
           with open(cmignore_path, "w", encoding="utf-8") as clean_f:
             clean_f.write(base + extra)
-      pre_pass_rows = _snapshot_db_findings(cm) if scan_index > 0 else {}
+      pre_pass_rows = (
+          _snapshot_db_findings(cm, exclude_finding_ids=excluded_finding_ids or None)
+          if scan_index > 0
+          else {}
+      )
       result = cm.find(
           target_or_id=target_or_id,
           scan_mode=ScanMode.DEEP,
@@ -602,11 +679,16 @@ def run_complete_scan(
           max_turns=12 if scan_index > 0 else 8,
           active_files=active_files or None,
           critical_high_only=critical_high_only,
+          exclude_finding_ids=excluded_finding_ids or None,
+          skip_prior_report=(scan_index == 0),
       )
       prev_active_files = active_files
+      excluded_finding_ids = _active_preexisting_finding_ids(
+          cm, pre_scan_finding_ids, pre_scan_session_ids
+      )
       if scan_index > 0:
         _reconcile_overwritten_findings(cm, pre_pass_rows)
-      deduplicate_db_findings(cm)
+      deduplicate_db_findings(cm, exclude_finding_ids=excluded_finding_ids or None)
     return result
   finally:
     if cmignore_path:

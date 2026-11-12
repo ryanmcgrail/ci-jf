@@ -9,7 +9,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from finding import Finding
 
@@ -194,7 +194,11 @@ def _normalize_report_file_path(file_path: str, repo_dir: str = "") -> str:
   return path.lstrip("./")
 
 
-def preprocess_report_for_context(raw_report: str, repo_dir: str = "") -> str:
+def preprocess_report_for_context(
+    raw_report: str,
+    repo_dir: str = "",
+    exclude_finding_ids: Optional[Iterable[str]] = None,
+) -> str:
   """Filters a raw `cm report --format json` output to OPEN/VERIFIED/REOPENED findings with repo-relative file_path and snippet."""
   text = (raw_report or "").strip()
   if not text or text == "null":
@@ -205,11 +209,14 @@ def preprocess_report_for_context(raw_report: str, repo_dir: str = "") -> str:
     return "[]"
   if not isinstance(items, list):
     return "[]"
+  excluded = {str(fid) for fid in exclude_finding_ids if fid} if exclude_finding_ids else set()
   filtered = []
   for item in items:
     if not isinstance(item, dict):
       continue
     finding = Finding.from_dict(item)
+    if excluded and str(finding.finding_id or "") in excluded:
+      continue
     if finding.status in _ACTIVE_REPORT_STATUSES:
       filtered.append({
           "file_path": _normalize_report_file_path(finding.file_path, repo_dir),
@@ -257,6 +264,8 @@ class CodeMender:
       deep_workers: int = 16,
       model: str = "gemini-4-argon",
       critical_high_only: bool = False,
+      exclude_finding_ids: Optional[Iterable[str]] = None,
+      skip_prior_report: bool = False,
   ) -> Any:
     """Runs the CodeMender find command on the target repository directory."""
     target = target_or_id if target_or_id is not None else self.repo_dir
@@ -271,10 +280,14 @@ class CodeMender:
         env=self.env,
         check=False,
     )
-    preprocessed_report = preprocess_report_for_context(
-        getattr(report_res, "stdout", "") or "",
-        repo_dir=self.repo_dir,
-    )
+    if skip_prior_report:
+      preprocessed_report = "[]"
+    else:
+      preprocessed_report = preprocess_report_for_context(
+          getattr(report_res, "stdout", "") or "",
+          repo_dir=self.repo_dir,
+          exclude_finding_ids=exclude_finding_ids,
+      )
     discouraged_cwes = _load_discouraged_cwes()
     has_prior_state = (preprocessed_report != "[]") or bool(active_files)
     temp_dir = self.repo_dir if os.path.isdir(self.repo_dir) else None
