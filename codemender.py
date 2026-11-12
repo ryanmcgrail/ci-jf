@@ -41,40 +41,36 @@ _DEFAULT_AUDIT_BULLET = (
     " vulnerabilities in a single pass (at most one finding per code block/line"
     " range)."
 )
-_FIND_CONTEXT_FOR_FIRST_PASS = """\
+_FIND_CONTEXT_FOR_FIRST_PASS = f"""\
 # Audit Strategy
-- Audit the entire target file top to bottom and report all distinct vulnerabilities in a single pass (at most one finding per code block/line range).
-- Report each distinct vulnerable route, endpoint, or function as its own separate finding rather than grouping multiple endpoints into a single finding; however:
-  - When an endpoint or method calls a private/internal helper, validator, or sanitizer function within the same file, report the vulnerability once and anchor it at the function or code block that actually executes the vulnerable sink—never at a pass-through caller that lacks the sink, and never at an ineffective/disabled intra-file validator or sanitizer helper that lacks the sink.
-  - When a controller or route method is a pure pass-through that delegates directly to a service class without adding its own security, auth, or sink logic, report the vulnerability in the service class where the sink/logic resides rather than duplicating it on the pass-through wrapper.
-  - When multiple routes in the same file are gated by the exact same shared client-side boolean/state variable, report that shared client-side check once at its definition rather than repeating it for every route that references it (still report routes with distinct authorization flaws, such as missing admin role checks or exposed hidden routes, separately).
-- Scope each finding's snippet and line range strictly to the minimal contiguous vulnerable sink lines, never the entire enclosing function or method; never use `...` to bridge non-contiguous lines in a snippet.
-- Collect all candidate issues in the target file before making cross-file `grep_search` or `read_file` calls (at most 2-3 turns, and never read files inside `node_modules`); always inspect cross-file consumers when the target file generates/encodes tokens, state, or cookies before concluding 0 vulnerabilities.
-- When a handler relies on a repository-local security/auth helper (e.g., `security.*`), always inspect that helper's definition before assuming it enforces authentication, role authorization, or ownership.
-- Before reporting missing authentication/authorization or untrusted event/request input on a handler, controller, or cloud/serverless function, check repository-wide routing and deployment/IaC manifests (including at the repository root, such as route tables, OpenAPI specs, or CloudFormation/SAM/Serverless/Terraform templates) to verify how the handler is deployed and triggered; do not report missing auth or untrusted-input findings on dead/undeployed handlers, internal-only functions with no external route/trigger or untrusted data source, or platform-triggered functions whose configured schema prevents attacker-controlled attributes.
-- Ignore test files, package manifests, dependency/vendor directories, vendored or minified third-party libraries (stop immediately and report 0 vulnerabilities if the target file is a vendored third-party library), and `.codemender` files.
+{_DEFAULT_AUDIT_BULLET}
+- Report each distinct vulnerable route, endpoint, or function separately rather than grouping multiple endpoints into one finding, except:
+  - For intra-file helpers/validators/sanitizers or pure pass-through controller-to-service wrappers (adding no auth, validation, or sink logic), report the vulnerability once at the function/block where the sink or security defect resides—never on a pass-through caller/wrapper or an ineffective/disabled intra-file validator/sanitizer lacking the sink.
+  - When multiple routes in one file share the exact same client-side boolean/state check, report it once at its definition rather than per route (still report routes with distinct auth flaws, such as missing admin checks or exposed hidden routes, separately).
+- Scope each snippet and line range strictly to the minimal contiguous sink lines (never the whole enclosing function, and never bridge non-contiguous lines with `...`).
+- Batch cross-file `grep_search`/`read_file` lookups after collecting all candidate issues in the target file (at most 2-3 turns; never read `node_modules`). Inspect cross-file consumers before concluding 0 vulnerabilities on files that generate/encode tokens, state, or cookies, and inspect repo-local security/auth helper definitions (e.g., `security.*`) before assuming they enforce auth, role authorization, or ownership.
+- Before reporting missing auth or untrusted event/request input on a handler, controller, or cloud/serverless function, check repository-wide routing and deployment/IaC manifests (including at the repository root, e.g., route tables, OpenAPI, CloudFormation/SAM/Serverless/Terraform) to confirm how it is deployed and triggered; skip dead/undeployed handlers, internal-only functions lacking an external route/trigger or untrusted data source, and platform-triggered functions whose configured schema prevents attacker-controlled attributes.
+- Ignore tests, package manifests, vendor/dependency directories, `.codemender` files, and vendored/minified third-party libraries (if the target file is vendored third-party code, stop immediately and report 0).
 
 # Vulnerabilities to Report
-- **Secrets, Cryptography & Query/Token Helpers:** Always report hardcoded secrets, passwords, API keys, salts, or cryptographic keys, weak cryptographic/hashing/encoding primitives, and unescaped query/filter builders or insecure token/key processors directly in the target file where they are defined or implemented, rather than deferring the finding to a caller, controller, or consumer file.
-- **Frontend (Components, Routers, Guards, Services):**
-  - DOM XSS and unsafe rendering sinks (`innerHTML`, `outerHTML`, `document.write`, `bypassSecurityTrust*`, `dangerouslySetInnerHTML`, `v-html`, `eval`), open redirects, and unvalidated `postMessage` or URL handling.
-  - Client-side-only authentication, authorization, or rate-limiting/CAPTCHA enforcement (relying on `localStorage`/`sessionStorage`, decoding JWTs without server verification, deriving or verifying credentials/OAuth passwords client-side, or mutating client auth state before server confirmation).
-  - Privileged or account-management routes missing guards or guarded only by client-decodeable state, obfuscated/hidden route matchers (security through obscurity), and exposed debug, sandbox, or unreleased routes.
-  - Transmitting passwords, tokens, or sensitive credentials in URL query parameters (such as HTTP `GET` requests) or exposing secrets in client-side source files or storage.
-- **Backend (Routes, Controllers, Middleware, Models, File/Network Handlers):**
-  - Injection (SQL, NoSQL, command, template, XXE, XPath), SSRF, unsafe deserialization, prototype pollution, ReDoS on untrusted input, and path traversal or static file serving with incomplete path sanitization (such as checking only `.includes('/')` or `..` without canonical path containment or null-byte filtering).
-  - Missing or bypassable authentication/authorization on endpoints or file/log/key servers, IDOR, mass assignment, privilege escalation (trusting client-supplied user IDs, roles, prices, or wallet addresses without server-side session or cryptographic signature verification), and CSRF on state-changing endpoints.
-  - Serialization of database/ORM records into JWTs, sessions, or responses without stripping all sensitive model fields (inspect the model schema for remaining fields like password hashes, TOTP secrets, or security answers even if another field was cleared), and cleartext database storage of authentication secrets or keys.
-  - Unbounded resource allocation (such as spawning persistent WebSocket/network providers or event listeners per request without cleanup or rate limiting), overly permissive CORS/security headers, and sensitive error, stack trace, metrics, or directory disclosure.
+- **Secrets, Crypto & Helpers:** Report hardcoded secrets/passwords/API keys/salts/keys, weak cryptographic/hashing/encoding primitives, unescaped query/filter builders, and insecure token/key processors directly where defined rather than deferring to callers or consumers.
+- **Frontend:**
+  - DOM XSS and unsafe sinks (`innerHTML`, `outerHTML`, `document.write`, `bypassSecurityTrust*`, `dangerouslySetInnerHTML`, `v-html`, `eval`), open redirects, and unvalidated `postMessage`/URL handling.
+  - Client-side-only auth, authorization, or rate-limit/CAPTCHA checks (`localStorage`/`sessionStorage`, unverified JWT decoding, client-side credential/OAuth password derivation or verification, or mutating auth state before server confirmation).
+  - Privileged/account routes missing guards or using only client-decodable state, obfuscated/hidden route matchers, and exposed debug/sandbox/unreleased routes.
+  - Credentials/tokens sent in URL query parameters (e.g., `GET` requests) or secrets exposed in client code or storage.
+- **Backend:**
+  - Injection (SQL, NoSQL, command, template, XXE, XPath), SSRF, unsafe deserialization, prototype pollution, ReDoS on untrusted input, and path traversal/static file serving without canonical path containment or null-byte filtering (e.g., checking only `.includes('/')` or `..`).
+  - Missing/bypassable auth on endpoints or file/log/key servers, IDOR, mass assignment, privilege escalation (trusting client-supplied user IDs, roles, prices, or wallet addresses without server-side session/signature verification), and CSRF on state-changing endpoints.
+  - Serializing DB/ORM records into JWTs, sessions, or responses without stripping all sensitive schema fields (e.g., password hashes, TOTP secrets, security answers, even if another field was cleared), and cleartext DB storage of auth secrets/keys.
+  - Unbounded per-request resource allocation (e.g., persistent WebSocket/network providers or event listeners without cleanup/rate limiting), permissive CORS/headers, and error/stack-trace/metrics/directory disclosure.
 
 # CWE Requirements
-- Assign exactly one CWE ID (`CWE-<number>`) to each finding; omitting a CWE ID or assigning multiple is invalid.
-- Never use any CWE ID from this discouraged/prohibited list: {discouraged_cwes}"""
+- Assign each finding exactly one `CWE-<number>` ID, and never use these discouraged/prohibited CWEs: {{discouraged_cwes}}"""
 _FIND_CONTEXT_FOR_LATER_PASSES = f"""\
 # Initial Pre-Audit Check
-- First, run `python3 {_COVERED_LINES_SCRIPT_PATH} {{report_file}} "<file>"` (replacing `<file>` with the target file's repo-relative path) to check which line ranges and snippets in this file have already been covered.
-- Use `run_command` strictly for this single `covered_lines.py` check; never invoke `node`, `sh`, or any other shell command, and never query {{report_file}} for other files.
-- Skip every preexisting vulnerability returned for this file (its covered line ranges and sink lines, its enclosing declaration or caller lines, and any intra-file helper, validator, or sanitizer function whose caller/sink in this file is already covered, or vice versa) and never report it again; still audit the rest of the file for distinct vulnerabilities on uncovered lines, and if none remain, stop and report 0 vulnerabilities.
+- First, run `python3 {_COVERED_LINES_SCRIPT_PATH} {{report_file}} "<file>"` (using the target file's repo-relative path) to list already-covered lines and snippets; use `run_command` strictly for this single check (never invoke `node`, `sh`, or other commands, or query other files).
+- Never re-report a covered vulnerability (its covered/sink lines, enclosing declaration/caller, or any intra-file helper/validator/sanitizer whose caller/sink in this file is already covered, or vice versa); audit the remaining uncovered lines and report 0 if no distinct vulnerabilities remain.
 
 {_FIND_CONTEXT_FOR_FIRST_PASS}"""
 

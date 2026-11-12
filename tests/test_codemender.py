@@ -396,11 +396,11 @@ class CodeMenderTests(unittest.TestCase):
 
   def test_find_context_includes_intra_file_sink_anchoring_and_iac_reachability(self):
     self.assertIn(
-        "anchor it at the function or code block that actually executes the vulnerable sink",
+        "report the vulnerability once at the function/block where the sink or security defect resides",
         codemender._FIND_CONTEXT_FOR_FIRST_PASS,
     )
     self.assertIn(
-        "ineffective/disabled intra-file validator or sanitizer helper",
+        "ineffective/disabled intra-file validator/sanitizer lacking the sink",
         codemender._FIND_CONTEXT_FOR_FIRST_PASS,
     )
     self.assertIn(
@@ -412,7 +412,7 @@ class CodeMenderTests(unittest.TestCase):
         codemender._FIND_CONTEXT_FOR_FIRST_PASS,
     )
     self.assertIn(
-        "intra-file helper, validator, or sanitizer function whose caller/sink in this file is already covered",
+        "intra-file helper/validator/sanitizer whose caller/sink in this file is already covered",
         codemender._FIND_CONTEXT_FOR_LATER_PASSES,
     )
 
