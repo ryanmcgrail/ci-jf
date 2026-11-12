@@ -394,6 +394,28 @@ class CodeMenderTests(unittest.TestCase):
         ctx_arg,
     )
 
+  def test_find_context_includes_intra_file_sink_anchoring_and_iac_reachability(self):
+    self.assertIn(
+        "anchor it at the function or code block that actually executes the vulnerable sink",
+        codemender._FIND_CONTEXT_FOR_FIRST_PASS,
+    )
+    self.assertIn(
+        "ineffective/disabled intra-file validator or sanitizer helper",
+        codemender._FIND_CONTEXT_FOR_FIRST_PASS,
+    )
+    self.assertIn(
+        "check repository-wide routing and deployment/IaC manifests (including at the repository root",
+        codemender._FIND_CONTEXT_FOR_FIRST_PASS,
+    )
+    self.assertIn(
+        "dead/undeployed handlers",
+        codemender._FIND_CONTEXT_FOR_FIRST_PASS,
+    )
+    self.assertIn(
+        "intra-file helper, validator, or sanitizer function whose caller/sink in this file is already covered",
+        codemender._FIND_CONTEXT_FOR_LATER_PASSES,
+    )
+
 
 if __name__ == "__main__":
   unittest.main()

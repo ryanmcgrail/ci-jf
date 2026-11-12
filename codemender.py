@@ -45,12 +45,13 @@ _FIND_CONTEXT_FOR_FIRST_PASS = """\
 # Audit Strategy
 - Audit the entire target file top to bottom and report all distinct vulnerabilities in a single pass (at most one finding per code block/line range).
 - Report each distinct vulnerable route, endpoint, or function as its own separate finding rather than grouping multiple endpoints into a single finding; however:
-  - When an endpoint or method calls a private/internal helper method within the same file, report the vulnerability once rather than reporting both the caller and its intra-file helper as separate findings.
+  - When an endpoint or method calls a private/internal helper, validator, or sanitizer function within the same file, report the vulnerability once and anchor it at the function or code block that actually executes the vulnerable sink—never at a pass-through caller that lacks the sink, and never at an ineffective/disabled intra-file validator or sanitizer helper that lacks the sink.
   - When a controller or route method is a pure pass-through that delegates directly to a service class without adding its own security, auth, or sink logic, report the vulnerability in the service class where the sink/logic resides rather than duplicating it on the pass-through wrapper.
   - When multiple routes in the same file are gated by the exact same shared client-side boolean/state variable, report that shared client-side check once at its definition rather than repeating it for every route that references it (still report routes with distinct authorization flaws, such as missing admin role checks or exposed hidden routes, separately).
 - Scope each finding's snippet and line range strictly to the minimal contiguous vulnerable sink lines, never the entire enclosing function or method; never use `...` to bridge non-contiguous lines in a snippet.
 - Collect all candidate issues in the target file before making cross-file `grep_search` or `read_file` calls (at most 2-3 turns, and never read files inside `node_modules`); always inspect cross-file consumers when the target file generates/encodes tokens, state, or cookies before concluding 0 vulnerabilities.
 - When a handler relies on a repository-local security/auth helper (e.g., `security.*`), always inspect that helper's definition before assuming it enforces authentication, role authorization, or ownership.
+- Before reporting missing authentication/authorization or untrusted event/request input on a handler, controller, or cloud/serverless function, check repository-wide routing and deployment/IaC manifests (including at the repository root, such as route tables, OpenAPI specs, or CloudFormation/SAM/Serverless/Terraform templates) to verify how the handler is deployed and triggered; do not report missing auth or untrusted-input findings on dead/undeployed handlers, internal-only functions with no external route/trigger or untrusted data source, or platform-triggered functions whose configured schema prevents attacker-controlled attributes.
 - Ignore test files, package manifests, dependency/vendor directories, vendored or minified third-party libraries (stop immediately and report 0 vulnerabilities if the target file is a vendored third-party library), and `.codemender` files.
 
 # Vulnerabilities to Report
@@ -73,7 +74,7 @@ _FIND_CONTEXT_FOR_LATER_PASSES = f"""\
 # Initial Pre-Audit Check
 - First, run `python3 {_COVERED_LINES_SCRIPT_PATH} {{report_file}} "<file>"` (replacing `<file>` with the target file's repo-relative path) to check which line ranges and snippets in this file have already been covered.
 - Use `run_command` strictly for this single `covered_lines.py` check; never invoke `node`, `sh`, or any other shell command, and never query {{report_file}} for other files.
-- Skip every preexisting vulnerability returned for this file (its covered line ranges and sink lines, as well as its enclosing declaration or caller lines) and never report it again; still audit the rest of the file for distinct vulnerabilities on uncovered lines, and if none remain, stop and report 0 vulnerabilities.
+- Skip every preexisting vulnerability returned for this file (its covered line ranges and sink lines, its enclosing declaration or caller lines, and any intra-file helper, validator, or sanitizer function whose caller/sink in this file is already covered, or vice versa) and never report it again; still audit the rest of the file for distinct vulnerabilities on uncovered lines, and if none remain, stop and report 0 vulnerabilities.
 
 {_FIND_CONTEXT_FOR_FIRST_PASS}"""
 
