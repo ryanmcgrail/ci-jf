@@ -25,6 +25,10 @@ _DISCOURAGED_CWES_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "discouraged_cwes.txt",
 )
+_COVERED_LINES_SCRIPT_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "covered_lines.py",
+)
 _ACTIVE_REPORT_STATUSES = frozenset({"OPEN", "VERIFIED", "REOPENED"})
 _CRITICAL_HIGH_AUDIT_BULLET = (
     "- Audit the entire target file top to bottom and report all distinct"
@@ -67,9 +71,9 @@ _FIND_CONTEXT_FOR_FIRST_PASS = """\
 - Never use any CWE ID from this discouraged/prohibited list: {discouraged_cwes}"""
 _FIND_CONTEXT_FOR_LATER_PASSES = f"""\
 # Initial Pre-Audit Check
-- First, run `jq -r '.[] | select(.file_path == "<file>") | .snippet' {{report_file}}` (replacing `<file>` with the target file's repo-relative path) to fetch preexisting finding snippets for this file.
-- Use `run_command` strictly for this single `jq` check; never invoke `node`, `python`, `sh`, or any other shell command, and never query {{report_file}} for other files.
-- Skip every preexisting vulnerability returned for this file (its sink lines, as well as its enclosing declaration or caller lines) and never report it again; still audit the rest of the file (including other lines in the same function or between `...` in a prior snippet) for distinct vulnerabilities, and if none remain, stop and report 0 vulnerabilities.
+- First, run `python3 {_COVERED_LINES_SCRIPT_PATH} {{report_file}} "<file>"` (replacing `<file>` with the target file's repo-relative path) to check which line ranges and snippets in this file have already been covered.
+- Use `run_command` strictly for this single `covered_lines.py` check; never invoke `node`, `sh`, or any other shell command, and never query {{report_file}} for other files.
+- Skip every preexisting vulnerability returned for this file (its covered line ranges and sink lines, as well as its enclosing declaration or caller lines) and never report it again; still audit the rest of the file for distinct vulnerabilities on uncovered lines, and if none remain, stop and report 0 vulnerabilities.
 
 {_FIND_CONTEXT_FOR_FIRST_PASS}"""
 

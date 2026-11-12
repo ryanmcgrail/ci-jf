@@ -378,7 +378,7 @@ class CodeMenderTests(unittest.TestCase):
         ],
     )
     self.assertIn(
-        'select(.file_path == "<file>")',
+        'covered_lines.py {report_file} "<file>"',
         codemender._FIND_CONTEXT_FOR_LATER_PASSES,
     )
 
