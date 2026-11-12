@@ -146,7 +146,10 @@ def get_latest_session_finding_counts(
         WHERE s.session_type = 'FIND'
           AND s.target != ''
           AND (s.project_root = '' OR s.project_root = ? OR s.project_root = ?)
-        ORDER BY s.updated_at ASC, s.created_at ASC, s.rowid ASC
+        ORDER BY s.updated_at ASC,
+                 CASE WHEN UPPER(COALESCE(s.status, '')) = 'COMPLETED' THEN 1 ELSE 0 END ASC,
+                 s.created_at ASC,
+                 s.rowid ASC
         """,
         (cm.repo_dir, repo_real),
     ).fetchall()
@@ -220,6 +223,16 @@ def get_latest_session_finding_counts(
           if rel_fp:
             latest_counts[rel_fp] = int(f_cnt or 0)
             parent_finding_targets[sid].add(rel_fp)
+        if is_root_target and len(parent_finding_targets[sid]) == 1:
+          sole_fp = next(iter(parent_finding_targets[sid]))
+          try:
+            con.execute(
+                "UPDATE sessions SET target = ? WHERE session_id = ?",
+                (sole_fp, sid),
+            )
+            con.commit()
+          except sqlite3.Error:
+            pass
     else:
       rel_target = _rel_target_path(
           target_str, cm.repo_dir, repo_real, proj_root_str
@@ -227,15 +240,17 @@ def get_latest_session_finding_counts(
       if rel_target:
         # If the per-file session did not complete (e.g. FAILED, CANCELLED,
         # INTERRUPTED), assign a count >= 1 so the file stays in `active_files`
-        # and is re-audited on the next pass.
+        # and is re-audited on the next pass (unless a COMPLETED retry in the
+        # same pass supersedes it).
         latest_counts[rel_target] = (
             int(finding_count) if is_completed else max(int(finding_count), 1)
         )
         if parent_id_str:
           latest_parent_id = parent_id_str
-          child_targets_by_parent.setdefault(parent_id_str, set()).add(
-              rel_target
-          )
+          if is_completed:
+            child_targets_by_parent.setdefault(parent_id_str, set()).add(
+                rel_target
+            )
 
   failed_stdout_files = (
       _extract_failed_batch_files_from_stdout(last_pass_stdout)

@@ -40,14 +40,14 @@ _DEFAULT_AUDIT_BULLET = (
 _FIND_CONTEXT_FOR_FIRST_PASS = """\
 # Audit Strategy
 - Audit the entire target file top to bottom and report all distinct vulnerabilities in a single pass (at most one finding per code block/line range).
-- Report each distinct vulnerable route, endpoint, or function as its own separate finding rather than grouping multiple endpoints into a single finding.
+- Report each distinct vulnerable route, endpoint, or function as its own separate finding rather than grouping multiple endpoints into a single finding; however, when multiple routes in the same file are gated by the exact same shared client-side boolean/state variable, report that shared client-side check once at its definition rather than repeating it for every route that references it (still report routes with distinct authorization flaws, such as missing admin role checks or exposed hidden routes, separately).
 - Scope each finding's snippet and line range strictly to the minimal contiguous vulnerable sink lines, never the entire enclosing function or method; never use `...` to bridge non-contiguous lines in a snippet.
-- Collect all candidate issues in the target file before making cross-file `grep_search` or `read_file` calls (at most 2-3 turns); always inspect cross-file consumers when the target file generates/encodes tokens, state, or cookies before concluding 0 vulnerabilities.
+- Collect all candidate issues in the target file before making cross-file `grep_search` or `read_file` calls (at most 2-3 turns, and never read files inside `node_modules`); always inspect cross-file consumers when the target file generates/encodes tokens, state, or cookies before concluding 0 vulnerabilities.
 - When a handler relies on a repository-local security/auth helper (e.g., `security.*`), always inspect that helper's definition before assuming it enforces authentication, role authorization, or ownership.
 - Ignore test files, package manifests, dependency/vendor directories, vendored or minified third-party libraries (stop immediately and report 0 vulnerabilities if the target file is a vendored third-party library), and `.codemender` files.
 
 # Vulnerabilities to Report
-- **Secrets & Cryptography:** Always report hardcoded secrets, passwords, API keys, salts, or cryptographic keys and weak cryptographic, hashing, or encoding primitives directly in the target file where they are defined or used, rather than deferring the finding to another file that decodes or verifies the value.
+- **Secrets, Cryptography & Query/Token Helpers:** Always report hardcoded secrets, passwords, API keys, salts, or cryptographic keys, weak cryptographic/hashing/encoding primitives, and unescaped query/filter builders or insecure token/key processors directly in the target file where they are defined or implemented, rather than deferring the finding to a caller, controller, or consumer file.
 - **Frontend (Components, Routers, Guards, Services):**
   - DOM XSS and unsafe rendering sinks (`innerHTML`, `outerHTML`, `document.write`, `bypassSecurityTrust*`, `dangerouslySetInnerHTML`, `v-html`, `eval`), open redirects, and unvalidated `postMessage` or URL handling.
   - Client-side-only authentication, authorization, or rate-limiting/CAPTCHA enforcement (relying on `localStorage`/`sessionStorage`, decoding JWTs without server verification, deriving or verifying credentials/OAuth passwords client-side, or mutating client auth state before server confirmation).
