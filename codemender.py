@@ -26,6 +26,17 @@ _DISCOURAGED_CWES_PATH = os.path.join(
     "discouraged_cwes.txt",
 )
 _ACTIVE_REPORT_STATUSES = frozenset({"OPEN", "VERIFIED", "REOPENED"})
+_CRITICAL_HIGH_AUDIT_BULLET = (
+    "- Audit the entire target file top to bottom and report all distinct"
+    " vulnerabilities in a single pass (at most one finding per code block/line"
+    " range), focusing on the most critical security issues (CRITICAL and HIGH"
+    " severity)."
+)
+_DEFAULT_AUDIT_BULLET = (
+    "- Audit the entire target file top to bottom and report all distinct"
+    " vulnerabilities in a single pass (at most one finding per code block/line"
+    " range)."
+)
 _FIND_CONTEXT_FOR_FIRST_PASS = """\
 # Audit Strategy
 - Audit the entire target file top to bottom and report all distinct vulnerabilities in a single pass (at most one finding per code block/line range).
@@ -238,6 +249,7 @@ class CodeMender:
       active_files: Optional[List[str]] = None,
       deep_workers: int = 16,
       model: str = "gemini-4-argon",
+      critical_high_only: bool = False,
   ) -> Any:
     """Runs the CodeMender find command on the target repository directory."""
     target = target_or_id if target_or_id is not None else self.repo_dir
@@ -298,6 +310,12 @@ class CodeMender:
       else:
         context_str = _FIND_CONTEXT_FOR_FIRST_PASS.format(
             discouraged_cwes=discouraged_cwes,
+        )
+      if critical_high_only:
+        context_str = context_str.replace(
+            _DEFAULT_AUDIT_BULLET,
+            _CRITICAL_HIGH_AUDIT_BULLET,
+            1,
         )
       cmd_flags.extend([
           "--bypass-warning",

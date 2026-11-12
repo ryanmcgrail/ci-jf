@@ -9,7 +9,7 @@ import uuid
 from typing import Any, Dict, Iterable, List, Optional, Set
 
 from codemender import CodeMender, ScanMode
-from deduplication import dedup, remove_duplicates_in_db
+from deduplication import is_duplicate, remove_duplicates_in_db
 from finding import Finding
 
 # Matches per-batch completion lines emitted by `cm find --deep`, e.g.:
@@ -24,6 +24,24 @@ _DEEP_FAILED_BATCH_LINE_RE = re.compile(
     r"^\[\d+/\d+\s+batches\]\s+(?:❌|✗|FAIL)\S*\s+(\S+)",
     re.MULTILINE,
 )
+_SEV_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+
+
+def _sev_rank(severity: Any) -> int:
+  return _SEV_RANK.get(str(severity or "").strip().upper(), 99)
+
+
+def _update_finding_json_str(raw_json: Any, **updates: Any) -> Any:
+  if not isinstance(raw_json, str) or not raw_json.strip():
+    return raw_json
+  try:
+    parsed = json.loads(raw_json)
+  except json.JSONDecodeError:
+    return raw_json
+  if not isinstance(parsed, dict):
+    return raw_json
+  parsed.update(updates)
+  return json.dumps(parsed)
 
 
 def _rel_target_path(
@@ -74,6 +92,7 @@ def get_latest_session_finding_counts(
     cm: CodeMender,
     last_pass_files: Optional[Iterable[str]] = None,
     last_pass_stdout: Optional[str] = None,
+    critical_high_only: bool = True,
 ) -> Dict[str, int]:
   """Returns the active finding count of the most recent FIND session per target.
 
@@ -95,8 +114,20 @@ def get_latest_session_finding_counts(
     return {}
   repo_real = os.path.realpath(cm.repo_dir)
   try:
+    finding_cols = {
+        desc[1]
+        for desc in con.execute("PRAGMA table_info(findings)").fetchall()
+    }
+    has_file_path_col = "file_path" in finding_cols
+    has_severity_col = "severity" in finding_cols
+    filter_by_severity = bool(critical_high_only and has_severity_col)
+    sev_clause = (
+        " AND UPPER(COALESCE(f.severity, '')) IN ('CRITICAL', 'HIGH')"
+        if filter_by_severity
+        else ""
+    )
     session_rows = con.execute(
-        """
+        f"""
         SELECT s.session_id,
                s.status,
                s.target,
@@ -107,7 +138,10 @@ def get_latest_session_finding_counts(
                ) AS has_children,
                (SELECT COUNT(*) FROM findings f
                 WHERE f.session_id = s.session_id
-                  AND f.status IN ('OPEN', 'VERIFIED', 'REOPENED')) AS finding_count
+                  AND f.status IN ('OPEN', 'VERIFIED', 'REOPENED'){sev_clause}) AS finding_count,
+               (SELECT COUNT(*) FROM findings f
+                WHERE f.session_id = s.session_id
+                  AND f.status IN ('OPEN', 'VERIFIED', 'REOPENED')) AS any_finding_count
         FROM sessions s
         WHERE s.session_type = 'FIND'
           AND s.target != ''
@@ -116,14 +150,9 @@ def get_latest_session_finding_counts(
         """,
         (cm.repo_dir, repo_real),
     ).fetchall()
-    finding_cols = {
-        desc[1]
-        for desc in con.execute("PRAGMA table_info(findings)").fetchall()
-    }
   except sqlite3.Error:
     return {}
 
-  has_file_path_col = "file_path" in finding_cols
   latest_counts: Dict[str, int] = {}
   latest_parent_id: Optional[str] = None
   child_targets_by_parent: Dict[str, Set[str]] = {}
@@ -137,6 +166,7 @@ def get_latest_session_finding_counts(
       parent_session_id,
       has_children,
       finding_count,
+      any_finding_count,
   ) in session_rows:
     sid = str(session_id)
     is_completed = str(status or "").upper() == "COMPLETED"
@@ -160,13 +190,18 @@ def get_latest_session_finding_counts(
           latest_counts[rel_target] = (
               int(finding_count) if is_completed else max(int(finding_count), 1)
           )
-          if int(finding_count) > 0:
+          if int(any_finding_count) > 0:
             parent_finding_targets[sid].add(rel_target)
-      if has_file_path_col and int(finding_count) > 0:
+      if has_file_path_col and int(any_finding_count) > 0:
+        count_expr = (
+            "SUM(CASE WHEN UPPER(COALESCE(f.severity, '')) IN ('CRITICAL', 'HIGH') THEN 1 ELSE 0 END)"
+            if filter_by_severity
+            else "COUNT(*)"
+        )
         try:
           f_rows = con.execute(
-              """
-              SELECT f.file_path, COUNT(*)
+              f"""
+              SELECT f.file_path, {count_expr}
               FROM findings f
               WHERE f.session_id = ?
                 AND f.status IN ('OPEN', 'VERIFIED', 'REOPENED')
@@ -183,7 +218,7 @@ def get_latest_session_finding_counts(
               str(raw_fp), cm.repo_dir, repo_real, proj_root_str
           )
           if rel_fp:
-            latest_counts[rel_fp] = int(f_cnt)
+            latest_counts[rel_fp] = int(f_cnt or 0)
             parent_finding_targets[sid].add(rel_fp)
     else:
       rel_target = _rel_target_path(
@@ -353,14 +388,13 @@ def _reconcile_overwritten_findings(
       )
       restored = dict(old_row)
       restored["finding_id"] = disambiguated_id
-      if isinstance(restored.get("finding_json"), str) and restored["finding_json"]:
-        try:
-          fjson = json.loads(restored["finding_json"])
-          if isinstance(fjson, dict):
-            fjson["finding_id"] = disambiguated_id
-            restored["finding_json"] = json.dumps(fjson)
-        except json.JSONDecodeError:
-          pass
+      if restored.get("fingerprint"):
+        restored["fingerprint"] = f"{restored['fingerprint']}:{old_sl}:{old_el}"
+      if "finding_json" in restored:
+        restored["finding_json"] = _update_finding_json_str(
+            restored.get("finding_json"),
+            finding_id=disambiguated_id,
+        )
       placeholders = ", ".join("?" * len(col_names))
       cols_sql = ", ".join(col_names)
       try:
@@ -373,11 +407,32 @@ def _reconcile_overwritten_findings(
         pass
     else:
       # Same vulnerability re-reported in a later pass: restore original session_id
-      # so get_latest_session_finding_counts does not treat it as a new finding.
+      # so get_latest_session_finding_counts does not treat it as a new finding,
+      # and keep whichever severity is higher between the two passes.
+      set_clauses = ["session_id = ?"]
+      params: List[Any] = [old_sid]
+      if "severity" in col_names:
+        old_sev = str(old_row.get("severity") or "").strip().upper()
+        cur_sev = str(cur_row.get("severity") or "").strip().upper()
+        best_sev = (
+            old_sev if _sev_rank(old_sev) <= _sev_rank(cur_sev) else cur_sev
+        )
+        if best_sev:
+          set_clauses.append("severity = ?")
+          params.append(best_sev)
+          if "finding_json" in col_names:
+            set_clauses.append("finding_json = ?")
+            params.append(
+                _update_finding_json_str(
+                    cur_row.get("finding_json"),
+                    severity=best_sev,
+                )
+            )
+      params.append(fid)
       try:
         con.execute(
-            "UPDATE findings SET session_id = ? WHERE finding_id = ?",
-            (old_sid, fid),
+            f"UPDATE findings SET {', '.join(set_clauses)} WHERE finding_id = ?",
+            params,
         )
         changed = True
       except sqlite3.Error:
@@ -390,8 +445,20 @@ def _reconcile_overwritten_findings(
       pass
 
 
+def _has_disjoint_positive_lines(a: Finding, b: Finding) -> bool:
+  """Returns True when both findings have positive line numbers and their ranges do not overlap."""
+  try:
+    sla = int(a.start_line or 0)
+    ela = max(int(a.end_line or sla), sla)
+    slb = int(b.start_line or 0)
+    elb = max(int(b.end_line or slb), slb)
+  except (TypeError, ValueError):
+    return False
+  return sla > 0 and slb > 0 and (ela < slb or elb < sla)
+
+
 def deduplicate_db_findings(cm: CodeMender) -> None:
-  """Deduplicates active findings in state.db so inter-pass duplicates do not keep files active."""
+  """Deduplicates active findings in state.db so inter-pass duplicates do not keep files active, upgrading severity when a duplicate has higher severity."""
   con = cm.db
   if con is None:
     return
@@ -403,15 +470,66 @@ def deduplicate_db_findings(cm: CodeMender) -> None:
     return
   if not rows or "file_path" not in col_names:
     return
-  findings = [
-      Finding.from_dict(dict(zip(col_names, row)))
-      for row in rows
-  ]
-  res = dedup([], findings, cm.repo_dir)
-  if res["suppressed_duplicates"]:
+  row_dicts = [dict(zip(col_names, row)) for row in rows]
+  findings = [Finding.from_dict(rd) for rd in row_dicts]
+  raw_by_id = {
+      str(rd.get("finding_id")): rd
+      for rd in row_dicts
+      if rd.get("finding_id")
+  }
+  pool: List[Finding] = []
+  dups: List[Finding] = []
+  severity_upgrades: Dict[str, str] = {}
+  for f in findings:
+    if str(f.status or "OPEN").upper() not in ("OPEN", "REOPENED", "VERIFIED", ""):
+      continue
+    match_idx = next(
+        (
+            idx
+            for idx, p in enumerate(pool)
+            if not _has_disjoint_positive_lines(p, f)
+            and is_duplicate(p, f, cm.repo_dir)
+        ),
+        None,
+    )
+    if match_idx is not None:
+      match = pool[match_idx]
+      if _sev_rank(f.severity) < _sev_rank(match.severity):
+        upgraded_sev = str(f.severity or "").strip().upper()
+        pool[match_idx] = Finding(match.to_dict(), severity=upgraded_sev)
+        if match.finding_id:
+          severity_upgrades[str(match.finding_id)] = upgraded_sev
+      dups.append(Finding(f.to_dict(), duplicate_of=match.finding_id))
+    else:
+      pool.append(f)
+  if severity_upgrades and "severity" in col_names:
+    for fid, new_sev in severity_upgrades.items():
+      set_clauses = ["severity = ?"]
+      params: List[Any] = [new_sev]
+      if "finding_json" in col_names and fid in raw_by_id:
+        set_clauses.append("finding_json = ?")
+        params.append(
+            _update_finding_json_str(
+                raw_by_id[fid].get("finding_json"),
+                severity=new_sev,
+            )
+        )
+      params.append(fid)
+      try:
+        con.execute(
+            f"UPDATE findings SET {', '.join(set_clauses)} WHERE finding_id = ?",
+            params,
+        )
+      except sqlite3.Error:
+        pass
+    try:
+      con.commit()
+    except sqlite3.Error:
+      pass
+  if dups:
     remove_duplicates_in_db(
         types.SimpleNamespace(cm=cm),
-        res["suppressed_duplicates"],
+        dups,
     )
 
 
@@ -420,6 +538,7 @@ def run_complete_scan(
     target_or_id: Optional[str] = None,
     extra_flags: Optional[List[str]] = None,
     complete_runs: int = 5,
+    critical_high_only: bool = True,
 ) -> Any:
   """Runs sequential deep scans, tracking clean files in .cmignore, scoping follow-up passes to active files, and stopping early when converged."""
   cmignore_path = (
@@ -444,6 +563,7 @@ def run_complete_scan(
             cm,
             last_pass_files=prev_active_files,
             last_pass_stdout=last_stdout,
+            critical_high_only=critical_high_only,
         )
         for cleared in cleared_files:
           counts[cleared] = 0
@@ -466,6 +586,7 @@ def run_complete_scan(
           extra_flags=extra_flags,
           max_turns=12 if scan_index > 0 else 8,
           active_files=active_files or None,
+          critical_high_only=critical_high_only,
       )
       prev_active_files = active_files
       if scan_index > 0:

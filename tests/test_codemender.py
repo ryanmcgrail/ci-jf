@@ -382,6 +382,18 @@ class CodeMenderTests(unittest.TestCase):
         codemender._FIND_CONTEXT_FOR_LATER_PASSES,
     )
 
+  def test_find_critical_high_only_modifies_context_to_focus_on_critical_issues(self):
+    cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
+    proc = types.SimpleNamespace(returncode=0, stdout="Success")
+    with patch("codemender.run_command", return_value=proc) as mock_run:
+      cm.find(critical_high_only=True)
+    cmd = mock_run.call_args_list[1].args[0]
+    ctx_arg = cmd[cmd.index("--context") + 1]
+    self.assertIn(
+        "focusing on the most critical security issues (CRITICAL and HIGH severity)",
+        ctx_arg,
+    )
+
 
 if __name__ == "__main__":
   unittest.main()

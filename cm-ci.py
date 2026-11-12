@@ -21,6 +21,7 @@ find wrapper options (everything else is forwarded to `cm find` unchanged):
   --known FILE      running list of known findings (default .codemender/known_findings.json)
   --out-dir DIR     where findings.json / new_findings.json go (default .codemender)
   --fail-on SEVS    exit 4 if a new or reopened finding has one of these severities
+  --critical-high-only[=BOOL]  whether --complete focuses only on CRITICAL/HIGH issues (default: true)
   --no-update       do not append this run's new findings to --known
   --no-dedup        only run cm find + export
 fix options:
@@ -223,6 +224,27 @@ def cmd_check_config(argv: List[str]) -> int:
 
 # ─── find ────────────────────────────────────────────────────────────────────
 
+_BOOL_LITERALS = {
+    "true": True,
+    "1": True,
+    "yes": True,
+    "y": True,
+    "on": True,
+    "false": False,
+    "0": False,
+    "no": False,
+    "n": False,
+    "off": False,
+}
+
+
+def _parse_bool_flag(flag: str, raw: str) -> bool:
+    val = _BOOL_LITERALS.get(raw.strip().lower())
+    if val is None:
+        die(f"option {flag} expects true or false (got {raw!r})")
+    return bool(val)
+
+
 def cmd_find(argv: List[str]) -> int:
     opts, cm_args = parse_opts(argv, ("--repo", "--existing", "--known", "--out-dir", "--fail-on", "--complete-runs"),
                                ("--no-update", "--no-dedup"), passthrough=True)
@@ -241,7 +263,10 @@ def cmd_find(argv: List[str]) -> int:
     target: Optional[str] = None
     extra_cm_flags: List[str] = []
     complete_runs = int(opts["--complete-runs"]) if opts.get("--complete-runs") is not None else 5
-    for arg in cm_args:
+    critical_high_only = True
+    idx = 0
+    while idx < len(cm_args):
+        arg = cm_args[idx]
         if arg == "--quick":
             scan_mode = ScanMode.QUICK
             is_complete_scan = False
@@ -255,10 +280,21 @@ def cmd_find(argv: List[str]) -> int:
             is_complete_scan = True
         elif arg.startswith("--complete-runs="):
             complete_runs = int(arg.split("=", 1)[1])
+        elif arg == "--critical-high-only":
+            if idx + 1 < len(cm_args) and cm_args[idx + 1].strip().lower() in _BOOL_LITERALS:
+                critical_high_only = _parse_bool_flag(arg, cm_args[idx + 1])
+                idx += 1
+            else:
+                critical_high_only = True
+        elif arg.startswith("--critical-high-only="):
+            critical_high_only = _parse_bool_flag("--critical-high-only", arg.split("=", 1)[1])
+        elif arg == "--no-critical-high-only":
+            critical_high_only = False
         elif not arg.startswith("-") and target is None:
             target = arg
         else:
             extra_cm_flags.append(arg)
+        idx += 1
     print(f"cm-ci: cm find {' '.join(cm_args)}".rstrip(), flush=True)
     try:
         if is_complete_scan:
@@ -267,6 +303,7 @@ def cmd_find(argv: List[str]) -> int:
                 target_or_id=target,
                 extra_flags=extra_cm_flags or None,
                 complete_runs=complete_runs,
+                critical_high_only=critical_high_only,
             )
         else:
             find_kwargs: Dict[str, Any] = {

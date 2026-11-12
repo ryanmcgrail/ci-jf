@@ -684,6 +684,228 @@ class CompleteScanTests(unittest.TestCase):
       self.assertEqual(rows[1], ("fid-prng", "s1-hash", "hashing.java", 71, 71))
       self.assertEqual(rows[2], ("fid-same", "s0-same", "same_sink.py", 10, 12))
 
+  def test_critical_high_only_skips_files_with_only_medium_or_low_findings(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      repo_dir = os.path.join(tmpdir, "repo")
+      cm_home = os.path.join(tmpdir, "cm_home")
+      os.makedirs(repo_dir)
+      os.makedirs(cm_home)
+      db_path = os.path.join(cm_home, "state.db")
+      con = sqlite3.connect(db_path)
+      con.execute(
+          "CREATE TABLE sessions ("
+          "session_id TEXT PRIMARY KEY, "
+          "session_type TEXT, "
+          "status TEXT, "
+          "target TEXT, "
+          "created_at TEXT, "
+          "updated_at TEXT, "
+          "project_root TEXT, "
+          "parent_session_id TEXT)"
+      )
+      con.execute(
+          "CREATE TABLE findings ("
+          "finding_id TEXT PRIMARY KEY, "
+          "session_id TEXT, "
+          "status TEXT, "
+          "severity TEXT, "
+          "file_path TEXT, "
+          "vuln_type TEXT, "
+          "start_line INTEGER, "
+          "end_line INTEGER, "
+          "snippet TEXT)"
+      )
+      con.commit()
+      con.close()
+
+      cm = CodeMender(
+          cm_binary="cm",
+          repo_dir=repo_dir,
+          env={"CM_HOME": cm_home},
+      )
+
+      find_scan_num = 0
+      observed_cmignore = []
+
+      def fake_run_command(cmd, **kwargs):
+        nonlocal find_scan_num
+        if cmd[:2] == ["cm", "report"]:
+          return types.SimpleNamespace(returncode=0, stdout="[]", stderr="")
+        if cmd[:2] == ["cm", "find"]:
+          cmignore_path = os.path.join(repo_dir, ".cmignore")
+          if os.path.exists(cmignore_path):
+            with open(cmignore_path, "r", encoding="utf-8") as fh:
+              observed_cmignore.append(fh.read())
+          else:
+            observed_cmignore.append(None)
+
+          db_con = sqlite3.connect(db_path)
+          if find_scan_num == 0:
+            # Pass 1:
+            # - `med_only.py` (promoted parent) has 1 MEDIUM finding -> should get count 0 under critical_high_only=True.
+            # - `low_only.py` has 1 LOW finding -> should get count 0 under critical_high_only=True.
+            # - `high_vuln.py` has 1 HIGH finding -> should get count 1 and run in Pass 2.
+            db_con.executemany(
+                "INSERT INTO sessions VALUES (?, 'FIND', 'COMPLETED', ?, 't0', 't0', ?, ?)",
+                [
+                    ("parent-0", repo_dir, repo_dir, ""),
+                    ("s0-low", "low_only.py", repo_dir, "parent-0"),
+                    ("s0-high", "high_vuln.py", repo_dir, "parent-0"),
+                ],
+            )
+            db_con.executemany(
+                "INSERT INTO findings VALUES (?, ?, 'OPEN', ?, ?, 'CWE-79', ?, ?, ?)",
+                [
+                    ("f0-med", "parent-0", "MEDIUM", "med_only.py", 10, 12, "med_sink()"),
+                    ("f0-low", "s0-low", "LOW", "low_only.py", 20, 22, "low_sink()"),
+                    ("f0-high", "s0-high", "HIGH", "high_vuln.py", 30, 32, "high_sink()"),
+                ],
+            )
+          elif find_scan_num == 1:
+            # Pass 2: `high_vuln.py` runs and only finds 1 MEDIUM issue -> should now get count 0 and stop.
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s1-high', 'FIND', 'COMPLETED', 'high_vuln.py', 't1', 't1', ?, 'parent-1')",
+                (repo_dir,),
+            )
+            db_con.execute(
+                "INSERT INTO findings VALUES ('f1-med', 's1-high', 'OPEN', 'MEDIUM', 'high_vuln.py', 'CWE-209', 45, 47, 'err_sink()')"
+            )
+          else:
+            raise AssertionError("Should have converged after Pass 2 when no CRITICAL/HIGH findings were found")
+          db_con.commit()
+          db_con.close()
+          find_scan_num += 1
+          return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+      with patch("codemender.run_command", side_effect=fake_run_command) as mock_run:
+        run_complete_scan(cm, complete_runs=5, critical_high_only=True)
+
+      self.assertEqual(find_scan_num, 2)
+      self.assertEqual(
+          observed_cmignore,
+          [None, "low_only.py\nmed_only.py\n"],
+      )
+      self.assertEqual(
+          get_latest_session_finding_counts(cm, critical_high_only=True),
+          {"med_only.py": 0, "low_only.py": 0, "high_vuln.py": 0},
+      )
+      self.assertEqual(
+          get_latest_session_finding_counts(cm, critical_high_only=False),
+          {"med_only.py": 1, "low_only.py": 1, "high_vuln.py": 1},
+      )
+      find_cmds = [
+          call.args[0]
+          for call in mock_run.call_args_list
+          if call.args[0][:2] == ["cm", "find"]
+      ]
+      for cmd in find_cmds:
+        self.assertIn(
+            "focusing on the most critical security issues (CRITICAL and HIGH severity)",
+            cmd[cmd.index("--context") + 1],
+        )
+
+  def test_inter_pass_duplicates_upgrade_severity_without_downgrading_or_keeping_file_active(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      repo_dir = os.path.join(tmpdir, "repo")
+      cm_home = os.path.join(tmpdir, "cm_home")
+      os.makedirs(repo_dir)
+      os.makedirs(cm_home)
+      db_path = os.path.join(cm_home, "state.db")
+      con = sqlite3.connect(db_path)
+      con.execute(
+          "CREATE TABLE sessions ("
+          "session_id TEXT PRIMARY KEY, "
+          "session_type TEXT, "
+          "status TEXT, "
+          "target TEXT, "
+          "created_at TEXT, "
+          "updated_at TEXT, "
+          "project_root TEXT, "
+          "parent_session_id TEXT)"
+      )
+      con.execute(
+          "CREATE TABLE findings ("
+          "finding_id TEXT PRIMARY KEY, "
+          "session_id TEXT, "
+          "status TEXT, "
+          "severity TEXT, "
+          "file_path TEXT, "
+          "vuln_type TEXT, "
+          "start_line INTEGER, "
+          "end_line INTEGER, "
+          "snippet TEXT, "
+          "finding_json TEXT)"
+      )
+      con.commit()
+      con.close()
+
+      cm = CodeMender(
+          cm_binary="cm",
+          repo_dir=repo_dir,
+          env={"CM_HOME": cm_home},
+      )
+
+      find_scan_num = 0
+
+      def fake_run_command(cmd, **kwargs):
+        nonlocal find_scan_num
+        if cmd[:2] == ["cm", "report"]:
+          return types.SimpleNamespace(returncode=0, stdout="[]", stderr="")
+        if cmd[:2] == ["cm", "find"]:
+          db_con = sqlite3.connect(db_path)
+          if find_scan_num == 0:
+            # Pass 1: `sqli.java` has:
+            # - `f0-crit` (CRITICAL, line 10..12) so the file stays active for Pass 2
+            # - `f0-wobble` (MEDIUM, line 50..55)
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s0-sqli', 'FIND', 'COMPLETED', 'sqli.java', 't0', 't0', ?, 'parent-0')",
+                (repo_dir,),
+            )
+            db_con.executemany(
+                "INSERT INTO findings VALUES (?, 's0-sqli', 'OPEN', ?, 'sqli.java', 'CWE-89', ?, ?, ?, ?)",
+                [
+                    ("f0-crit", "CRITICAL", 10, 12, "stmt.execute(q1)", '{"finding_id":"f0-crit","severity":"CRITICAL"}'),
+                    ("f0-wobble", "MEDIUM", 50, 55, "stmt.execute(q2)", '{"finding_id":"f0-wobble","severity":"MEDIUM"}'),
+                ],
+            )
+          elif find_scan_num == 1:
+            # Pass 2: `sqli.java` re-reports `f0-wobble` as a new row `f1-wobble-dup` with HIGH severity,
+            # and overwrites `f0-crit` in-place with HIGH severity (attempting a downgrade from CRITICAL).
+            # Neither should count as a new finding in Pass 2, and severities should end up CRITICAL and HIGH.
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s1-sqli', 'FIND', 'COMPLETED', 'sqli.java', 't1', 't1', ?, 'parent-1')",
+                (repo_dir,),
+            )
+            db_con.execute(
+                "INSERT INTO findings VALUES ('f1-wobble-dup', 's1-sqli', 'OPEN', 'HIGH', 'sqli.java', 'CWE-89', 51, 54, 'stmt.execute(q2)', '{\"finding_id\":\"f1-wobble-dup\",\"severity\":\"HIGH\"}')"
+            )
+            db_con.execute(
+                "UPDATE findings SET session_id = 's1-sqli', severity = 'HIGH', finding_json = '{\"finding_id\":\"f0-crit\",\"severity\":\"HIGH\"}' WHERE finding_id = 'f0-crit'"
+            )
+          else:
+            raise AssertionError("Should have converged after Pass 2 because Pass 2 only had duplicates")
+          db_con.commit()
+          db_con.close()
+          find_scan_num += 1
+          return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+      with patch("codemender.run_command", side_effect=fake_run_command):
+        run_complete_scan(cm, complete_runs=5, critical_high_only=True)
+
+      self.assertEqual(find_scan_num, 2)
+      rows = cm.db.execute(
+          "SELECT finding_id, session_id, severity, finding_json FROM findings ORDER BY finding_id"
+      ).fetchall()
+      self.assertEqual(
+          rows,
+          [
+              ("f0-crit", "s0-sqli", "CRITICAL", '{"finding_id": "f0-crit", "severity": "CRITICAL"}'),
+              ("f0-wobble", "s0-sqli", "HIGH", '{"finding_id": "f0-wobble", "severity": "HIGH"}'),
+          ],
+      )
+
 
 if __name__ == "__main__":
   unittest.main()

@@ -322,6 +322,39 @@ class TestCmCi(unittest.TestCase):
                 target_or_id=None,
                 extra_flags=["--deep-workers=16"],
                 complete_runs=3,
+                critical_high_only=True,
+            )
+
+    def test_cmd_find_complete_respects_critical_high_only_flag_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_dir = os.path.join(tmpdir, ".codemender")
+            mock_cm = MockCodeMender(repo_dir=os.path.realpath(tmpdir))
+            with (
+                patch.object(cm_ci, "need"),
+                patch.object(cm_ci, "check_config", return_value=True),
+                patch.object(cm_ci, "CodeMender", return_value=mock_cm),
+                patch.object(cm_ci, "run_complete_scan") as mock_complete_scan,
+                patch("sys.stdout", new_callable=io.StringIO),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                rc = cm_ci.cmd_find(
+                    [
+                        "--repo",
+                        tmpdir,
+                        "--out-dir",
+                        out_dir,
+                        "--complete",
+                        "--critical-high-only=false",
+                        "--deep-workers=16",
+                    ]
+                )
+            self.assertEqual(rc, 0)
+            mock_complete_scan.assert_called_once_with(
+                mock_cm,
+                target_or_id=None,
+                extra_flags=["--deep-workers=16"],
+                complete_runs=5,
+                critical_high_only=False,
             )
 
     @parameterized(
