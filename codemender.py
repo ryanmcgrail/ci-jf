@@ -31,10 +31,20 @@ _FIND_CONTEXT_FOR_FIRST_PASS = """\
 - Audit the entire target file top to bottom and report all distinct vulnerabilities in a single pass (at most one finding per code block/line range).
 - Scope each finding's snippet and line range strictly to the minimal vulnerable sink lines, never the entire enclosing function or method.
 - Collect all candidate issues in the target file before making cross-file `grep_search` or `read_file` calls (at most 2-3 turns); always inspect cross-file consumers or repo-local security helpers/middlewares when the target file generates/encodes tokens, state, or cookies or delegates authentication, authorization, or sanitization before concluding 0 vulnerabilities.
-- Always report hardcoded secrets/salts/keys or weak cryptographic/encoding primitives directly in the target file where they are used, rather than deferring the finding to another file that decodes or verifies the value.
-- In frontend routers, guards, and components, report client-side-only access control or unverified token decoding, obfuscated or hidden privileged routes, and exposed debug or sandbox routes.
-- When database/ORM records are serialized into tokens, sessions, or responses, inspect the model schema for remaining sensitive fields (such as password hashes or secrets, even if another field was cleared), and report cleartext database storage of authentication secrets or keys.
 - Ignore test files, package manifests, dependency directories, and `.codemender` files.
+
+# Vulnerabilities to Report
+- **Secrets & Cryptography:** Always report hardcoded secrets, passwords, API keys, salts, or cryptographic keys and weak cryptographic, hashing, or encoding primitives directly in the target file where they are defined or used, rather than deferring the finding to another file that decodes or verifies the value.
+- **Frontend (Components, Routers, Guards, Services):**
+  - DOM XSS and unsafe rendering sinks (`innerHTML`, `outerHTML`, `document.write`, `bypassSecurityTrust*`, `dangerouslySetInnerHTML`, `v-html`, `eval`), open redirects, and unvalidated `postMessage` or URL handling.
+  - Client-side-only authentication, authorization, or rate-limiting/CAPTCHA enforcement (relying on `localStorage`/`sessionStorage`, decoding JWTs without server verification, deriving or verifying credentials/OAuth passwords client-side, or mutating client auth state before server confirmation).
+  - Privileged or account-management routes missing guards or guarded only by client-decodeable state, obfuscated/hidden route matchers (security through obscurity), and exposed debug, sandbox, or unreleased routes.
+  - Transmitting passwords, tokens, or sensitive credentials in URL query parameters (such as HTTP `GET` requests) or exposing secrets in client-side source files or storage.
+- **Backend (Routes, Controllers, Middleware, Models, File/Network Handlers):**
+  - Injection (SQL, NoSQL, command, template, XXE, XPath), SSRF, unsafe deserialization, prototype pollution, ReDoS on untrusted input, and path traversal or static file serving with incomplete path sanitization (such as checking only `.includes('/')` or `..` without canonical path containment or null-byte filtering).
+  - Missing or bypassable authentication/authorization on endpoints or file/log/key servers, IDOR, mass assignment, privilege escalation (trusting client-supplied user IDs, roles, prices, or wallet addresses without server-side session or cryptographic signature verification), and CSRF on state-changing endpoints.
+  - Serialization of database/ORM records into JWTs, sessions, or responses without stripping all sensitive model fields (inspect the model schema for remaining fields like password hashes, TOTP secrets, or security answers even if another field was cleared), and cleartext database storage of authentication secrets or keys.
+  - Unbounded resource allocation (such as spawning persistent WebSocket/network providers or event listeners per request without cleanup or rate limiting), overly permissive CORS/security headers, and sensitive error, stack trace, metrics, or directory disclosure.
 
 # CWE Requirements
 - Assign exactly one CWE ID (`CWE-<number>`) to each finding; omitting a CWE ID or assigning multiple is invalid.
