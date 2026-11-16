@@ -818,6 +818,105 @@ class TestCmCi(unittest.TestCase):
             self.assertIn("Stored XSS", out_all_text)
             self.assertIn("Reopened Log Leak", out_all_text)
 
+    def test_cmd_find_monotonic_severity_across_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_dir = os.path.join(tmpdir, ".codemender")
+            known_path = os.path.join(out_dir, "known_findings.json")
+            os.makedirs(out_dir)
+
+            initial_findings = [
+                Finding(
+                    finding_id="f-inplace-high",
+                    file_path="src/a.py",
+                    vuln_type="CWE-89",
+                    start_line=10,
+                    end_line=15,
+                    severity="HIGH",
+                    status="OPEN",
+                ),
+                Finding(
+                    finding_id="f-dup-med",
+                    file_path="src/b.py",
+                    vuln_type="CWE-78",
+                    start_line=20,
+                    end_line=25,
+                    severity="MEDIUM",
+                    status="OPEN",
+                ),
+                Finding(
+                    finding_id="f-dup-crit",
+                    file_path="src/c.py",
+                    vuln_type="CWE-94",
+                    start_line=30,
+                    end_line=35,
+                    severity="CRITICAL",
+                    status="OPEN",
+                ),
+            ]
+            with open(known_path, "w", encoding="utf-8") as fh:
+                json.dump([f.to_dict() for f in initial_findings], fh)
+
+            mock_cm = MockCodeMender(
+                repo_dir=os.path.realpath(tmpdir),
+                initial_findings=initial_findings,
+            )
+
+            orig_find = mock_cm.find
+
+            def _find_with_wobble(*args: Any, **kwargs: Any) -> Any:
+                res = orig_find(*args, **kwargs)
+                # Simulate cm overwriting `f-inplace-high` down to MEDIUM in state.db
+                mock_cm.db.execute(
+                    "UPDATE findings SET severity = 'MEDIUM' WHERE finding_id = 'f-inplace-high'"
+                )
+                mock_cm.db.commit()
+                return res
+
+            mock_cm.schedule_findings(
+                [
+                    Finding(
+                        finding_id="f-dup-med-upgraded",
+                        file_path="src/b.py",
+                        vuln_type="CWE-78",
+                        start_line=21,
+                        end_line=24,
+                        severity="HIGH",
+                        status="OPEN",
+                    ),
+                    Finding(
+                        finding_id="f-dup-crit-downgrade-attempt",
+                        file_path="src/c.py",
+                        vuln_type="CWE-94",
+                        start_line=31,
+                        end_line=34,
+                        severity="LOW",
+                        status="OPEN",
+                    ),
+                ]
+            )
+
+            with (
+                patch.object(cm_ci, "need"),
+                patch.object(cm_ci, "check_config", return_value=True),
+                patch.object(cm_ci, "CodeMender", return_value=mock_cm),
+                patch.object(mock_cm, "find", side_effect=_find_with_wobble),
+                patch("sys.stdout", new_callable=io.StringIO),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                rc = cm_ci.cmd_find(["--repo", tmpdir, "--out-dir", out_dir, "--deep"])
+
+            self.assertEqual(rc, 0)
+            db_sevs = {f.finding_id: f.severity for f in mock_cm.list_findings()}
+            self.assertEqual(db_sevs["f-inplace-high"], "HIGH")
+            self.assertEqual(db_sevs["f-dup-med"], "HIGH")
+            self.assertEqual(db_sevs["f-dup-crit"], "CRITICAL")
+
+            with open(known_path, encoding="utf-8") as fh:
+                known_sevs = {d["finding_id"]: d["severity"] for d in json.load(fh)}
+            self.assertEqual(known_sevs["f-inplace-high"], "HIGH")
+            self.assertEqual(known_sevs["f-dup-med"], "HIGH")
+            self.assertEqual(known_sevs["f-dup-crit"], "CRITICAL")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -45,15 +45,22 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from codemender import CodeMender, ScanMode
-from complete_scan import run_complete_scan
+from complete_scan import (
+    _reconcile_overwritten_findings,
+    _snapshot_db_findings,
+    run_complete_scan,
+)
 from deduplication import (
     ACTIVE,
     dedup,
+    higher_severity,
     is_critical_high,
     load_findings,
     remove_duplicates_in_db,
+    severity_rank,
     status_of,
     summary_line,
+    upgrade_finding_severity_in_db,
 )
 from finding import Finding
 
@@ -259,6 +266,7 @@ def cmd_find(argv: List[str]) -> int:
 
     before = ctx.report()
     before_ids = {str(f.finding_id or "") for f in before}
+    pre_find_rows = _snapshot_db_findings(ctx.cm)
     scan_mode = ScanMode.DEEP
     is_complete_scan = False
     target: Optional[str] = None
@@ -317,6 +325,7 @@ def cmd_find(argv: List[str]) -> int:
             if critical_high_only:
                 find_kwargs["critical_high_only"] = True
             ctx.cm.find(**find_kwargs)
+            _reconcile_overwritten_findings(ctx.cm, pre_find_rows, restore_session_id=False)
     except RuntimeError as e:
         print(f"cm-ci: {e}", file=sys.stderr)
         m = re.search(r"exit code (\d+)", str(e))
@@ -366,6 +375,17 @@ def cmd_find(argv: List[str]) -> int:
     print(f"cm-ci: → {new_path} (findings = file these; reopened = fixed before, back again; suppressed_duplicates = already known)")
 
     r = remove_duplicates_in_db(ctx, res["suppressed_duplicates"])
+    if ctx.cm.db is not None:
+        try:
+            db_cols = {row[1] for row in ctx.cm.db.execute("PRAGMA table_info(findings)")}
+            upgraded_any = False
+            for f in res["findings"] + res["reopened"]:
+                if f.finding_id and f.severity:
+                    upgraded_any |= upgrade_finding_severity_in_db(ctx.cm.db, db_cols, f.finding_id, f.severity)
+            if upgraded_any:
+                ctx.cm.db.commit()
+        except Exception:
+            pass
     if r is not None:
         removed, marked = r
         extra = f" ({marked} referenced by a patch kept as DISMISSED)" if marked else ""
@@ -374,14 +394,29 @@ def cmd_find(argv: List[str]) -> int:
         print(f"cm-ci: note — state.db not found, duplicates only recorded in {new_path}")
 
     if not existing_path and not opts["--no-update"]:
-        known_ids = {str(f.finding_id) for f in known}
+        after_by_id = {str(f.finding_id): f for f in ctx.report() if f.finding_id}
+        upgraded_known: List[Finding] = []
+        for kf in known:
+            best_sev = kf.severity
+            cur_db = after_by_id.get(str(kf.finding_id))
+            if cur_db is not None:
+                best_sev = higher_severity(best_sev, cur_db.severity)
+            for d in res["suppressed_duplicates"]:
+                if str(d.duplicate_of or "") == str(kf.finding_id) or (
+                    kf.gh_issue_number is not None and str(d.duplicate_of or "") == str(kf.gh_issue_number)
+                ):
+                    best_sev = higher_severity(best_sev, d.severity)
+            if best_sev and severity_rank(best_sev) < severity_rank(kf.severity):
+                kf = Finding(kf.to_dict(), severity=best_sev)
+            upgraded_known.append(kf)
+        known_ids = {str(f.finding_id) for f in upgraded_known}
         added = [f for f in res["findings"] + res["reopened"] if str(f.finding_id) not in known_ids]
-        write_json(known_path, known + added)
+        write_json(known_path, upgraded_known + added)
         if critical_high_only:
             added_ch = [f for f in added if is_critical_high(f)]
-            print(f"cm-ci: updated {known_path} (+{len(added_ch)} new CRITICAL/HIGH, {len(known) + len(added)} total entries) — commit it so the next run knows these")
+            print(f"cm-ci: updated {known_path} (+{len(added_ch)} new CRITICAL/HIGH, {len(upgraded_known) + len(added)} total entries) — commit it so the next run knows these")
         else:
-            print(f"cm-ci: updated {known_path} ({len(known) + len(added)} entries) — commit it so the next run knows these")
+            print(f"cm-ci: updated {known_path} ({len(upgraded_known) + len(added)} entries) — commit it so the next run knows these")
 
     shown_reopened = [f for f in res["reopened"] if is_critical_high(f)] if critical_high_only else res["reopened"]
     shown_findings = [f for f in res["findings"] if is_critical_high(f)] if critical_high_only else res["findings"]
@@ -546,7 +581,11 @@ def cmd_fix(argv: List[str]) -> int:
         for f in known:
             cur = by_id.get(str(f.finding_id))
             if cur is not None:
-                f = Finding(f.to_dict(), status=cur.status)
+                best_sev = higher_severity(f.severity, cur.severity)
+                updates: Dict[str, Any] = {"status": cur.status}
+                if best_sev:
+                    updates["severity"] = best_sev
+                f = Finding(f.to_dict(), **updates)
             updated_known.append(f)
         write_json(known_path, updated_known)
         sh("git", "add", known_path)

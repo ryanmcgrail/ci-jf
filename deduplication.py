@@ -15,6 +15,14 @@ GITHUB_MARKER_RE = re.compile(r"<!--\s*cm-dedup:v1:(\{.*?\})\s*-->", re.DOTALL)
 ACTIVE = {"OPEN", "REOPENED", "VERIFIED", ""}
 RESOLVED = {"FIXED", "CLOSED"}
 CRITICAL_HIGH_SEVERITIES = frozenset({"CRITICAL", "HIGH"})
+SEVERITY_RANK = {
+    "CRITICAL": 0,
+    "HIGH": 1,
+    "MEDIUM": 2,
+    "LOW": 3,
+    "INFO": 4,
+    "INFORMATIONAL": 4,
+}
 CM_TWIN_REASONS = (
     "Duplicate un-fingerprinted streamed entry",
     "Duplicate finding entry",
@@ -118,21 +126,53 @@ def status_of(f: Finding) -> str:
     return str(f.status or "OPEN").upper()
 
 
+def severity_rank(severity: Any) -> int:
+    return SEVERITY_RANK.get(str(severity or "").strip().upper(), 99)
+
+
+def higher_severity(sev_a: Any, sev_b: Any) -> Optional[str]:
+    """Returns whichever severity is higher (e.g. HIGH over MEDIUM), never downgrading."""
+    norm_a = str(sev_a or "").strip().upper()
+    norm_b = str(sev_b or "").strip().upper()
+    rank_a = severity_rank(norm_a)
+    rank_b = severity_rank(norm_b)
+    if rank_b < rank_a:
+        return norm_b or None
+    if rank_a < 99:
+        return norm_a
+    return norm_a or norm_b or None
+
+
 def dup_id(m: Finding) -> Any:
     return m.finding_id or m.gh_issue_number or m.file_path
+
+
+def _upgrade_list_entry_severity(items: List[Finding], target: Finding, new_sev: str) -> None:
+    target_key = dup_id(target)
+    for idx, item in enumerate(items):
+        if item is target or (target_key and dup_id(item) == target_key):
+            if severity_rank(new_sev) < severity_rank(item.severity):
+                items[idx] = Finding(item.to_dict(), severity=new_sev)
 
 
 def dedup(existing: List[Finding], current: List[Finding], repo_root: str) -> Dict[str, List[Finding]]:
     """Partition `current` against `existing`. A match on an active entry → suppressed
     duplicate; a match only on a FIXED/CLOSED entry → reopened (regression, not noise).
     Preference among several matches: ACTIVE > FIXED/CLOSED > DISMISSED, so a dismissed
-    twin never hides a regression of a fixed finding."""
+    twin never hides a regression of a fixed finding. Severities can only increase over time."""
     pool: List[Finding] = []
     res: Dict[str, List[Finding]] = {"findings": [], "reopened": [], "suppressed_duplicates": []}
     for ex in existing:
         if status_of(ex) in ACTIVE:
-            m = next((p for p in pool if status_of(p) in ACTIVE and is_duplicate(p, ex, repo_root)), None)
-            if m is not None:
+            m_idx = next(
+                (idx for idx, p in enumerate(pool) if status_of(p) in ACTIVE and is_duplicate(p, ex, repo_root)),
+                None,
+            )
+            if m_idx is not None:
+                m = pool[m_idx]
+                best = higher_severity(m.severity, ex.severity)
+                if best and severity_rank(best) < severity_rank(m.severity):
+                    pool[m_idx] = Finding(m.to_dict(), severity=best)
                 marker = make_github_marker(ex, repo_root)
                 res["suppressed_duplicates"].append(
                     Finding(ex.to_dict(), github_marker=marker, duplicate_of=dup_id(m))
@@ -152,10 +192,27 @@ def dedup(existing: List[Finding], current: List[Finding], repo_root: str) -> Di
             res["findings"].append(e)
             pool.append(e)
         elif status_of(m) in RESOLVED:
-            e = Finding(cur.to_dict(), github_marker=marker, duplicate_of=dup_id(m))
+            best_sev = cur.severity
+            for p in matches:
+                best_sev = higher_severity(p.severity, best_sev)
+            reopened_kwargs: Dict[str, Any] = {
+                "github_marker": marker,
+                "duplicate_of": dup_id(m),
+            }
+            if best_sev:
+                reopened_kwargs["severity"] = best_sev
+            e = Finding(cur.to_dict(), **reopened_kwargs)
             res["reopened"].append(e)
             pool.append(e)
         else:
+            best_sev = m.severity
+            for p in matches:
+                best_sev = higher_severity(p.severity, best_sev)
+            best_sev = higher_severity(best_sev, cur.severity)
+            if best_sev and severity_rank(best_sev) < severity_rank(m.severity):
+                _upgrade_list_entry_severity(pool, m, best_sev)
+                _upgrade_list_entry_severity(res["findings"], m, best_sev)
+                _upgrade_list_entry_severity(res["reopened"], m, best_sev)
             e = Finding(cur.to_dict(), github_marker=marker, duplicate_of=dup_id(m))
             res["suppressed_duplicates"].append(e)
     return res
@@ -189,6 +246,41 @@ def summary_line(
     )
 
 
+def upgrade_finding_severity_in_db(
+    con: sqlite3.Connection,
+    cols: set,
+    finding_id: Any,
+    candidate_severity: Any,
+) -> bool:
+    """Upgrades a finding's severity in state.db only if candidate_severity is strictly higher."""
+    fid = str(finding_id or "").strip()
+    cand = str(candidate_severity or "").strip().upper()
+    if not fid or not cand or "severity" not in cols or severity_rank(cand) >= 99:
+        return False
+    has_fjson = "finding_json" in cols
+    select_cols = "severity, finding_json" if has_fjson else "severity"
+    row = con.execute(f"SELECT {select_cols} FROM findings WHERE finding_id=?", (fid,)).fetchone()
+    if row is None:
+        return False
+    cur_sev = str(row[0] or "").strip().upper()
+    if severity_rank(cand) >= severity_rank(cur_sev):
+        return False
+    sets = ["severity=?"]
+    params: List[Any] = [cand]
+    if has_fjson and isinstance(row[1], str) and row[1].strip():
+        try:
+            parsed = json.loads(row[1])
+            if isinstance(parsed, dict) and parsed:
+                parsed["severity"] = cand
+                sets.append("finding_json=?")
+                params.append(json.dumps(parsed))
+        except json.JSONDecodeError:
+            pass
+    params.append(fid)
+    con.execute(f"UPDATE findings SET {', '.join(sets)} WHERE finding_id=?", params)
+    return True
+
+
 def remove_duplicates_in_db(ctx: Any, dups: List[Finding]) -> Optional[Tuple[int, int]]:
     """Drop duplicate rows from CodeMender's state.db so `cm report` (which lists every
     status) shows each bug once: the cross-run duplicates found here plus the DISMISSED
@@ -213,6 +305,8 @@ def remove_duplicates_in_db(ctx: Any, dups: List[Finding]) -> Optional[Tuple[int
         removed = marked = 0
         now = now_rfc3339()
         for d in dups:
+            if d.duplicate_of and d.severity:
+                upgrade_finding_severity_in_db(con, cols, d.duplicate_of, d.severity)
             fid = d.finding_id
             cur = con.execute(f"DELETE FROM findings WHERE finding_id=? AND NOT ({refs})", (fid,))
             if cur.rowcount:

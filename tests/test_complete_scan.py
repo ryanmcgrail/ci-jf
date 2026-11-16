@@ -1098,6 +1098,112 @@ class CompleteScanTests(unittest.TestCase):
           [[{"file_path": "app.py", "snippet": "cur_sink()"}]],
       )
 
+  def test_preexisting_findings_can_only_increase_severity_never_decrease(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      repo_dir = os.path.join(tmpdir, "repo")
+      cm_home = os.path.join(tmpdir, "cm_home")
+      os.makedirs(repo_dir)
+      os.makedirs(cm_home)
+      db_path = os.path.join(cm_home, "state.db")
+      con = sqlite3.connect(db_path)
+      con.execute(
+          "CREATE TABLE sessions ("
+          "session_id TEXT PRIMARY KEY, "
+          "session_type TEXT, "
+          "status TEXT, "
+          "target TEXT, "
+          "created_at TEXT, "
+          "updated_at TEXT, "
+          "project_root TEXT, "
+          "parent_session_id TEXT)"
+      )
+      con.execute(
+          "CREATE TABLE findings ("
+          "finding_id TEXT PRIMARY KEY, "
+          "session_id TEXT, "
+          "status TEXT, "
+          "severity TEXT, "
+          "file_path TEXT, "
+          "vuln_type TEXT, "
+          "start_line INTEGER, "
+          "end_line INTEGER, "
+          "snippet TEXT)"
+      )
+      con.execute(
+          "INSERT INTO sessions VALUES ('s-prior', 'FIND', 'COMPLETED', 'auth.py', 't-prior', 't-prior', ?, 'parent-prior')",
+          (repo_dir,),
+      )
+      con.executemany(
+          "INSERT INTO findings VALUES (?, 's-prior', 'OPEN', ?, 'auth.py', ?, ?, ?, ?)",
+          [
+              ("f-prior-high", "HIGH", "CWE-89", 10, 15, "sql_sink()"),
+              ("f-prior-med", "MEDIUM", "CWE-78", 30, 35, "cmd_sink()"),
+              ("f-prior-crit", "CRITICAL", "CWE-94", 50, 55, "eval_sink()"),
+          ],
+      )
+      con.commit()
+      con.close()
+
+      cm = CodeMender(
+          cm_binary="cm",
+          repo_dir=repo_dir,
+          env={"CM_HOME": cm_home},
+      )
+
+      find_scan_num = 0
+
+      def fake_run_command(cmd, **kwargs):
+        nonlocal find_scan_num
+        if cmd[:2] == ["cm", "report"]:
+          return types.SimpleNamespace(returncode=0, stdout="[]", stderr="")
+        if cmd[:2] == ["cm", "find"]:
+          db_con = sqlite3.connect(db_path)
+          if find_scan_num == 0:
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s0-auth', 'FIND', 'COMPLETED', 'auth.py', 't0', 't0', ?, 'parent-0')",
+                (repo_dir,),
+            )
+            # 1) Overwrite `f-prior-high` in-place on Pass 1 with MEDIUM -> must stay HIGH
+            db_con.execute(
+                "UPDATE findings SET session_id = 's0-auth', severity = 'MEDIUM' WHERE finding_id = 'f-prior-high'"
+            )
+            # 2) Overwrite `f-prior-med` in-place on Pass 1 with HIGH -> must upgrade to HIGH
+            db_con.execute(
+                "UPDATE findings SET session_id = 's0-auth', severity = 'HIGH' WHERE finding_id = 'f-prior-med'"
+            )
+            # 3) New finding_id duplicating `f-prior-crit` (CRITICAL) rated LOW -> must upgrade to CRITICAL
+            db_con.execute(
+                "INSERT INTO findings VALUES ('f0-new-dup', 's0-auth', 'OPEN', 'LOW', 'auth.py', 'CWE-94', 51, 54, 'eval_sink()')"
+            )
+          elif find_scan_num == 1:
+            # Pass 2 finds 0 new vulnerabilities (attempts another downgrade on f-prior-med to LOW)
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s1-auth', 'FIND', 'COMPLETED', 'auth.py', 't1', 't1', ?, 'parent-1')",
+                (repo_dir,),
+            )
+            db_con.execute(
+                "UPDATE findings SET session_id = 's1-auth', severity = 'LOW' WHERE finding_id = 'f-prior-med'"
+            )
+          else:
+            raise AssertionError("Should have converged after Pass 2")
+          db_con.commit()
+          db_con.close()
+          find_scan_num += 1
+          return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+      with patch("codemender.run_command", side_effect=fake_run_command):
+        run_complete_scan(cm, complete_runs=5, critical_high_only=True)
+
+      self.assertEqual(find_scan_num, 2)
+      sevs = dict(
+          cm.db.execute("SELECT finding_id, severity FROM findings").fetchall()
+      )
+      self.assertEqual(sevs["f-prior-high"], "HIGH")
+      self.assertEqual(sevs["f-prior-med"], "HIGH")
+      self.assertEqual(sevs["f-prior-crit"], "CRITICAL")
+      self.assertEqual(sevs["f0-new-dup"], "CRITICAL")
+
 
 if __name__ == "__main__":
   unittest.main()

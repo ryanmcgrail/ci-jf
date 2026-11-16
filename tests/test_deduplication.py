@@ -528,6 +528,111 @@ class TestDeduplication(unittest.TestCase):
             self.assertEqual(findings["keep-open"].status, "OPEN")
             self.assertIsNone(findings["keep-open"].dismiss_reason)
 
+    def test_severity_only_increases_and_never_decreases(self) -> None:
+        self.assertEqual(deduplication.higher_severity("MEDIUM", "HIGH"), "HIGH")
+        self.assertEqual(deduplication.higher_severity("HIGH", "MEDIUM"), "HIGH")
+        self.assertEqual(deduplication.higher_severity("CRITICAL", "LOW"), "CRITICAL")
+        self.assertEqual(deduplication.higher_severity("LOW", "CRITICAL"), "CRITICAL")
+        self.assertEqual(deduplication.higher_severity("HIGH", None), "HIGH")
+        self.assertEqual(deduplication.higher_severity(None, "MEDIUM"), "MEDIUM")
+
+        existing = [
+            Finding(
+                finding_id="open-med",
+                file_path="src/a.py",
+                vuln_type="CWE-89",
+                start_line=10,
+                end_line=15,
+                severity="MEDIUM",
+                status="OPEN",
+            ),
+            Finding(
+                finding_id="open-high",
+                file_path="src/b.py",
+                vuln_type="CWE-78",
+                start_line=20,
+                end_line=25,
+                severity="HIGH",
+                status="OPEN",
+            ),
+            Finding(
+                finding_id="fixed-high",
+                file_path="src/c.py",
+                vuln_type="CWE-22",
+                start_line=30,
+                end_line=35,
+                severity="HIGH",
+                status="FIXED",
+            ),
+            Finding(
+                finding_id="fixed-med",
+                file_path="src/d.py",
+                vuln_type="CWE-79",
+                start_line=40,
+                end_line=45,
+                severity="MEDIUM",
+                status="FIXED",
+            ),
+        ]
+        current = [
+            Finding(
+                finding_id="dup-upgrades-to-high",
+                file_path="src/a.py",
+                vuln_type="CWE-89",
+                start_line=11,
+                end_line=14,
+                severity="HIGH",
+                status="OPEN",
+            ),
+            Finding(
+                finding_id="dup-cannot-downgrade-to-med",
+                file_path="src/b.py",
+                vuln_type="CWE-78",
+                start_line=21,
+                end_line=24,
+                severity="MEDIUM",
+                status="OPEN",
+            ),
+            Finding(
+                finding_id="reopen-cannot-downgrade",
+                file_path="src/c.py",
+                vuln_type="CWE-22",
+                start_line=31,
+                end_line=34,
+                severity="MEDIUM",
+                status="OPEN",
+            ),
+            Finding(
+                finding_id="reopen-upgrades-to-high",
+                file_path="src/d.py",
+                vuln_type="CWE-79",
+                start_line=41,
+                end_line=44,
+                severity="HIGH",
+                status="OPEN",
+            ),
+        ]
+        res = deduplication.dedup(existing, current, "")
+        reopened_by_id = {f.finding_id: f.severity for f in res["reopened"]}
+        self.assertEqual(
+            reopened_by_id,
+            {
+                "reopen-cannot-downgrade": "HIGH",
+                "reopen-upgrades-to-high": "HIGH",
+            },
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mock_cm = MockCodeMender(
+                repo_dir=os.path.realpath(tmpdir),
+                initial_findings=existing + current,
+            )
+            ctx = types.SimpleNamespace(cm=mock_cm)
+            deduplication.remove_duplicates_in_db(ctx, res["suppressed_duplicates"])
+            db_sevs = {f.finding_id: f.severity for f in mock_cm.list_findings()}
+            self.assertEqual(db_sevs["open-med"], "HIGH")
+            self.assertEqual(db_sevs["open-high"], "HIGH")
+
 
 if __name__ == "__main__":
     unittest.main()
