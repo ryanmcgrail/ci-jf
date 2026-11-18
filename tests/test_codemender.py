@@ -206,7 +206,7 @@ class CodeMenderTests(unittest.TestCase):
       with self.assertRaises(RuntimeError):
         cm.find()
 
-  def test_find_runs_gcloud_adc_login_and_retries_on_reauth_error(self):
+  def test_find_runs_gcloud_adc_login_and_retries_on_reauth_error_when_interactive(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
     proc_reauth = types.SimpleNamespace(
         returncode=1,
@@ -215,10 +215,14 @@ class CodeMenderTests(unittest.TestCase):
     )
     proc_gcloud = types.SimpleNamespace(returncode=0, stdout="Credentials saved", stderr="")
     proc_success = types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
-    with patch(
-        "codemender.run_command",
-        side_effect=[proc_reauth, proc_gcloud, proc_success],
-    ) as mock_run:
+    tty_stdin = types.SimpleNamespace(isatty=lambda: True)
+    with (
+        patch.object(sys, "stdin", tty_stdin),
+        patch(
+            "codemender.run_command",
+            side_effect=[proc_reauth, proc_gcloud, proc_success],
+        ) as mock_run,
+    ):
       res = cm.find(scan_mode=codemender.ScanMode.QUICK)
     self.assertEqual(res, proc_success)
     self.assertEqual(mock_run.call_count, 3)
@@ -237,6 +241,7 @@ class CodeMenderTests(unittest.TestCase):
         mock_run.call_args_list[1].args[0],
         ["gcloud", "auth", "application-default", "login"],
     )
+    self.assertTrue(mock_run.call_args_list[1].kwargs.get("interactive"))
     self.assertEqual(
         mock_run.call_args_list[2].args[0],
         [
@@ -248,6 +253,24 @@ class CodeMenderTests(unittest.TestCase):
             "--bypass-warning",
         ],
     )
+
+  def test_find_skips_gcloud_adc_login_and_raises_in_headless_ci(self):
+    cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
+    proc_reauth = types.SimpleNamespace(
+        returncode=1,
+        stdout="",
+        stderr='Error: retrieving access token: oauth2: "invalid_grant" "reauth related error (invalid_rapt)"',
+    )
+    headless_stdin = types.SimpleNamespace(isatty=lambda: False)
+    with (
+        patch.object(sys, "stdin", headless_stdin),
+        patch("codemender.run_command", return_value=proc_reauth) as mock_run,
+    ):
+      with self.assertRaises(RuntimeError) as ctx:
+        cm.find(scan_mode=codemender.ScanMode.QUICK)
+    self.assertEqual(mock_run.call_count, 1)
+    self.assertIn("exit code 1", str(ctx.exception))
+    self.assertIn("Application Default Credentials", str(ctx.exception))
 
   def test_list_findings(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
@@ -279,7 +302,7 @@ class CodeMenderTests(unittest.TestCase):
       }
       self.assertIn("findings", tables)
 
-  def test_run_command_prints_to_console_when_stdout_redirected(self):
+  def test_run_command_does_not_duplicate_output_to_stderr_when_non_tty(self):
     fake_stdout = io.StringIO()
     fake_stderr = io.StringIO()
     with patch.object(sys, "stdout", fake_stdout), patch.object(
@@ -291,7 +314,7 @@ class CodeMenderTests(unittest.TestCase):
       )
     self.assertEqual(res.stdout, "hello from cm find\n")
     self.assertEqual(fake_stdout.getvalue(), "hello from cm find\n")
-    self.assertEqual(fake_stderr.getvalue(), "hello from cm find\n")
+    self.assertEqual(fake_stderr.getvalue(), "")
 
   def test_find_deduplicates_extra_flags_and_merges_custom_context(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")

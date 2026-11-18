@@ -107,6 +107,7 @@ def run_command(
     env: Optional[Dict[str, str]] = None,
     check: bool = True,
     print_to_stdout: bool = False,
+    interactive: bool = False,
 ) -> subprocess.CompletedProcess:
   """Executes a subprocess command, streaming stdout/stderr in real-time."""
   logger.info("Executing comand: %s", " ".join(cmd))
@@ -115,7 +116,7 @@ def run_command(
       cmd,
       cwd=cwd,
       env=env,
-      stdin=subprocess.DEVNULL,
+      stdin=None if interactive else subprocess.DEVNULL,
       stdout=subprocess.PIPE,
       stderr=subprocess.STDOUT if print_to_stdout else subprocess.DEVNULL,
       text=True,
@@ -128,9 +129,6 @@ def run_command(
     if print_to_stdout:
       sys.stdout.write(line)
       sys.stdout.flush()
-      if not sys.stdout.isatty():
-        sys.stderr.write(line)
-        sys.stderr.flush()
   process.stdout.close()
 
   return_code = process.wait()
@@ -223,12 +221,20 @@ class CodeMender:
     stdout = getattr(result, "stdout", "")
     stderr = getattr(result, "stderr", "")
     if is_adc_reauth_error(returncode, stdout or "", stderr or ""):
+      if sys.stdin is None or not sys.stdin.isatty():
+        raise RuntimeError(
+            f"cm find failed with exit code {returncode}: Google Cloud Application"
+            " Default Credentials are missing or expired in a non-interactive"
+            " session (configure ADC for CI or run"
+            " 'gcloud auth application-default login' interactively)"
+        )
       run_command(
           ["gcloud", "auth", "application-default", "login"],
           cwd=self.repo_dir,
           env=self.env,
           check=True,
           print_to_stdout=True,
+          interactive=True,
       )
       result = run_command(command, cwd=self.repo_dir, env=self.env, check=False, print_to_stdout=True)
       returncode = getattr(result, "returncode", 0)
