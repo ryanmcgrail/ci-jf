@@ -917,6 +917,68 @@ class TestCmCi(unittest.TestCase):
             self.assertEqual(known_sevs["f-dup-med"], "HIGH")
             self.assertEqual(known_sevs["f-dup-crit"], "CRITICAL")
 
+    @parameterized(
+        [
+            (
+                ["--model", "gemini-2.5-pro", "--deep-workers", "8", "-c", "Check auth"],
+                None,
+                ScanMode.DEEP,
+                ["--model", "gemini-2.5-pro", "--deep-workers", "8", "-c", "Check auth"],
+            ),
+            (
+                ["--model", "gemini-2.5-pro", "src"],
+                "src",
+                ScanMode.DEEP,
+                ["--model", "gemini-2.5-pro"],
+            ),
+            (
+                ["--diff", "main"],
+                None,
+                ScanMode.DIFF,
+                ["--diff=main"],
+            ),
+            (
+                ["--diff=origin/main"],
+                None,
+                ScanMode.DIFF,
+                ["--diff=origin/main"],
+            ),
+        ]
+    )
+    def test_cmd_find_space_separated_passthrough_flags_do_not_steal_target(
+        self,
+        find_args: list[str],
+        expected_target: str | None,
+        expected_mode: ScanMode,
+        expected_extra_flags: list[str],
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "src"), exist_ok=True)
+            out_dir = os.path.join(tmpdir, ".codemender")
+            mock_cm = MockCodeMender(repo_dir=os.path.realpath(tmpdir))
+            captured_kwargs: list[dict[str, Any]] = []
+            orig_find = mock_cm.find
+
+            def _spy_find(**kwargs: Any) -> Any:
+                captured_kwargs.append(kwargs)
+                return orig_find(**kwargs)
+
+            with (
+                patch.object(cm_ci, "need"),
+                patch.object(cm_ci, "check_config", return_value=True),
+                patch.object(cm_ci, "CodeMender", return_value=mock_cm),
+                patch.object(mock_cm, "find", side_effect=_spy_find),
+                patch("sys.stdout", new_callable=io.StringIO),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                rc = cm_ci.cmd_find(["--repo", tmpdir, "--out-dir", out_dir, *find_args])
+
+            self.assertEqual(rc, 0)
+            self.assertEqual(len(captured_kwargs), 1)
+            self.assertEqual(captured_kwargs[0]["target_or_id"], expected_target)
+            self.assertEqual(captured_kwargs[0]["scan_mode"], expected_mode)
+            self.assertEqual(captured_kwargs[0].get("extra_flags"), expected_extra_flags)
+
 
 if __name__ == "__main__":
     unittest.main()

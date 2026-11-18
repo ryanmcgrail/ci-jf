@@ -9,7 +9,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from finding import Finding
 
@@ -103,6 +103,42 @@ def is_adc_reauth_error(returncode: int, stdout: str, stderr: str = "") -> bool:
   """Whether a command failed because Google Cloud ADC credentials need login."""
   combined = f"{stdout or ''}\n{stderr or ''}"
   return returncode != 0 and bool(_ADC_REAUTH_ERROR.search(combined))
+
+
+def _has_flag(flags: Iterable[str], *names: str) -> bool:
+  """Returns True if any flag in `flags` matches `name` or `name=...`."""
+  for flag in flags:
+    for name in names:
+      if flag == name or flag.startswith(f"{name}="):
+        return True
+  return False
+
+
+def _extract_context_flags(
+    extra_flags: Optional[List[str]],
+) -> Tuple[List[str], List[str]]:
+  """Splits `-c`/`--context` flags out of `extra_flags` so `cm find` receives a single `--context`."""
+  if not extra_flags:
+    return [], []
+  remaining: List[str] = []
+  contexts: List[str] = []
+  idx = 0
+  while idx < len(extra_flags):
+    arg = extra_flags[idx]
+    if arg in ("-c", "--context"):
+      if idx + 1 < len(extra_flags):
+        contexts.append(extra_flags[idx + 1])
+        idx += 2
+        continue
+      idx += 1
+      continue
+    if arg.startswith("--context=") or arg.startswith("-c="):
+      contexts.append(arg.split("=", 1)[1])
+      idx += 1
+      continue
+    remaining.append(arg)
+    idx += 1
+  return remaining, [c.strip() for c in contexts if c and c.strip()]
 
 
 def build_cm_command(
@@ -303,27 +339,30 @@ class CodeMender:
         report_ref = os.path.basename(report_file) if temp_dir else report_file
 
     try:
+      cleaned_extra, extra_contexts = _extract_context_flags(extra_flags)
       cmd_flags: List[str] = []
       if scan_mode == ScanMode.QUICK:
-        cmd_flags.append("--quick")
-      if scan_mode == ScanMode.DEEP:
-        cmd_flags.append("--deep")
-        cmd_flags.append(f"--deep-workers={deep_workers}")
+        if not _has_flag(cleaned_extra, "--quick"):
+          cmd_flags.append("--quick")
+      elif scan_mode == ScanMode.DEEP:
+        if not _has_flag(cleaned_extra, "--deep"):
+          cmd_flags.append("--deep")
+        if not _has_flag(cleaned_extra, "--deep-workers"):
+          cmd_flags.append(f"--deep-workers={deep_workers}")
       elif scan_mode == ScanMode.DIFF:
-        cmd_flags.append("--diff")
-      if not any(
-          f == "--model" or f.startswith("--model=")
-          for f in (extra_flags or [])
-      ):
+        if not _has_flag(cleaned_extra, "--diff"):
+          cmd_flags.append("--diff")
+      if not _has_flag(cleaned_extra, "--model"):
         cmd_flags.append(f"--model={model}")
-      if extra_flags:
-        cmd_flags.extend(extra_flags)
+      if cleaned_extra:
+        cmd_flags.extend(cleaned_extra)
       if has_prior_state:
         context_str = _FIND_CONTEXT_FOR_LATER_PASSES.format(
             report_file=report_ref,
             discouraged_cwes=discouraged_cwes,
         )
-        cmd_flags.append("--enable-bash")
+        if not _has_flag(cleaned_extra, "--enable-bash"):
+          cmd_flags.append("--enable-bash")
       else:
         context_str = _FIND_CONTEXT_FOR_FIRST_PASS.format(
             discouraged_cwes=discouraged_cwes,
@@ -334,13 +373,14 @@ class CodeMender:
             _CRITICAL_HIGH_AUDIT_BULLET,
             1,
         )
-      cmd_flags.extend([
-          "--bypass-warning",
-          "--deep-max-turns",
-          str(max_turns),
-          "--context",
-          context_str,
-      ])
+      if extra_contexts:
+        joined_extra_ctx = "\n\n".join(extra_contexts)
+        context_str = f"{context_str}\n\n# Additional Context\n{joined_extra_ctx}"
+      if not _has_flag(cleaned_extra, "--bypass-warning"):
+        cmd_flags.append("--bypass-warning")
+      if scan_mode == ScanMode.DEEP and not _has_flag(cleaned_extra, "--deep-max-turns"):
+        cmd_flags.extend(["--deep-max-turns", str(max_turns)])
+      cmd_flags.extend(["--context", context_str])
       command = build_cm_command(
           self.cm_binary,
           "find",

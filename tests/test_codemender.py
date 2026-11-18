@@ -186,8 +186,6 @@ class CodeMenderTests(unittest.TestCase):
             "--quick",
             "--model=gemini-4-argon",
             "--bypass-warning",
-            "--deep-max-turns",
-            "8",
             "--context",
             expected_ctx,
         ],
@@ -217,8 +215,6 @@ class CodeMenderTests(unittest.TestCase):
             "--diff",
             "--model=gemini-4-argon",
             "--bypass-warning",
-            "--deep-max-turns",
-            "8",
             "--context",
             expected_ctx,
         ],
@@ -273,8 +269,6 @@ class CodeMenderTests(unittest.TestCase):
             "--quick",
             "--model=gemini-4-argon",
             "--bypass-warning",
-            "--deep-max-turns",
-            "8",
             "--context",
             expected_ctx,
         ],
@@ -292,8 +286,6 @@ class CodeMenderTests(unittest.TestCase):
             "--quick",
             "--model=gemini-4-argon",
             "--bypass-warning",
-            "--deep-max-turns",
-            "8",
             "--context",
             expected_ctx,
         ],
@@ -415,6 +407,53 @@ class CodeMenderTests(unittest.TestCase):
         "intra-file helper/validator/sanitizer whose caller/sink in this file is already covered",
         codemender._FIND_CONTEXT_FOR_LATER_PASSES,
     )
+
+  def test_find_deduplicates_extra_flags_and_merges_custom_context(self):
+    cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
+    proc = types.SimpleNamespace(returncode=0, stdout="Success")
+    with patch("codemender.run_command", return_value=proc) as mock_run:
+      cm.find(
+          extra_flags=[
+              "--deep-workers=8",
+              "--deep-max-turns=14",
+              "--bypass-warning",
+              "--context",
+              "Focus on payment handlers",
+              "-c=Check webhook signatures",
+          ]
+      )
+      cm.find(
+          scan_mode=codemender.ScanMode.DIFF,
+          extra_flags=["--diff=origin/main", "--model", "gemini-2.5-pro"],
+      )
+
+    deep_cmd = mock_run.call_args_list[1].args[0]
+    self.assertEqual(
+        [f for f in deep_cmd if f.startswith("--deep-workers")],
+        ["--deep-workers=8"],
+    )
+    self.assertEqual(
+        [f for f in deep_cmd if f.startswith("--deep-max-turns")],
+        ["--deep-max-turns=14"],
+    )
+    self.assertEqual(deep_cmd.count("--bypass-warning"), 1)
+    self.assertEqual(deep_cmd.count("--context"), 1)
+    self.assertNotIn("-c", deep_cmd)
+    ctx_val = deep_cmd[deep_cmd.index("--context") + 1]
+    self.assertIn("# Audit Strategy", ctx_val)
+    self.assertIn("Focus on payment handlers", ctx_val)
+    self.assertIn("Check webhook signatures", ctx_val)
+
+    diff_cmd = mock_run.call_args_list[3].args[0]
+    self.assertEqual(
+        [f for f in diff_cmd if f == "--diff" or f.startswith("--diff=")],
+        ["--diff=origin/main"],
+    )
+    self.assertEqual(
+        [f for f in diff_cmd if f == "--model" or f.startswith("--model=")],
+        ["--model"],
+    )
+    self.assertNotIn("--deep-max-turns", diff_cmd)
 
 
 if __name__ == "__main__":

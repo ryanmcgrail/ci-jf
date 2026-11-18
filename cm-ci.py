@@ -128,6 +128,9 @@ def parse_opts(argv: List[str], with_value: Tuple[str, ...], flags: Tuple[str, .
             if i + 1 >= len(argv):
                 die(f"option {a} needs a value")
             opts[a] = argv[i + 1]; i += 2
+        elif "=" in a and a.split("=", 1)[0] in with_value:
+            k, v = a.split("=", 1)
+            opts[k] = v; i += 1
         elif a in flags:
             opts[a] = True; i += 1
         elif a in ("-h", "--help"):
@@ -253,6 +256,48 @@ def _parse_bool_flag(flag: str, raw: str) -> bool:
     return bool(val)
 
 
+# `cm find` and global `cm` flags that consume a following value argument when space-separated.
+_CM_FIND_VALUE_FLAGS = frozenset({
+    "-c",
+    "--context",
+    "--deep-max-turns",
+    "--deep-workers",
+    "--diff-job-timeout",
+    "--diff-max-neighbors",
+    "--diff-workers",
+    "--fail-on",
+    "--format",
+    "--model",
+    "--output",
+    "--team-id",
+})
+_CM_FIND_BOOL_FLAGS = frozenset({
+    "-h",
+    "--help",
+    "-v",
+    "--verbose",
+    "-y",
+    "--yes",
+    "--allow-all-commands",
+    "--allow-all-paths",
+    "--bypass-warning",
+    "--compact",
+    "--deep",
+    "--dry-run",
+    "--enable-bash",
+    "--fail-on-truncation",
+    "--include-hidden",
+    "--no-model-fallback",
+    "--notices",
+    "--plain",
+    "--quick",
+    "--sandbox",
+    "--staged",
+    "--validate",
+    "--version",
+})
+
+
 def cmd_find(argv: List[str]) -> int:
     opts, cm_args = parse_opts(argv, ("--repo", "--existing", "--known", "--out-dir", "--fail-on", "--complete-runs"),
                                ("--no-update", "--no-dedup"), passthrough=True)
@@ -276,12 +321,28 @@ def cmd_find(argv: List[str]) -> int:
     idx = 0
     while idx < len(cm_args):
         arg = cm_args[idx]
-        if arg == "--quick":
+        if arg == "--":
+            for pos in cm_args[idx + 1:]:
+                if target is None:
+                    target = pos
+                else:
+                    extra_cm_flags.append(pos)
+            break
+        elif arg == "--quick":
             scan_mode = ScanMode.QUICK
             is_complete_scan = False
         elif arg == "--diff":
             scan_mode = ScanMode.DIFF
             is_complete_scan = False
+            if idx + 1 < len(cm_args) and not cm_args[idx + 1].startswith("-"):
+                next_tok = cm_args[idx + 1]
+                if target is not None or not os.path.exists(next_tok):
+                    extra_cm_flags.append(f"--diff={next_tok}")
+                    idx += 1
+        elif arg.startswith("--diff="):
+            scan_mode = ScanMode.DIFF
+            is_complete_scan = False
+            extra_cm_flags.append(arg)
         elif arg == "--deep":
             scan_mode = ScanMode.DEEP
             is_complete_scan = False
@@ -299,10 +360,25 @@ def cmd_find(argv: List[str]) -> int:
             critical_high_flag = _parse_bool_flag("--critical-high-only", arg.split("=", 1)[1])
         elif arg == "--no-critical-high-only":
             critical_high_flag = False
+        elif arg in _CM_FIND_VALUE_FLAGS:
+            if idx + 1 >= len(cm_args):
+                die(f"option {arg} needs a value")
+            extra_cm_flags.extend([arg, cm_args[idx + 1]])
+            idx += 1
         elif not arg.startswith("-") and target is None:
             target = arg
         else:
             extra_cm_flags.append(arg)
+            if (
+                arg.startswith("-")
+                and "=" not in arg
+                and arg not in _CM_FIND_BOOL_FLAGS
+                and idx + 1 < len(cm_args)
+                and not cm_args[idx + 1].startswith("-")
+                and (target is not None or not os.path.exists(cm_args[idx + 1]))
+            ):
+                extra_cm_flags.append(cm_args[idx + 1])
+                idx += 1
         idx += 1
     critical_high_only = critical_high_flag if critical_high_flag is not None else is_complete_scan
     print(f"cm-ci: cm find {' '.join(cm_args)}".rstrip(), flush=True)
