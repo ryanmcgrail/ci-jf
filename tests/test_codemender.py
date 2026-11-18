@@ -58,63 +58,11 @@ class CodeMenderTests(unittest.TestCase):
 
   def test_find_defaults_to_repo_dir(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
-    proc_report = types.SimpleNamespace(
-        returncode=0,
-        stdout=json.dumps([
-            {
-                "finding_id": "1",
-                "status": "OPEN",
-                "file_path": "a.py",
-                "snippet": "x = 1",
-                "title": "Should be omitted",
-                "analysis": "Should be omitted",
-            },
-            {
-                "finding_id": "2",
-                "status": "DISMISSED",
-                "file_path": "b.py",
-                "snippet": "y = 2",
-            },
-            {
-                "finding_id": "3",
-                "status": "VERIFIED",
-                "file_path": "c.py",
-                "snippet": "z = 3",
-            },
-            {
-                "finding_id": "4",
-                "status": "REOPENED",
-                "file_path": "d.py",
-                "snippet": "w = 4",
-            },
-        ]),
-    )
     proc_find = types.SimpleNamespace(returncode=0, stdout="Success")
-    fake_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
-    fake_tmp_path = fake_tmp.name
-    fake_tmp.close()
-    written_report = []
-    with patch("codemender.tempfile.NamedTemporaryFile") as mock_tmp, patch(
-        "codemender.run_command", side_effect=[proc_report, proc_find]
-    ) as mock_run:
-      mock_tmp.return_value.__enter__.side_effect = [
-          types.SimpleNamespace(name=fake_tmp_path, write=written_report.append),
-      ]
+    with patch("codemender.run_command", return_value=proc_find) as mock_run:
       res = cm.find()
-      self.assertEqual(mock_run.call_count, 2)
-      self.assertEqual(
-          mock_run.call_args_list[0].args[0],
-          ["cm", "report", "--format", "json"],
-      )
-      self.assertEqual(
-          json.loads(written_report[0]),
-          [
-              {"file_path": "a.py", "snippet": "x = 1"},
-              {"file_path": "c.py", "snippet": "z = 3"},
-              {"file_path": "d.py", "snippet": "w = 4"},
-          ],
-      )
-      args, kwargs = mock_run.call_args_list[1]
+      self.assertEqual(mock_run.call_count, 1)
+      args, kwargs = mock_run.call_args_list[0]
       cmd = args[0]
       self.assertEqual(
           cmd,
@@ -125,44 +73,68 @@ class CodeMenderTests(unittest.TestCase):
               "--deep",
               "--deep-workers=16",
               "--model=gemini-4-argon",
-              "--enable-bash",
               "--bypass-warning",
               "--deep-max-turns",
               "8",
-              "--context",
-              codemender._FIND_CONTEXT_FOR_LATER_PASSES.format(
-                  report_file=fake_tmp_path,
-                  discouraged_cwes=codemender._load_discouraged_cwes(),
-              ),
           ],
       )
+      self.assertNotIn("--context", cmd)
       self.assertEqual(kwargs.get("cwd"), "/tmp/test_repo")
       self.assertEqual(res, proc_find)
-      self.assertFalse(os.path.exists(fake_tmp_path))
 
   def test_find_custom_target(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
     proc = types.SimpleNamespace(returncode=0, stdout="Success")
     with patch("codemender.run_command", return_value=proc) as mock_run:
       cm.find(target_or_id="/tmp/other_target")
-      args, _ = mock_run.call_args_list[1]
+      args, _ = mock_run.call_args_list[0]
       cmd = args[0]
       self.assertEqual(cmd[2], "/tmp/other_target")
 
-  def test_find_scan_modes(self):
+  def test_find_scan_modes_omit_context_unless_supplied(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
     proc = types.SimpleNamespace(returncode=0, stdout="Success")
     with patch("codemender.run_command", return_value=proc) as mock_run:
-      cm.find()
       cm.find(scan_mode=codemender.ScanMode.QUICK)
-      cm.find(scan_mode=codemender.ScanMode.DEEP)
       cm.find(scan_mode=codemender.ScanMode.DIFF)
+      cm.find(scan_mode=codemender.ScanMode.DEEP)
+      cm.find(
+          scan_mode=codemender.ScanMode.QUICK,
+          extra_flags=["--context", "Quick guidance"],
+      )
+      cm.find(
+          scan_mode=codemender.ScanMode.DIFF,
+          extra_flags=["-c", "Diff guidance"],
+      )
+      cm.find(
+          scan_mode=codemender.ScanMode.DEEP,
+          extra_flags=["--context=Deep guidance"],
+      )
 
-    expected_ctx = codemender._FIND_CONTEXT_FOR_FIRST_PASS.format(
-        discouraged_cwes=codemender._load_discouraged_cwes(),
+    self.assertEqual(
+        mock_run.call_args_list[0].args[0],
+        [
+            "cm",
+            "find",
+            "/tmp/test_repo",
+            "--quick",
+            "--model=gemini-4-argon",
+            "--bypass-warning",
+        ],
     )
     self.assertEqual(
         mock_run.call_args_list[1].args[0],
+        [
+            "cm",
+            "find",
+            "/tmp/test_repo",
+            "--diff",
+            "--model=gemini-4-argon",
+            "--bypass-warning",
+        ],
+    )
+    self.assertEqual(
+        mock_run.call_args_list[2].args[0],
         [
             "cm",
             "find",
@@ -173,8 +145,6 @@ class CodeMenderTests(unittest.TestCase):
             "--bypass-warning",
             "--deep-max-turns",
             "8",
-            "--context",
-            expected_ctx,
         ],
     )
     self.assertEqual(
@@ -187,7 +157,20 @@ class CodeMenderTests(unittest.TestCase):
             "--model=gemini-4-argon",
             "--bypass-warning",
             "--context",
-            expected_ctx,
+            "Quick guidance",
+        ],
+    )
+    self.assertEqual(
+        mock_run.call_args_list[4].args[0],
+        [
+            "cm",
+            "find",
+            "/tmp/test_repo",
+            "--diff",
+            "--model=gemini-4-argon",
+            "--bypass-warning",
+            "--context",
+            "Diff guidance",
         ],
     )
     self.assertEqual(
@@ -203,20 +186,7 @@ class CodeMenderTests(unittest.TestCase):
             "--deep-max-turns",
             "8",
             "--context",
-            expected_ctx,
-        ],
-    )
-    self.assertEqual(
-        mock_run.call_args_list[7].args[0],
-        [
-            "cm",
-            "find",
-            "/tmp/test_repo",
-            "--diff",
-            "--model=gemini-4-argon",
-            "--bypass-warning",
-            "--context",
-            expected_ctx,
+            "Deep guidance",
         ],
     )
 
@@ -238,7 +208,6 @@ class CodeMenderTests(unittest.TestCase):
 
   def test_find_runs_gcloud_adc_login_and_retries_on_reauth_error(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
-    proc_report = types.SimpleNamespace(returncode=0, stdout="[]", stderr="")
     proc_reauth = types.SimpleNamespace(
         returncode=1,
         stdout="",
@@ -248,20 +217,13 @@ class CodeMenderTests(unittest.TestCase):
     proc_success = types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
     with patch(
         "codemender.run_command",
-        side_effect=[proc_report, proc_reauth, proc_gcloud, proc_success],
+        side_effect=[proc_reauth, proc_gcloud, proc_success],
     ) as mock_run:
       res = cm.find(scan_mode=codemender.ScanMode.QUICK)
-    expected_ctx = codemender._FIND_CONTEXT_FOR_FIRST_PASS.format(
-        discouraged_cwes=codemender._load_discouraged_cwes(),
-    )
     self.assertEqual(res, proc_success)
-    self.assertEqual(mock_run.call_count, 4)
+    self.assertEqual(mock_run.call_count, 3)
     self.assertEqual(
         mock_run.call_args_list[0].args[0],
-        ["cm", "report", "--format", "json"],
-    )
-    self.assertEqual(
-        mock_run.call_args_list[1].args[0],
         [
             "cm",
             "find",
@@ -269,16 +231,14 @@ class CodeMenderTests(unittest.TestCase):
             "--quick",
             "--model=gemini-4-argon",
             "--bypass-warning",
-            "--context",
-            expected_ctx,
         ],
     )
     self.assertEqual(
-        mock_run.call_args_list[2].args[0],
+        mock_run.call_args_list[1].args[0],
         ["gcloud", "auth", "application-default", "login"],
     )
     self.assertEqual(
-        mock_run.call_args_list[3].args[0],
+        mock_run.call_args_list[2].args[0],
         [
             "cm",
             "find",
@@ -286,8 +246,6 @@ class CodeMenderTests(unittest.TestCase):
             "--quick",
             "--model=gemini-4-argon",
             "--bypass-warning",
-            "--context",
-            expected_ctx,
         ],
     )
 
@@ -335,84 +293,12 @@ class CodeMenderTests(unittest.TestCase):
     self.assertEqual(fake_stdout.getvalue(), "hello from cm find\n")
     self.assertEqual(fake_stderr.getvalue(), "hello from cm find\n")
 
-  def test_preprocess_report_for_context_normalizes_repo_relative_paths(self):
-    raw = json.dumps([
-        {
-            "finding_id": "1",
-            "status": "OPEN",
-            "file_path": "/home/runner/workspace/repo/routes/order.ts",
-            "snippet": "sink1()",
-        },
-        {
-            "finding_id": "2",
-            "status": "OPEN",
-            "file_path": "/home/runner/workspace/repo/routes/b2bOrder.ts",
-            "snippet": "sink2()",
-        },
-        {
-            "finding_id": "3",
-            "status": "OPEN",
-            "file_path": "./order.ts",
-            "snippet": "sink3()",
-        },
-    ])
-    out = json.loads(
-        codemender.preprocess_report_for_context(
-            raw, repo_dir="/home/runner/workspace/repo"
-        )
-    )
-    self.assertEqual(
-        out,
-        [
-            {"file_path": "routes/order.ts", "snippet": "sink1()"},
-            {"file_path": "routes/b2bOrder.ts", "snippet": "sink2()"},
-            {"file_path": "order.ts", "snippet": "sink3()"},
-        ],
-    )
-    self.assertIn(
-        'covered_lines.py {report_file} "<file>"',
-        codemender._FIND_CONTEXT_FOR_LATER_PASSES,
-    )
-
-  def test_find_critical_high_only_modifies_context_to_focus_on_critical_issues(self):
-    cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
-    proc = types.SimpleNamespace(returncode=0, stdout="Success")
-    with patch("codemender.run_command", return_value=proc) as mock_run:
-      cm.find(critical_high_only=True)
-    cmd = mock_run.call_args_list[1].args[0]
-    ctx_arg = cmd[cmd.index("--context") + 1]
-    self.assertIn(
-        "focusing on the most critical security issues (CRITICAL and HIGH severity)",
-        ctx_arg,
-    )
-
-  def test_find_context_includes_intra_file_sink_anchoring_and_iac_reachability(self):
-    self.assertIn(
-        "report the vulnerability once at the function/block where the sink or security defect resides",
-        codemender._FIND_CONTEXT_FOR_FIRST_PASS,
-    )
-    self.assertIn(
-        "ineffective/disabled intra-file validator/sanitizer lacking the sink",
-        codemender._FIND_CONTEXT_FOR_FIRST_PASS,
-    )
-    self.assertIn(
-        "check repository-wide routing and deployment/IaC manifests (including at the repository root",
-        codemender._FIND_CONTEXT_FOR_FIRST_PASS,
-    )
-    self.assertIn(
-        "dead/undeployed handlers",
-        codemender._FIND_CONTEXT_FOR_FIRST_PASS,
-    )
-    self.assertIn(
-        "intra-file helper/validator/sanitizer whose caller/sink in this file is already covered",
-        codemender._FIND_CONTEXT_FOR_LATER_PASSES,
-    )
-
   def test_find_deduplicates_extra_flags_and_merges_custom_context(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
     proc = types.SimpleNamespace(returncode=0, stdout="Success")
     with patch("codemender.run_command", return_value=proc) as mock_run:
       cm.find(
+          context="Base context",
           extra_flags=[
               "--deep-workers=8",
               "--deep-max-turns=14",
@@ -420,14 +306,14 @@ class CodeMenderTests(unittest.TestCase):
               "--context",
               "Focus on payment handlers",
               "-c=Check webhook signatures",
-          ]
+          ],
       )
       cm.find(
           scan_mode=codemender.ScanMode.DIFF,
           extra_flags=["--diff=origin/main", "--model", "gemini-2.5-pro"],
       )
 
-    deep_cmd = mock_run.call_args_list[1].args[0]
+    deep_cmd = mock_run.call_args_list[0].args[0]
     self.assertEqual(
         [f for f in deep_cmd if f.startswith("--deep-workers")],
         ["--deep-workers=8"],
@@ -440,11 +326,12 @@ class CodeMenderTests(unittest.TestCase):
     self.assertEqual(deep_cmd.count("--context"), 1)
     self.assertNotIn("-c", deep_cmd)
     ctx_val = deep_cmd[deep_cmd.index("--context") + 1]
-    self.assertIn("# Audit Strategy", ctx_val)
-    self.assertIn("Focus on payment handlers", ctx_val)
-    self.assertIn("Check webhook signatures", ctx_val)
+    self.assertEqual(
+        ctx_val,
+        "Base context\n\nFocus on payment handlers\n\nCheck webhook signatures",
+    )
 
-    diff_cmd = mock_run.call_args_list[3].args[0]
+    diff_cmd = mock_run.call_args_list[1].args[0]
     self.assertEqual(
         [f for f in diff_cmd if f == "--diff" or f.startswith("--diff=")],
         ["--diff=origin/main"],
@@ -454,6 +341,7 @@ class CodeMenderTests(unittest.TestCase):
         ["--model"],
     )
     self.assertNotIn("--deep-max-turns", diff_cmd)
+    self.assertNotIn("--context", diff_cmd)
 
 
 if __name__ == "__main__":

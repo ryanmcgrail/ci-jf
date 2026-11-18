@@ -1,5 +1,6 @@
 """Unit tests for complete_scan.py."""
 
+import json
 import os
 import sqlite3
 import tempfile
@@ -7,9 +8,11 @@ import types
 import unittest
 from unittest.mock import patch
 
+import complete_scan
 from codemender import CodeMender
 from complete_scan import (
     get_latest_session_finding_counts,
+    preprocess_report_for_context,
     run_complete_scan,
 )
 
@@ -120,7 +123,7 @@ class CompleteScanTests(unittest.TestCase):
       )
       with open(cmignore_path, "r", encoding="utf-8") as fh:
         self.assertEqual(fh.read(), "existing_ignore/\n")
-      self.assertEqual(mock_run.call_count, 10)
+      self.assertEqual(mock_run.call_count, 9)
       find_cmds = [
           call.args[0]
           for call in mock_run.call_args_list
@@ -240,7 +243,7 @@ class CompleteScanTests(unittest.TestCase):
       proc = types.SimpleNamespace(returncode=0, stdout="[]", stderr="")
       with patch("codemender.run_command", return_value=proc) as mock_run:
         run_complete_scan(cm, complete_runs=2)
-      self.assertEqual(mock_run.call_count, 4)
+      self.assertEqual(mock_run.call_count, 3)
 
   def test_promoted_parent_sessions_with_findings_and_zero_findings_converge(self):
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -1203,6 +1206,221 @@ class CompleteScanTests(unittest.TestCase):
       self.assertEqual(sevs["f-prior-med"], "HIGH")
       self.assertEqual(sevs["f-prior-crit"], "CRITICAL")
       self.assertEqual(sevs["f0-new-dup"], "CRITICAL")
+
+  def test_preprocess_report_for_context_filters_statuses_and_normalizes_paths(self):
+    raw = json.dumps([
+        {
+            "finding_id": "1",
+            "status": "OPEN",
+            "file_path": "/home/runner/workspace/repo/routes/order.ts",
+            "snippet": "sink1()",
+            "title": "Should be omitted",
+            "analysis": "Should be omitted",
+        },
+        {
+            "finding_id": "2",
+            "status": "DISMISSED",
+            "file_path": "/home/runner/workspace/repo/routes/b2bOrder.ts",
+            "snippet": "dismissed_sink()",
+        },
+        {
+            "finding_id": "3",
+            "status": "VERIFIED",
+            "file_path": "/home/runner/workspace/repo/routes/b2bOrder.ts",
+            "snippet": "sink2()",
+        },
+        {
+            "finding_id": "4",
+            "status": "REOPENED",
+            "file_path": "./order.ts",
+            "snippet": "sink3()",
+        },
+    ])
+    out = json.loads(
+        preprocess_report_for_context(
+            raw, repo_dir="/home/runner/workspace/repo"
+        )
+    )
+    self.assertEqual(
+        out,
+        [
+            {"file_path": "routes/order.ts", "snippet": "sink1()"},
+            {"file_path": "routes/b2bOrder.ts", "snippet": "sink2()"},
+            {"file_path": "order.ts", "snippet": "sink3()"},
+        ],
+    )
+    self.assertIn(
+        'covered_lines.py {report_file} "<file>"',
+        complete_scan._FIND_CONTEXT_FOR_LATER_PASSES,
+    )
+
+  def test_complete_scan_critical_high_only_modifies_context_to_focus_on_critical_issues(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      cm = CodeMender(cm_binary="cm", repo_dir=tmpdir)
+      proc = types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+      with patch("codemender.run_command", return_value=proc) as mock_run:
+        run_complete_scan(cm, complete_runs=1, critical_high_only=True)
+        run_complete_scan(cm, complete_runs=1, critical_high_only=False)
+
+    ch_cmd = mock_run.call_args_list[0].args[0]
+    ch_ctx = ch_cmd[ch_cmd.index("--context") + 1]
+    self.assertIn(
+        "focusing on the most critical security issues (CRITICAL and HIGH severity)",
+        ch_ctx,
+    )
+
+    all_cmd = mock_run.call_args_list[1].args[0]
+    all_ctx = all_cmd[all_cmd.index("--context") + 1]
+    self.assertNotIn(
+        "focusing on the most critical security issues (CRITICAL and HIGH severity)",
+        all_ctx,
+    )
+
+  def test_complete_scan_context_includes_intra_file_sink_anchoring_and_iac_reachability(self):
+    self.assertIn(
+        "report the vulnerability once at the function/block where the sink or security defect resides",
+        complete_scan._FIND_CONTEXT_FOR_FIRST_PASS,
+    )
+    self.assertIn(
+        "ineffective/disabled intra-file validator/sanitizer lacking the sink",
+        complete_scan._FIND_CONTEXT_FOR_FIRST_PASS,
+    )
+    self.assertIn(
+        "check repository-wide routing and deployment/IaC manifests (including at the repository root",
+        complete_scan._FIND_CONTEXT_FOR_FIRST_PASS,
+    )
+    self.assertIn(
+        "dead/undeployed handlers",
+        complete_scan._FIND_CONTEXT_FOR_FIRST_PASS,
+    )
+    self.assertIn(
+        "intra-file helper/validator/sanitizer whose caller/sink in this file is already covered",
+        complete_scan._FIND_CONTEXT_FOR_LATER_PASSES,
+    )
+
+  def test_run_complete_scan_appends_user_context_directly_after_pass_prompts(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      repo_dir = os.path.join(tmpdir, "repo")
+      cm_home = os.path.join(tmpdir, "cm_home")
+      os.makedirs(repo_dir)
+      os.makedirs(cm_home)
+      db_path = os.path.join(cm_home, "state.db")
+      con = sqlite3.connect(db_path)
+      con.execute(
+          "CREATE TABLE sessions ("
+          "session_id TEXT PRIMARY KEY, "
+          "session_type TEXT, "
+          "status TEXT, "
+          "target TEXT, "
+          "created_at TEXT, "
+          "updated_at TEXT, "
+          "project_root TEXT, "
+          "parent_session_id TEXT)"
+      )
+      con.execute(
+          "CREATE TABLE findings ("
+          "finding_id TEXT PRIMARY KEY, "
+          "session_id TEXT, "
+          "status TEXT, "
+          "severity TEXT, "
+          "file_path TEXT, "
+          "vuln_type TEXT, "
+          "start_line INTEGER, "
+          "end_line INTEGER, "
+          "snippet TEXT)"
+      )
+      con.commit()
+      con.close()
+
+      cm = CodeMender(
+          cm_binary="cm",
+          repo_dir=repo_dir,
+          env={"CM_HOME": cm_home},
+      )
+
+      find_scan_num = 0
+      observed_report_files = []
+
+      def fake_run_command(cmd, **kwargs):
+        nonlocal find_scan_num
+        if cmd[:2] == ["cm", "report"]:
+          return types.SimpleNamespace(
+              returncode=0,
+              stdout=json.dumps([{
+                  "finding_id": "f0-1",
+                  "status": "OPEN",
+                  "file_path": os.path.join(repo_dir, "vuln.py"),
+                  "snippet": "sink()",
+              }]),
+              stderr="",
+          )
+        if cmd[:2] == ["cm", "find"]:
+          db_con = sqlite3.connect(db_path)
+          if find_scan_num == 0:
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s0-vuln', 'FIND', 'COMPLETED', 'vuln.py', 't0', 't0', ?, 'parent-0')",
+                (repo_dir,),
+            )
+            db_con.execute(
+                "INSERT INTO findings VALUES ('f0-1', 's0-vuln', 'OPEN', 'HIGH', 'vuln.py', 'CWE-89', 10, 12, 'sink()')"
+            )
+          elif find_scan_num == 1:
+            # Verify temporary preprocessed report exists in repo_dir during Pass 2
+            ctx_val = cmd[cmd.index("--context") + 1]
+            for name in os.listdir(repo_dir):
+              if name != ".cmignore" and name in ctx_val:
+                observed_report_files.append(os.path.join(repo_dir, name))
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s1-vuln', 'FIND', 'COMPLETED', 'vuln.py', 't1', 't1', ?, 'parent-1')",
+                (repo_dir,),
+            )
+          db_con.commit()
+          db_con.close()
+          find_scan_num += 1
+          return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+      with patch("codemender.run_command", side_effect=fake_run_command) as mock_run:
+        run_complete_scan(
+            cm,
+            extra_flags=["--context", "Custom user guidance"],
+            complete_runs=2,
+            critical_high_only=False,
+        )
+
+      find_cmds = [
+          call.args[0]
+          for call in mock_run.call_args_list
+          if call.args[0][:2] == ["cm", "find"]
+      ]
+      self.assertEqual(len(find_cmds), 2)
+      cwes = complete_scan._load_discouraged_cwes()
+
+      expected_pass1 = (
+          complete_scan._FIND_CONTEXT_FOR_FIRST_PASS.format(discouraged_cwes=cwes)
+          + "\n\nCustom user guidance"
+      )
+      self.assertEqual(find_cmds[0].count("--context"), 1)
+      self.assertEqual(
+          find_cmds[0][find_cmds[0].index("--context") + 1],
+          expected_pass1,
+      )
+
+      self.assertEqual(len(observed_report_files), 1)
+      report_ref = os.path.basename(observed_report_files[0])
+      self.assertFalse(os.path.exists(observed_report_files[0]))
+      expected_pass2 = (
+          complete_scan._FIND_CONTEXT_FOR_LATER_PASSES.format(
+              report_file=report_ref,
+              discouraged_cwes=cwes,
+          )
+          + "\n\nCustom user guidance"
+      )
+      self.assertEqual(find_cmds[1].count("--context"), 1)
+      self.assertEqual(
+          find_cmds[1][find_cmds[1].index("--context") + 1],
+          expected_pass2,
+      )
 
 
 if __name__ == "__main__":

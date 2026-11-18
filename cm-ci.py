@@ -398,8 +398,6 @@ def cmd_find(argv: List[str]) -> int:
             }
             if extra_cm_flags:
                 find_kwargs["extra_flags"] = extra_cm_flags
-            if critical_high_only:
-                find_kwargs["critical_high_only"] = True
             ctx.cm.find(**find_kwargs)
             _reconcile_overwritten_findings(ctx.cm, pre_find_rows, restore_session_id=False)
     except RuntimeError as e:

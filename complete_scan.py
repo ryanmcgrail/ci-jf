@@ -4,10 +4,12 @@ import json
 import os
 import re
 import sqlite3
+import tempfile
 import types
 import uuid
 from typing import Any, Dict, Iterable, List, Optional, Set
 
+import codemender
 from codemender import CodeMender, ScanMode
 from deduplication import (
     higher_severity,
@@ -16,6 +18,120 @@ from deduplication import (
     severity_rank,
 )
 from finding import Finding
+
+_DISCOURAGED_CWES_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "discouraged_cwes.txt",
+)
+_COVERED_LINES_SCRIPT_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "covered_lines.py",
+)
+_ACTIVE_REPORT_STATUSES = frozenset({"OPEN", "VERIFIED", "REOPENED"})
+_CRITICAL_HIGH_AUDIT_BULLET = (
+    "- Audit the entire target file top to bottom and report all distinct"
+    " vulnerabilities in a single pass (at most one finding per code block/line"
+    " range), focusing on the most critical security issues (CRITICAL and HIGH"
+    " severity)."
+)
+_DEFAULT_AUDIT_BULLET = (
+    "- Audit the entire target file top to bottom and report all distinct"
+    " vulnerabilities in a single pass (at most one finding per code block/line"
+    " range)."
+)
+_FIND_CONTEXT_FOR_FIRST_PASS = f"""\
+# Audit Strategy
+{_DEFAULT_AUDIT_BULLET}
+- Report each distinct vulnerable route, endpoint, or function separately rather than grouping multiple endpoints into one finding, except:
+  - For intra-file helpers/validators/sanitizers or pure pass-through controller-to-service wrappers (adding no auth, validation, or sink logic), report the vulnerability once at the function/block where the sink or security defect resides—never on a pass-through caller/wrapper or an ineffective/disabled intra-file validator/sanitizer lacking the sink.
+  - When multiple routes in one file share the exact same client-side boolean/state check, report it once at its definition rather than per route (still report routes with distinct auth flaws, such as missing admin checks or exposed hidden routes, separately).
+- Scope each snippet and line range strictly to the minimal contiguous sink lines (never the whole enclosing function, and never bridge non-contiguous lines with `...`).
+- Batch cross-file `grep_search`/`read_file` lookups after collecting all candidate issues in the target file (at most 2-3 turns; never read `node_modules`). Inspect cross-file consumers before concluding 0 vulnerabilities on files that generate/encode tokens, state, or cookies, and inspect repo-local security/auth helper definitions (e.g., `security.*`) before assuming they enforce auth, role authorization, or ownership.
+- Before reporting missing auth or untrusted event/request input on a handler, controller, or cloud/serverless function, check repository-wide routing and deployment/IaC manifests (including at the repository root, e.g., route tables, OpenAPI, CloudFormation/SAM/Serverless/Terraform) to confirm how it is deployed and triggered; skip dead/undeployed handlers, internal-only functions lacking an external route/trigger or untrusted data source, and platform-triggered functions whose configured schema prevents attacker-controlled attributes.
+- Ignore tests, package manifests, vendor/dependency directories, `.codemender` files, and vendored/minified third-party libraries (if the target file is vendored third-party code, stop immediately and report 0).
+
+# Vulnerabilities to Report
+- **Secrets, Crypto & Helpers:** Report hardcoded secrets/passwords/API keys/salts/keys, weak cryptographic/hashing/encoding primitives, unescaped query/filter builders, and insecure token/key processors directly where defined rather than deferring to callers or consumers.
+- **Frontend:**
+  - DOM XSS and unsafe sinks (`innerHTML`, `outerHTML`, `document.write`, `bypassSecurityTrust*`, `dangerouslySetInnerHTML`, `v-html`, `eval`), open redirects, and unvalidated `postMessage`/URL handling.
+  - Client-side-only auth, authorization, or rate-limit/CAPTCHA checks (`localStorage`/`sessionStorage`, unverified JWT decoding, client-side credential/OAuth password derivation or verification, or mutating auth state before server confirmation).
+  - Privileged/account routes missing guards or using only client-decodable state, obfuscated/hidden route matchers, and exposed debug/sandbox/unreleased routes.
+  - Credentials/tokens sent in URL query parameters (e.g., `GET` requests) or secrets exposed in client code or storage.
+- **Backend:**
+  - Injection (SQL, NoSQL, command, template, XXE, XPath), SSRF, unsafe deserialization, prototype pollution, ReDoS on untrusted input, and path traversal/static file serving without canonical path containment or null-byte filtering (e.g., checking only `.includes('/')` or `..`).
+  - Missing/bypassable auth on endpoints or file/log/key servers, IDOR, mass assignment, privilege escalation (trusting client-supplied user IDs, roles, prices, or wallet addresses without server-side session/signature verification), and CSRF on state-changing endpoints.
+  - Serializing DB/ORM records into JWTs, sessions, or responses without stripping all sensitive schema fields (e.g., password hashes, TOTP secrets, security answers, even if another field was cleared), and cleartext DB storage of auth secrets/keys.
+  - Unbounded per-request resource allocation (e.g., persistent WebSocket/network providers or event listeners without cleanup/rate limiting), permissive CORS/headers, and error/stack-trace/metrics/directory disclosure.
+
+# CWE Requirements
+- Assign each finding exactly one `CWE-<number>` ID, and never use these discouraged/prohibited CWEs: {{discouraged_cwes}}"""
+_FIND_CONTEXT_FOR_LATER_PASSES = f"""\
+# Initial Pre-Audit Check
+- First, run `python3 {_COVERED_LINES_SCRIPT_PATH} {{report_file}} "<file>"` (using the target file's repo-relative path) to list already-covered lines and snippets; use `run_command` strictly for this single check (never invoke `node`, `sh`, or other commands, or query other files).
+- Never re-report a covered vulnerability (its covered/sink lines, enclosing declaration/caller, or any intra-file helper/validator/sanitizer whose caller/sink in this file is already covered, or vice versa); audit the remaining uncovered lines and report 0 if no distinct vulnerabilities remain.
+
+{_FIND_CONTEXT_FOR_FIRST_PASS}"""
+
+
+def _load_discouraged_cwes() -> str:
+  """Loads the discouraged CWE IDs from discouraged_cwes.txt as a comma-separated string."""
+  if not os.path.exists(_DISCOURAGED_CWES_PATH):
+    return ""
+  with open(_DISCOURAGED_CWES_PATH, "r", encoding="utf-8") as cwe_f:
+    return ", ".join(cwe_f.read().split())
+
+
+def _normalize_report_file_path(file_path: str, repo_dir: str = "") -> str:
+  """Normalizes a finding file_path to a repo-relative path."""
+  path = (file_path or "").strip().replace("\\", "/")
+  if not path:
+    return ""
+  roots = []
+  if repo_dir:
+    for candidate in (
+        repo_dir,
+        os.path.abspath(repo_dir),
+        os.path.realpath(repo_dir),
+    ):
+      norm_root = candidate.strip().replace("\\", "/").rstrip("/")
+      if norm_root and norm_root != "." and norm_root not in roots:
+        roots.append(norm_root)
+  for root in roots:
+    prefix = root + "/"
+    if path.startswith(prefix):
+      return path[len(prefix) :].lstrip("./")
+  return path.lstrip("./")
+
+
+def preprocess_report_for_context(
+    raw_report: str,
+    repo_dir: str = "",
+    exclude_finding_ids: Optional[Iterable[str]] = None,
+) -> str:
+  """Filters a raw `cm report --format json` output to OPEN/VERIFIED/REOPENED findings with repo-relative file_path and snippet."""
+  text = (raw_report or "").strip()
+  if not text or text == "null":
+    return "[]"
+  try:
+    items, _ = json.JSONDecoder().raw_decode(text)
+  except json.JSONDecodeError:
+    return "[]"
+  if not isinstance(items, list):
+    return "[]"
+  excluded = {str(fid) for fid in exclude_finding_ids if fid} if exclude_finding_ids else set()
+  filtered = []
+  for item in items:
+    if not isinstance(item, dict):
+      continue
+    finding = Finding.from_dict(item)
+    if excluded and str(finding.finding_id or "") in excluded:
+      continue
+    if finding.status in _ACTIVE_REPORT_STATUSES:
+      filtered.append({
+          "file_path": _normalize_report_file_path(finding.file_path, repo_dir),
+          "snippet": finding.snippet,
+      })
+  return json.dumps(filtered, indent=2)
 
 # Matches per-batch completion lines emitted by `cm find --deep`, e.g.:
 #   [1/124 batches] ✅ data/static/codefixes/forgedReviewChallenge_3.ts (1m13.6s) | 14.2k tok - 0 vulnerabilities
@@ -701,6 +817,7 @@ def run_complete_scan(
     extra_flags: Optional[List[str]] = None,
     complete_runs: int = 5,
     critical_high_only: bool = True,
+    context: Optional[str] = None,
 ) -> Any:
   """Runs sequential deep scans, tracking clean files in .cmignore, scoping follow-up passes to active files, and stopping early when converged."""
   cmignore_path = (
@@ -720,8 +837,12 @@ def run_complete_scan(
     pre_scan_session_ids = _snapshot_db_session_ids(cm)
     pre_scan_finding_ids = set(_snapshot_db_findings(cm).keys())
     excluded_finding_ids = set(pre_scan_finding_ids)
+    discouraged_cwes = _load_discouraged_cwes()
+    temp_dir = cm.repo_dir if os.path.isdir(cm.repo_dir) else None
     for scan_index in range(complete_runs):
       active_files: Optional[List[str]] = None
+      preprocessed_report = "[]"
+      has_prior_state = False
       if scan_index > 0:
         last_stdout = getattr(result, "stdout", "") if result is not None else ""
         counts = get_latest_session_finding_counts(
@@ -746,17 +867,67 @@ def run_complete_scan(
           extra = "".join(f"{f}\n" for f in clean_files)
           with open(cmignore_path, "w", encoding="utf-8") as clean_f:
             clean_f.write(base + extra)
-      pre_pass_rows = _snapshot_db_findings(cm)
-      result = cm.find(
-          target_or_id=target_or_id,
-          scan_mode=ScanMode.DEEP,
-          extra_flags=extra_flags,
-          max_turns=12 if scan_index > 0 else 8,
-          active_files=active_files or None,
-          critical_high_only=critical_high_only,
-          exclude_finding_ids=excluded_finding_ids or None,
-          skip_prior_report=(scan_index == 0),
-      )
+        report_cmd = codemender.build_cm_command(
+            cm.cm_binary,
+            "report",
+            extra_flags=["--format", "json"],
+        )
+        report_res = codemender.run_command(
+            report_cmd,
+            cwd=cm.repo_dir,
+            env=cm.env,
+            check=False,
+        )
+        preprocessed_report = preprocess_report_for_context(
+            getattr(report_res, "stdout", "") or "",
+            repo_dir=cm.repo_dir,
+            exclude_finding_ids=excluded_finding_ids or None,
+        )
+        has_prior_state = (preprocessed_report != "[]") or bool(active_files)
+
+      report_file: Optional[str] = None
+      pass_extra_flags = list(extra_flags) if extra_flags else []
+      try:
+        if has_prior_state:
+          with tempfile.NamedTemporaryFile(
+              mode="w",
+              suffix="",
+              dir=temp_dir,
+              delete=False,
+              encoding="utf-8",
+          ) as tmp_file:
+            tmp_file.write(preprocessed_report)
+            report_file = tmp_file.name
+            report_ref = os.path.basename(report_file) if temp_dir else report_file
+          pass_context = _FIND_CONTEXT_FOR_LATER_PASSES.format(
+              report_file=report_ref,
+              discouraged_cwes=discouraged_cwes,
+          )
+          if not codemender._has_flag(pass_extra_flags, "--enable-bash"):
+            pass_extra_flags.append("--enable-bash")
+        else:
+          pass_context = _FIND_CONTEXT_FOR_FIRST_PASS.format(
+              discouraged_cwes=discouraged_cwes,
+          )
+        if critical_high_only:
+          pass_context = pass_context.replace(
+              _DEFAULT_AUDIT_BULLET,
+              _CRITICAL_HIGH_AUDIT_BULLET,
+              1,
+          )
+        if context and context.strip():
+          pass_context = f"{pass_context}\n\n{context.strip()}"
+        pre_pass_rows = _snapshot_db_findings(cm)
+        result = cm.find(
+            target_or_id=target_or_id,
+            scan_mode=ScanMode.DEEP,
+            extra_flags=pass_extra_flags or None,
+            max_turns=12 if scan_index > 0 else 8,
+            context=pass_context,
+        )
+      finally:
+        if report_file is not None and os.path.exists(report_file):
+          os.remove(report_file)
       prev_active_files = active_files
       _reconcile_overwritten_findings(
           cm,

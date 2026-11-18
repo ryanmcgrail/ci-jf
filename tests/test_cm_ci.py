@@ -979,6 +979,83 @@ class TestCmCi(unittest.TestCase):
             self.assertEqual(captured_kwargs[0]["scan_mode"], expected_mode)
             self.assertEqual(captured_kwargs[0].get("extra_flags"), expected_extra_flags)
 
+    def test_cmd_find_forwards_context_across_all_scan_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            subprocess.run(["git", "init", tmpdir], check=True, capture_output=True)
+            out_dir = os.path.join(tmpdir, ".codemender")
+            cm_home = os.path.join(tmpdir, "cm_home")
+            os.makedirs(cm_home, exist_ok=True)
+
+            find_cmds: list[list[str]] = []
+
+            def fake_run_command(cmd: list[str], **_kwargs: Any) -> Any:
+                if cmd[:2] == ["cm", "report"]:
+                    return subprocess.CompletedProcess(cmd, 0, "[]", "")
+                if cmd[:2] == ["cm", "find"]:
+                    find_cmds.append(cmd)
+                    return subprocess.CompletedProcess(cmd, 0, "Success", "")
+                raise AssertionError(f"Unexpected command: {cmd}")
+
+            with (
+                patch.object(cm_ci, "need"),
+                patch.object(cm_ci, "check_config", return_value=True),
+                patch.dict(os.environ, {"CM_HOME": cm_home}),
+                patch("codemender.run_command", side_effect=fake_run_command),
+                patch("sys.stdout", new_callable=io.StringIO),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                # Without --context: --quick, --diff, --deep omit --context; --complete injects Pass 1 context
+                self.assertEqual(cm_ci.cmd_find(["--repo", tmpdir, "--out-dir", out_dir, "--quick"]), 0)
+                self.assertEqual(cm_ci.cmd_find(["--repo", tmpdir, "--out-dir", out_dir, "--diff"]), 0)
+                self.assertEqual(cm_ci.cmd_find(["--repo", tmpdir, "--out-dir", out_dir, "--deep"]), 0)
+                self.assertEqual(
+                    cm_ci.cmd_find(["--repo", tmpdir, "--out-dir", out_dir, "--complete", "--complete-runs=1"]),
+                    0,
+                )
+                # With --context: every scan mode passes --context to `cm find`
+                self.assertEqual(
+                    cm_ci.cmd_find(["--repo", tmpdir, "--out-dir", out_dir, "--quick", "--context", "Quick ctx"]),
+                    0,
+                )
+                self.assertEqual(
+                    cm_ci.cmd_find(["--repo", tmpdir, "--out-dir", out_dir, "--diff", "-c", "Diff ctx"]),
+                    0,
+                )
+                self.assertEqual(
+                    cm_ci.cmd_find(["--repo", tmpdir, "--out-dir", out_dir, "--deep", "--context=Deep ctx"]),
+                    0,
+                )
+                self.assertEqual(
+                    cm_ci.cmd_find(
+                        [
+                            "--repo",
+                            tmpdir,
+                            "--out-dir",
+                            out_dir,
+                            "--complete",
+                            "--complete-runs=1",
+                            "--context",
+                            "Complete ctx",
+                        ]
+                    ),
+                    0,
+                )
+
+            self.assertEqual(len(find_cmds), 8)
+            for cmd in find_cmds[:3]:
+                self.assertNotIn("--context", cmd)
+            self.assertIn("--context", find_cmds[3])
+            base_complete_ctx = find_cmds[3][find_cmds[3].index("--context") + 1]
+            self.assertIn("# Audit Strategy", base_complete_ctx)
+
+            self.assertEqual(find_cmds[4][find_cmds[4].index("--context") + 1], "Quick ctx")
+            self.assertEqual(find_cmds[5][find_cmds[5].index("--context") + 1], "Diff ctx")
+            self.assertEqual(find_cmds[6][find_cmds[6].index("--context") + 1], "Deep ctx")
+            self.assertEqual(
+                find_cmds[7][find_cmds[7].index("--context") + 1],
+                f"{base_complete_ctx}\n\nComplete ctx",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
