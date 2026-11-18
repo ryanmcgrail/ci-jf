@@ -38,22 +38,17 @@ def parse_cwe_id(value: int | str | Finding) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     if isinstance(value, Finding):
-        combined = " ".join(
-            str(v or "")
-            for v in (
-                value.vuln_id,
-                value.vuln_type,
-                value.title,
-                value.analysis,
-            )
-        )
-        match = re.search(r"CWE-(\d+)", combined, re.IGNORECASE)
-        return int(match.group(1)) if match else None
+        for field_val in (value.vuln_id, value.vuln_type):
+            if field_val:
+                parsed = parse_cwe_id(field_val)
+                if parsed is not None:
+                    return parsed
+        return None
     if isinstance(value, str):
         text = value.strip()
         if text.isdigit():
             return int(text)
-        match = re.search(r"CWE-(\d+)", text, re.IGNORECASE)
+        match = re.search(r"\bCWE-(\d+)\b", text, re.IGNORECASE)
         if match:
             return int(match.group(1))
     return None
