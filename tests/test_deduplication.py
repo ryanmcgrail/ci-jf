@@ -633,6 +633,115 @@ class TestDeduplication(unittest.TestCase):
             self.assertEqual(db_sevs["open-med"], "HIGH")
             self.assertEqual(db_sevs["open-high"], "HIGH")
 
+    def test_dedup_keeps_disjoint_positive_lines_distinct_within_current_while_matching_shifted_existing(
+        self,
+    ) -> None:
+        shared_snippet = "secret = SECRETS[new Random().nextInt(SECRETS.length)];"
+        existing = [
+            Finding(
+                finding_id="ex-shifted",
+                file_path="src/auth.java",
+                vuln_type="CWE-338",
+                start_line=20,
+                end_line=20,
+                snippet="token = generateInsecureResetTokenForUser(username);",
+                status="OPEN",
+            )
+        ]
+        current = [
+            Finding(
+                finding_id="cur-md5",
+                file_path="src/hashing.java",
+                vuln_type="CWE-338",
+                start_line=53,
+                end_line=53,
+                snippet=shared_snippet,
+                status="OPEN",
+            ),
+            Finding(
+                finding_id="cur-sha256",
+                file_path="src/hashing.java",
+                vuln_type="CWE-338",
+                start_line=71,
+                end_line=71,
+                snippet=shared_snippet,
+                status="OPEN",
+            ),
+            Finding(
+                finding_id="cur-shifted-dup",
+                file_path="src/auth.java",
+                vuln_type="CWE-338",
+                start_line=60,
+                end_line=60,
+                snippet="token = generateInsecureResetTokenForUser(username);",
+                status="OPEN",
+            ),
+        ]
+        self.assertTrue(deduplication.is_duplicate(current[0], current[1], allow_line_shift=True))
+        self.assertFalse(deduplication.is_duplicate(current[0], current[1], allow_line_shift=False))
+
+        res = deduplication.dedup(existing, current, "")
+        self.assertEqual([f.finding_id for f in res["findings"]], ["cur-md5", "cur-sha256"])
+        self.assertEqual([f.finding_id for f in res["suppressed_duplicates"]], ["cur-shifted-dup"])
+
+    def test_deduplicate_db_findings_and_reconcile_overwritten_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mock_cm = MockCodeMender(
+                repo_dir=os.path.realpath(tmpdir),
+                initial_findings=[
+                    Finding(
+                        finding_id="prior-crit",
+                        file_path="src/app.py",
+                        vuln_type="CWE-94",
+                        start_line=10,
+                        end_line=14,
+                        severity="CRITICAL",
+                        snippet="eval(user_supplied_expression_payload)",
+                        status="OPEN",
+                    ),
+                    Finding(
+                        finding_id="cur-1",
+                        file_path="src/app.py",
+                        vuln_type="CWE-94",
+                        start_line=11,
+                        end_line=13,
+                        severity="MEDIUM",
+                        snippet="eval(user_supplied_expression_payload)",
+                        status="OPEN",
+                    ),
+                    Finding(
+                        finding_id="cur-2",
+                        file_path="src/sql.py",
+                        vuln_type="CWE-89",
+                        start_line=30,
+                        end_line=34,
+                        severity="MEDIUM",
+                        snippet="cursor.execute('SELECT * FROM u WHERE id=' + uid)",
+                        status="OPEN",
+                    ),
+                    Finding(
+                        finding_id="cur-2-dup-high",
+                        file_path="src/sql.py",
+                        vuln_type="CWE-89",
+                        start_line=31,
+                        end_line=33,
+                        severity="HIGH",
+                        snippet="cursor.execute('SELECT * FROM u WHERE id=' + uid)",
+                        status="OPEN",
+                    ),
+                ],
+            )
+            snap = deduplication.snapshot_db_findings(mock_cm)
+            self.assertIn("prior-crit", snap)
+
+            # Exclude `prior-crit` from mid-scan deletion: `cur-1` stays present with upgraded CRITICAL severity,
+            # while `cur-2-dup-high` merges into `cur-2` and upgrades `cur-2` to HIGH.
+            deduplication.deduplicate_db_findings(mock_cm, exclude_finding_ids={"prior-crit"})
+            by_id = {f.finding_id: f for f in mock_cm.list_findings()}
+            self.assertEqual(set(by_id.keys()), {"prior-crit", "cur-1", "cur-2"})
+            self.assertEqual(by_id["cur-1"].severity, "CRITICAL")
+            self.assertEqual(by_id["cur-2"].severity, "HIGH")
+
 
 if __name__ == "__main__":
     unittest.main()

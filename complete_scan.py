@@ -6,17 +6,14 @@ import os
 import re
 import sqlite3
 import tempfile
-import types
-import uuid
 from typing import Any, Dict, Iterable, List, Optional, Set
 
 import codemender
 from codemender import CodeMender, ScanMode
 from deduplication import (
-    higher_severity,
-    is_duplicate,
-    remove_duplicates_in_db,
-    severity_rank,
+    deduplicate_db_findings,
+    reconcile_overwritten_findings,
+    snapshot_db_findings,
 )
 from finding import Finding
 
@@ -146,38 +143,6 @@ _DEEP_FAILED_BATCH_LINE_RE = re.compile(
     r"^\[\d+/\d+\s+batches\]\s+(?:❌|✗|FAIL)\S*\s+(\S+)",
     re.MULTILINE,
 )
-
-
-def _sev_rank(severity: Any) -> int:
-  return severity_rank(severity)
-
-
-def _extract_row_severity(row: Dict[str, Any]) -> str:
-  sev = str(row.get("severity") or "").strip().upper()
-  if sev:
-    return sev
-  raw_json = row.get("finding_json")
-  if isinstance(raw_json, str) and raw_json.strip():
-    try:
-      parsed = json.loads(raw_json)
-      if isinstance(parsed, dict):
-        return str(parsed.get("severity") or "").strip().upper()
-    except json.JSONDecodeError:
-      pass
-  return ""
-
-
-def _update_finding_json_str(raw_json: Any, **updates: Any) -> Any:
-  if not isinstance(raw_json, str) or not raw_json.strip():
-    return raw_json
-  try:
-    parsed = json.loads(raw_json)
-  except json.JSONDecodeError:
-    return raw_json
-  if not isinstance(parsed, dict) or not parsed:
-    return raw_json
-  parsed.update(updates)
-  return json.dumps(parsed)
 
 
 def _rel_target_path(
@@ -485,34 +450,6 @@ def _snapshot_db_session_ids(cm: CodeMender) -> Set[str]:
   return {str(r[0]) for r in rows if r and r[0]}
 
 
-def _snapshot_db_findings(
-    cm: CodeMender,
-    exclude_finding_ids: Optional[Set[str]] = None,
-) -> Dict[str, Dict[str, Any]]:
-  """Captures a snapshot of existing rows in state.db findings keyed by finding_id."""
-  con = cm.db
-  if con is None:
-    return {}
-  try:
-    cur = con.execute("SELECT * FROM findings ORDER BY rowid ASC")
-    col_names = [desc[0] for desc in (cur.description or [])]
-    rows = cur.fetchall()
-  except sqlite3.Error:
-    return {}
-  if not rows or "finding_id" not in col_names:
-    return {}
-  snapshot: Dict[str, Dict[str, Any]] = {}
-  for row in rows:
-    row_dict = dict(zip(col_names, row))
-    fid = row_dict.get("finding_id")
-    if fid:
-      fid_str = str(fid)
-      if exclude_finding_ids and fid_str in exclude_finding_ids:
-        continue
-      snapshot[fid_str] = row_dict
-  return snapshot
-
-
 def _active_preexisting_finding_ids(
     cm: CodeMender,
     pre_scan_finding_ids: Set[str],
@@ -540,276 +477,6 @@ def _active_preexisting_finding_ids(
     if fid in pre_scan_finding_ids and (not sid or sid in pre_scan_session_ids):
       still_preexisting.add(fid)
   return still_preexisting
-
-
-def _reconcile_overwritten_findings(
-    cm: CodeMender,
-    pre_pass_rows: Dict[str, Dict[str, Any]],
-    pre_scan_session_ids: Optional[Set[str]] = None,
-    pre_scan_finding_ids: Optional[Set[str]] = None,
-    restore_session_id: bool = True,
-) -> None:
-  """Reconciles findings overwritten in-place by cm, ensuring severities never decrease."""
-  if not pre_pass_rows:
-    return
-  con = cm.db
-  if con is None:
-    return
-  try:
-    cur = con.execute("SELECT * FROM findings ORDER BY rowid ASC")
-    col_names = [desc[0] for desc in (cur.description or [])]
-    rows = cur.fetchall()
-  except sqlite3.Error:
-    return
-  if not rows or "finding_id" not in col_names:
-    return
-
-  has_session_col = "session_id" in col_names
-  changed = False
-  for row in rows:
-    cur_row = dict(zip(col_names, row))
-    fid = str(cur_row.get("finding_id") or "")
-    if not fid or fid not in pre_pass_rows:
-      continue
-    old_row = pre_pass_rows[fid]
-    old_sid = old_row.get("session_id") if has_session_col else None
-    cur_sid = cur_row.get("session_id") if has_session_col else None
-    old_sev = _extract_row_severity(old_row)
-    cur_sev = _extract_row_severity(cur_row)
-    best_sev = higher_severity(old_sev, cur_sev) or ""
-    sid_changed = bool(old_sid and cur_sid and cur_sid != old_sid)
-    sev_decreased = bool(best_sev and _sev_rank(best_sev) < _sev_rank(cur_sev))
-    if not sid_changed and not sev_decreased:
-      continue
-
-    try:
-      old_sl = int(old_row.get("start_line") or 0)
-    except (TypeError, ValueError):
-      old_sl = 0
-    try:
-      old_el = max(int(old_row.get("end_line") or old_sl), old_sl)
-    except (TypeError, ValueError):
-      old_el = old_sl
-    try:
-      cur_sl = int(cur_row.get("start_line") or 0)
-    except (TypeError, ValueError):
-      cur_sl = 0
-    try:
-      cur_el = max(int(cur_row.get("end_line") or cur_sl), cur_sl)
-    except (TypeError, ValueError):
-      cur_el = cur_sl
-
-    if sid_changed and old_sl > 0 and cur_sl > 0 and (old_el < cur_sl or cur_el < old_sl):
-      # Distinct non-overlapping sinks in the same file collided on identical snippet text.
-      # Re-insert the overwritten prior finding under a disambiguated finding_id.
-      disambiguated_id = str(
-          uuid.uuid5(uuid.NAMESPACE_DNS, f"{fid}:{old_sl}:{old_el}")
-      )
-      restored = dict(old_row)
-      restored["finding_id"] = disambiguated_id
-      if restored.get("fingerprint"):
-        restored["fingerprint"] = f"{restored['fingerprint']}:{old_sl}:{old_el}"
-      if "finding_json" in restored:
-        restored["finding_json"] = _update_finding_json_str(
-            restored.get("finding_json"),
-            finding_id=disambiguated_id,
-        )
-      placeholders = ", ".join("?" * len(col_names))
-      cols_sql = ", ".join(col_names)
-      try:
-        con.execute(
-            f"INSERT OR IGNORE INTO findings ({cols_sql}) VALUES ({placeholders})",
-            [restored.get(c) for c in col_names],
-        )
-        if (
-            pre_scan_finding_ids is not None
-            and fid in pre_scan_finding_ids
-            and pre_scan_session_ids
-            and str(old_sid) in pre_scan_session_ids
-        ):
-          pre_scan_finding_ids.add(disambiguated_id)
-        changed = True
-      except sqlite3.Error:
-        pass
-    else:
-      # Same vulnerability re-reported: restore original session_id when it came from an
-      # earlier pass of the current scan, and ensure severity can only increase, never decrease.
-      should_restore_sid = (
-          sid_changed
-          and restore_session_id
-          and not (pre_scan_session_ids and str(old_sid) in pre_scan_session_ids)
-      )
-      set_clauses: List[str] = []
-      params: List[Any] = []
-      if should_restore_sid:
-        set_clauses.append("session_id = ?")
-        params.append(old_sid)
-      if "severity" in col_names and best_sev and (should_restore_sid or sev_decreased):
-        set_clauses.append("severity = ?")
-        params.append(best_sev)
-        if "finding_json" in col_names:
-          set_clauses.append("finding_json = ?")
-          params.append(
-              _update_finding_json_str(
-                  cur_row.get("finding_json"),
-                  severity=best_sev,
-              )
-          )
-      if not set_clauses:
-        continue
-      params.append(fid)
-      try:
-        con.execute(
-            f"UPDATE findings SET {', '.join(set_clauses)} WHERE finding_id = ?",
-            params,
-        )
-        changed = True
-      except sqlite3.Error:
-        pass
-
-  if changed:
-    try:
-      con.commit()
-    except sqlite3.Error:
-      pass
-
-
-def _has_disjoint_positive_lines(a: Finding, b: Finding) -> bool:
-  """Returns True when both findings have positive line numbers and their ranges do not overlap."""
-  try:
-    sla = int(a.start_line or 0)
-    ela = max(int(a.end_line or sla), sla)
-    slb = int(b.start_line or 0)
-    elb = max(int(b.end_line or slb), slb)
-  except (TypeError, ValueError):
-    return False
-  return sla > 0 and slb > 0 and (ela < slb or elb < sla)
-
-
-def deduplicate_db_findings(
-    cm: CodeMender,
-    exclude_finding_ids: Optional[Set[str]] = None,
-) -> None:
-  """Deduplicates active findings in state.db so inter-pass duplicates do not keep files active, monotonically upgrading severity when a duplicate has higher severity."""
-  con = cm.db
-  if con is None:
-    return
-  try:
-    cur = con.execute("SELECT * FROM findings ORDER BY rowid ASC")
-    col_names = [desc[0] for desc in (cur.description or [])]
-    rows = cur.fetchall()
-  except sqlite3.Error:
-    return
-  if not rows or "file_path" not in col_names:
-    return
-  all_row_dicts = [dict(zip(col_names, row)) for row in rows]
-  raw_by_id = {
-      str(rd.get("finding_id")): rd
-      for rd in all_row_dicts
-      if rd.get("finding_id")
-  }
-  preexisting_findings: List[Finding] = []
-  if exclude_finding_ids:
-    preexisting_findings = [
-        Finding.from_dict(rd)
-        for rd in all_row_dicts
-        if str(rd.get("finding_id") or "") in exclude_finding_ids
-    ]
-    row_dicts = [
-        rd
-        for rd in all_row_dicts
-        if str(rd.get("finding_id") or "") not in exclude_finding_ids
-    ]
-  else:
-    row_dicts = all_row_dicts
-  findings = [Finding.from_dict(rd) for rd in row_dicts]
-  severity_upgrades: Dict[str, str] = {}
-
-  if preexisting_findings:
-    prior_candidates = [
-        pf
-        for pf in preexisting_findings
-        if str(pf.status or "OPEN").upper()
-        in ("OPEN", "REOPENED", "VERIFIED", "FIXED", "CLOSED", "")
-    ]
-    for f_idx, f in enumerate(findings):
-      if str(f.status or "OPEN").upper() not in ("OPEN", "REOPENED", "VERIFIED", ""):
-        continue
-      for p_pre in prior_candidates:
-        if _has_disjoint_positive_lines(p_pre, f) or not is_duplicate(p_pre, f, cm.repo_dir):
-          continue
-        best = higher_severity(p_pre.severity, f.severity)
-        if best and _sev_rank(best) < _sev_rank(f.severity):
-          findings[f_idx] = Finding(f.to_dict(), severity=best)
-          f = findings[f_idx]
-          if f.finding_id:
-            severity_upgrades[str(f.finding_id)] = best
-        if (
-            best
-            and p_pre.finding_id
-            and _sev_rank(best)
-            < _sev_rank(severity_upgrades.get(str(p_pre.finding_id), p_pre.severity))
-        ):
-          severity_upgrades[str(p_pre.finding_id)] = best
-
-  pool: List[Finding] = []
-  dups: List[Finding] = []
-  for f in findings:
-    if str(f.status or "OPEN").upper() not in ("OPEN", "REOPENED", "VERIFIED", ""):
-      continue
-    match_idx = next(
-        (
-            idx
-            for idx, p in enumerate(pool)
-            if not _has_disjoint_positive_lines(p, f)
-            and is_duplicate(p, f, cm.repo_dir)
-        ),
-        None,
-    )
-    if match_idx is not None:
-      match = pool[match_idx]
-      best = higher_severity(match.severity, f.severity)
-      if best and _sev_rank(best) < _sev_rank(match.severity):
-        pool[match_idx] = Finding(match.to_dict(), severity=best)
-        if match.finding_id:
-          severity_upgrades[str(match.finding_id)] = best
-      if f.finding_id:
-        severity_upgrades.pop(str(f.finding_id), None)
-      dups.append(Finding(f.to_dict(), duplicate_of=match.finding_id))
-    else:
-      pool.append(f)
-  if severity_upgrades and "severity" in col_names:
-    for fid, new_sev in severity_upgrades.items():
-      cur_db_sev = _extract_row_severity(raw_by_id.get(fid, {}))
-      if _sev_rank(new_sev) >= _sev_rank(cur_db_sev):
-        continue
-      set_clauses = ["severity = ?"]
-      params: List[Any] = [new_sev]
-      if "finding_json" in col_names and fid in raw_by_id:
-        set_clauses.append("finding_json = ?")
-        params.append(
-            _update_finding_json_str(
-                raw_by_id[fid].get("finding_json"),
-                severity=new_sev,
-            )
-        )
-      params.append(fid)
-      try:
-        con.execute(
-            f"UPDATE findings SET {', '.join(set_clauses)} WHERE finding_id = ?",
-            params,
-        )
-      except sqlite3.Error:
-        pass
-    try:
-      con.commit()
-    except sqlite3.Error:
-      pass
-  if dups:
-    remove_duplicates_in_db(
-        types.SimpleNamespace(cm=cm),
-        dups,
-    )
 
 
 _SCRATCH_DIR_NAME = ".codemender"
@@ -925,7 +592,7 @@ def run_complete_scan(
       prev_active_files: Optional[List[str]] = None
       cleared_files: Set[str] = set()
       pre_scan_session_ids = _snapshot_db_session_ids(cm)
-      pre_scan_finding_ids = set(_snapshot_db_findings(cm).keys())
+      pre_scan_finding_ids = set(snapshot_db_findings(cm).keys())
       excluded_finding_ids = set(pre_scan_finding_ids)
       discouraged_cwes = _load_discouraged_cwes()
       for scan_index in range(complete_runs):
@@ -1011,7 +678,7 @@ def run_complete_scan(
             )
           if context and context.strip():
             pass_context = f"{pass_context}\n\n{context.strip()}"
-          pre_pass_rows = _snapshot_db_findings(cm)
+          pre_pass_rows = snapshot_db_findings(cm)
           result = cm.find(
               target_or_id=target_or_id,
               scan_mode=ScanMode.DEEP,
@@ -1024,7 +691,7 @@ def run_complete_scan(
             _safe_remove(report_file)
             _safe_remove(f"{report_file}.tmp")
         prev_active_files = active_files
-        _reconcile_overwritten_findings(
+        reconcile_overwritten_findings(
             cm,
             pre_pass_rows,
             pre_scan_session_ids=pre_scan_session_ids,

@@ -47,8 +47,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from codemender import CodeMender, ScanMode
 from complete_scan import (
-    _reconcile_overwritten_findings,
-    _snapshot_db_findings,
     restore_interrupted_workspace,
     run_complete_scan,
 )
@@ -58,8 +56,10 @@ from deduplication import (
     higher_severity,
     is_critical_high,
     load_findings,
+    reconcile_overwritten_findings,
     remove_duplicates_in_db,
     severity_rank,
+    snapshot_db_findings,
     status_of,
     summary_line,
     upgrade_finding_severity_in_db,
@@ -330,7 +330,7 @@ def cmd_find(argv: List[str]) -> int:
 
     before = ctx.report()
     before_ids = {str(f.finding_id or "") for f in before}
-    pre_find_rows = _snapshot_db_findings(ctx.cm)
+    pre_find_rows = snapshot_db_findings(ctx.cm)
 
     target: Optional[str] = args.target
     extra_cm_flags: List[str] = []
@@ -375,7 +375,7 @@ def cmd_find(argv: List[str]) -> int:
             if extra_cm_flags:
                 find_kwargs["extra_flags"] = extra_cm_flags
             ctx.cm.find(**find_kwargs)
-            _reconcile_overwritten_findings(ctx.cm, pre_find_rows, restore_session_id=False)
+            reconcile_overwritten_findings(ctx.cm, pre_find_rows, restore_session_id=False)
     except RuntimeError as e:
         print(f"cm-ci: {e}", file=sys.stderr)
         m = re.search(r"exit code (\d+)", str(e))

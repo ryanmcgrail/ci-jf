@@ -5,7 +5,9 @@ import json
 import re
 import sqlite3
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+import types
+import uuid
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from cwe_database import load_cwe_database, parse_cwe_id
 from finding import Finding
@@ -60,7 +62,21 @@ def _int(v: Any, default: int = 0) -> int:
         return default
 
 
-def is_duplicate(a: Finding, b: Finding, repo_root: str = "") -> bool:
+def has_disjoint_positive_lines(a: Finding, b: Finding) -> bool:
+    """Returns True when both findings have positive line numbers and their ranges do not overlap."""
+    sla = _int(a.start_line)
+    ela = max(_int(a.end_line, sla), sla)
+    slb = _int(b.start_line)
+    elb = max(_int(b.end_line, slb), slb)
+    return sla > 0 and slb > 0 and (ela < slb or elb < sla)
+
+
+def is_duplicate(
+    a: Finding,
+    b: Finding,
+    repo_root: str = "",
+    allow_line_shift: bool = True,
+) -> bool:
     fa = norm_rel_path(a.file_path or "", repo_root)
     fb = norm_rel_path(b.file_path or "", repo_root)
     if not fa or fa != fb or CWE_DB.find_parent(a, b) is None:
@@ -71,6 +87,8 @@ def is_duplicate(a: Finding, b: Finding, repo_root: str = "") -> bool:
     elb = max(_int(b.end_line, slb), slb)
     if sla > 0 and slb > 0 and sla <= elb and slb <= ela:
         return True
+    if not allow_line_shift and sla > 0 and slb > 0:
+        return False
     la = set(a.raw_lines or code_lines(a.snippet or ""))
     lb = set(b.raw_lines or code_lines(b.snippet or ""))
     return bool(la and lb and (la <= lb or lb <= la))
@@ -155,17 +173,30 @@ def _upgrade_list_entry_severity(items: List[Finding], target: Finding, new_sev:
                 items[idx] = Finding(item.to_dict(), severity=new_sev)
 
 
-def dedup(existing: List[Finding], current: List[Finding], repo_root: str) -> Dict[str, List[Finding]]:
+def dedup(
+    existing: List[Finding],
+    current: List[Finding],
+    repo_root: str,
+    allow_line_shift: bool = True,
+) -> Dict[str, List[Finding]]:
     """Partition `current` against `existing`. A match on an active entry → suppressed
     duplicate; a match only on a FIXED/CLOSED entry → reopened (regression, not noise).
     Preference among several matches: ACTIVE > FIXED/CLOSED > DISMISSED, so a dismissed
-    twin never hides a regression of a fixed finding. Severities can only increase over time."""
+    twin never hides a regression of a fixed finding. Severities can only increase over time.
+    Cross-run comparisons (`existing` vs `current`) tolerate shifted line numbers when
+    `allow_line_shift=True`, whereas intra-`current` comparisons within the same scan
+    snapshot keep disjoint positive line ranges distinct."""
     pool: List[Finding] = []
     res: Dict[str, List[Finding]] = {"findings": [], "reopened": [], "suppressed_duplicates": []}
     for ex in existing:
         if status_of(ex) in ACTIVE:
             m_idx = next(
-                (idx for idx, p in enumerate(pool) if status_of(p) in ACTIVE and is_duplicate(p, ex, repo_root)),
+                (
+                    idx
+                    for idx, p in enumerate(pool)
+                    if status_of(p) in ACTIVE
+                    and is_duplicate(p, ex, repo_root, allow_line_shift=allow_line_shift)
+                ),
                 None,
             )
             if m_idx is not None:
@@ -179,8 +210,18 @@ def dedup(existing: List[Finding], current: List[Finding], repo_root: str) -> Di
                 )
                 continue
         pool.append(ex)
+    existing_pool_len = len(pool)
     for cur in current:
-        matches = [p for p in pool if is_duplicate(p, cur, repo_root)]
+        matches = [
+            p
+            for idx, p in enumerate(pool)
+            if is_duplicate(
+                p,
+                cur,
+                repo_root,
+                allow_line_shift=(allow_line_shift if idx < existing_pool_len else False),
+            )
+        ]
         m = (
             next((p for p in matches if status_of(p) in ACTIVE), None)
             or next((p for p in matches if status_of(p) in RESOLVED), None)
@@ -246,6 +287,34 @@ def summary_line(
     )
 
 
+def _extract_row_severity(row: Dict[str, Any]) -> str:
+    sev = str(row.get("severity") or "").strip().upper()
+    if sev:
+        return sev
+    raw_json = row.get("finding_json")
+    if isinstance(raw_json, str) and raw_json.strip():
+        try:
+            parsed = json.loads(raw_json)
+            if isinstance(parsed, dict):
+                return str(parsed.get("severity") or "").strip().upper()
+        except json.JSONDecodeError:
+            pass
+    return ""
+
+
+def _update_finding_json_str(raw_json: Any, **updates: Any) -> Any:
+    if not isinstance(raw_json, str) or not raw_json.strip():
+        return raw_json
+    try:
+        parsed = json.loads(raw_json)
+    except json.JSONDecodeError:
+        return raw_json
+    if not isinstance(parsed, dict) or not parsed:
+        return raw_json
+    parsed.update(updates)
+    return json.dumps(parsed)
+
+
 def upgrade_finding_severity_in_db(
     con: sqlite3.Connection,
     cols: set,
@@ -262,20 +331,19 @@ def upgrade_finding_severity_in_db(
     row = con.execute(f"SELECT {select_cols} FROM findings WHERE finding_id=?", (fid,)).fetchone()
     if row is None:
         return False
-    cur_sev = str(row[0] or "").strip().upper()
+    row_dict: Dict[str, Any] = {"severity": row[0]}
+    if has_fjson:
+        row_dict["finding_json"] = row[1]
+    cur_sev = _extract_row_severity(row_dict)
     if severity_rank(cand) >= severity_rank(cur_sev):
         return False
     sets = ["severity=?"]
     params: List[Any] = [cand]
-    if has_fjson and isinstance(row[1], str) and row[1].strip():
-        try:
-            parsed = json.loads(row[1])
-            if isinstance(parsed, dict) and parsed:
-                parsed["severity"] = cand
-                sets.append("finding_json=?")
-                params.append(json.dumps(parsed))
-        except json.JSONDecodeError:
-            pass
+    if has_fjson:
+        updated_fjson = _update_finding_json_str(row[1], severity=cand)
+        if updated_fjson != row[1]:
+            sets.append("finding_json=?")
+            params.append(updated_fjson)
     params.append(fid)
     con.execute(f"UPDATE findings SET {', '.join(sets)} WHERE finding_id=?", params)
     return True
@@ -334,4 +402,208 @@ def remove_duplicates_in_db(ctx: Any, dups: List[Finding]) -> Optional[Tuple[int
     except sqlite3.Error as e:
         print(f"cm-ci: warning — could not update state.db: {e}", file=sys.stderr)
         return None
+
+
+def snapshot_db_findings(
+    cm: Any,
+    exclude_finding_ids: Optional[Set[str]] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Captures a snapshot of existing rows in state.db findings keyed by finding_id."""
+    con = cm.db
+    if con is None:
+        return {}
+    try:
+        cur = con.execute("SELECT * FROM findings ORDER BY rowid ASC")
+        col_names = [desc[0] for desc in (cur.description or [])]
+        rows = cur.fetchall()
+    except sqlite3.Error:
+        return {}
+    if not rows or "finding_id" not in col_names:
+        return {}
+    snapshot: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        row_dict = dict(zip(col_names, row))
+        fid = row_dict.get("finding_id")
+        if fid:
+            fid_str = str(fid)
+            if exclude_finding_ids and fid_str in exclude_finding_ids:
+                continue
+            snapshot[fid_str] = row_dict
+    return snapshot
+
+
+def reconcile_overwritten_findings(
+    cm: Any,
+    pre_pass_rows: Dict[str, Dict[str, Any]],
+    pre_scan_session_ids: Optional[Set[str]] = None,
+    pre_scan_finding_ids: Optional[Set[str]] = None,
+    restore_session_id: bool = True,
+) -> None:
+    """Reconciles findings overwritten in-place by cm, disambiguating disjoint collisions and ensuring severities never decrease."""
+    if not pre_pass_rows:
+        return
+    con = cm.db
+    if con is None:
+        return
+    try:
+        cur = con.execute("SELECT * FROM findings ORDER BY rowid ASC")
+        col_names = [desc[0] for desc in (cur.description or [])]
+        rows = cur.fetchall()
+    except sqlite3.Error:
+        return
+    if not rows or "finding_id" not in col_names:
+        return
+
+    has_session_col = "session_id" in col_names
+    changed = False
+    for row in rows:
+        cur_row = dict(zip(col_names, row))
+        fid = str(cur_row.get("finding_id") or "")
+        if not fid or fid not in pre_pass_rows:
+            continue
+        old_row = pre_pass_rows[fid]
+        old_sid = old_row.get("session_id") if has_session_col else None
+        cur_sid = cur_row.get("session_id") if has_session_col else None
+        old_sev = _extract_row_severity(old_row)
+        cur_sev = _extract_row_severity(cur_row)
+        best_sev = higher_severity(old_sev, cur_sev) or ""
+        sid_changed = bool(old_sid and cur_sid and cur_sid != old_sid)
+        sev_decreased = bool(best_sev and severity_rank(best_sev) < severity_rank(cur_sev))
+        if not sid_changed and not sev_decreased:
+            continue
+
+        old_sl = _int(old_row.get("start_line"))
+        old_el = max(_int(old_row.get("end_line"), old_sl), old_sl)
+        cur_sl = _int(cur_row.get("start_line"))
+        cur_el = max(_int(cur_row.get("end_line"), cur_sl), cur_sl)
+
+        if sid_changed and old_sl > 0 and cur_sl > 0 and (old_el < cur_sl or cur_el < old_sl):
+            disambiguated_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{fid}:{old_sl}:{old_el}"))
+            restored = dict(old_row)
+            restored["finding_id"] = disambiguated_id
+            if restored.get("fingerprint"):
+                restored["fingerprint"] = f"{restored['fingerprint']}:{old_sl}:{old_el}"
+            if "finding_json" in restored:
+                restored["finding_json"] = _update_finding_json_str(
+                    restored.get("finding_json"),
+                    finding_id=disambiguated_id,
+                )
+            placeholders = ", ".join("?" * len(col_names))
+            cols_sql = ", ".join(col_names)
+            try:
+                con.execute(
+                    f"INSERT OR IGNORE INTO findings ({cols_sql}) VALUES ({placeholders})",
+                    [restored.get(c) for c in col_names],
+                )
+                if (
+                    pre_scan_finding_ids is not None
+                    and fid in pre_scan_finding_ids
+                    and pre_scan_session_ids
+                    and str(old_sid) in pre_scan_session_ids
+                ):
+                    pre_scan_finding_ids.add(disambiguated_id)
+                changed = True
+            except sqlite3.Error:
+                pass
+        else:
+            should_restore_sid = (
+                sid_changed
+                and restore_session_id
+                and not (pre_scan_session_ids and str(old_sid) in pre_scan_session_ids)
+            )
+            set_clauses: List[str] = []
+            params: List[Any] = []
+            if should_restore_sid:
+                set_clauses.append("session_id = ?")
+                params.append(old_sid)
+            if "severity" in col_names and best_sev and (should_restore_sid or sev_decreased):
+                set_clauses.append("severity = ?")
+                params.append(best_sev)
+                if "finding_json" in col_names:
+                    set_clauses.append("finding_json = ?")
+                    params.append(
+                        _update_finding_json_str(cur_row.get("finding_json"), severity=best_sev)
+                    )
+            if not set_clauses:
+                continue
+            params.append(fid)
+            try:
+                con.execute(
+                    f"UPDATE findings SET {', '.join(set_clauses)} WHERE finding_id = ?",
+                    params,
+                )
+                changed = True
+            except sqlite3.Error:
+                pass
+
+    if changed:
+        try:
+            con.commit()
+        except sqlite3.Error:
+            pass
+
+
+def deduplicate_db_findings(
+    cm: Any,
+    exclude_finding_ids: Optional[Set[str]] = None,
+) -> None:
+    """Deduplicates active current-scan findings in state.db via `dedup()`, syncing monotonic severities."""
+    con = cm.db
+    if con is None:
+        return
+    try:
+        cur = con.execute("SELECT * FROM findings ORDER BY rowid ASC")
+        col_list = [desc[0] for desc in (cur.description or [])]
+        rows = cur.fetchall()
+    except sqlite3.Error:
+        return
+    cols = set(col_list)
+    if not rows or "file_path" not in cols:
+        return
+
+    all_row_dicts = [dict(zip(col_list, row)) for row in rows]
+    preexisting_findings: List[Finding] = []
+    if exclude_finding_ids:
+        preexisting_findings = [
+            Finding.from_dict(rd)
+            for rd in all_row_dicts
+            if str(rd.get("finding_id") or "") in exclude_finding_ids
+        ]
+        row_dicts = [
+            rd
+            for rd in all_row_dicts
+            if str(rd.get("finding_id") or "") not in exclude_finding_ids
+        ]
+    else:
+        row_dicts = all_row_dicts
+
+    active_current = [
+        f for f in (Finding.from_dict(rd) for rd in row_dicts) if status_of(f) in ACTIVE
+    ]
+    upgraded_any = False
+    if preexisting_findings and active_current:
+        prior_candidates = [
+            pf for pf in preexisting_findings if status_of(pf) in (ACTIVE | RESOLVED)
+        ]
+        for idx, cur_f in enumerate(active_current):
+            for p_pre in prior_candidates:
+                if not is_duplicate(p_pre, cur_f, cm.repo_dir, allow_line_shift=False):
+                    continue
+                best = higher_severity(p_pre.severity, cur_f.severity)
+                if not best:
+                    continue
+                if severity_rank(best) < severity_rank(cur_f.severity):
+                    active_current[idx] = Finding(cur_f.to_dict(), severity=best)
+                    cur_f = active_current[idx]
+                    upgraded_any |= upgrade_finding_severity_in_db(con, cols, cur_f.finding_id, best)
+                upgraded_any |= upgrade_finding_severity_in_db(con, cols, p_pre.finding_id, best)
+
+    res = dedup([], active_current, cm.repo_dir, allow_line_shift=False)
+    if res["suppressed_duplicates"]:
+        remove_duplicates_in_db(types.SimpleNamespace(cm=cm), res["suppressed_duplicates"])
+    elif upgraded_any:
+        try:
+            con.commit()
+        except sqlite3.Error:
+            pass
 
