@@ -35,6 +35,7 @@ repository-relative file, same CWE family, and (line ranges overlap OR every cod
 the shorter snippet appears verbatim in the longer one).
 """
 
+import argparse
 import json
 import os
 import re
@@ -117,29 +118,18 @@ def write_json(path: str, payload: Any) -> None:
     os.replace(tmp, path)
 
 
-def parse_opts(argv: List[str], with_value: Tuple[str, ...], flags: Tuple[str, ...], passthrough: bool):
-    """Tiny option parser. Unknown args → positionals (or forwarded verbatim when passthrough)."""
-    opts: Dict[str, Any] = {f: False for f in flags}
-    rest: List[str] = []
-    i = 0
-    while i < len(argv):
-        a = argv[i]
-        if a in with_value:
-            if i + 1 >= len(argv):
-                die(f"option {a} needs a value")
-            opts[a] = argv[i + 1]; i += 2
-        elif "=" in a and a.split("=", 1)[0] in with_value:
-            k, v = a.split("=", 1)
-            opts[k] = v; i += 1
-        elif a in flags:
-            opts[a] = True; i += 1
-        elif a in ("-h", "--help"):
-            print(__doc__); sys.exit(0)
-        elif a.startswith("--") and not passthrough:
-            die(f"unknown option {a}")
-        else:
-            rest.append(a); i += 1
-    return opts, rest
+class _ArgumentParser(argparse.ArgumentParser):
+    """ArgumentParser that disables prefix abbreviation and exits 1 (via die) on CLI errors."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        kwargs.setdefault("allow_abbrev", False)
+        super().__init__(**kwargs)
+
+    def print_help(self, file: Any = None) -> None:
+        print(__doc__, file=file or sys.stdout)
+
+    def error(self, message: str) -> None:
+        die(message, 1)
 
 
 # ─── config check ────────────────────────────────────────────────────────────
@@ -225,11 +215,12 @@ def check_config(ctx: Ctx, mode: str) -> bool:
 
 
 def cmd_check_config(argv: List[str]) -> int:
-    opts, rest = parse_opts(argv, ("--repo",), ("--yes", "--apply"), passthrough=False)
-    if rest:
-        die(f"check-config: unexpected argument {rest[0]}")
-    ctx = Ctx(opts.get("--repo"))
-    check_config(ctx, "apply" if (opts["--yes"] or opts["--apply"]) else "report")
+    parser = _ArgumentParser(prog="cm-ci.py check-config")
+    parser.add_argument("--repo")
+    parser.add_argument("--yes", "--apply", dest="apply", action="store_true")
+    args = parser.parse_args(argv)
+    ctx = Ctx(args.repo)
+    check_config(ctx, "apply" if args.apply else "report")
     return 0
 
 
@@ -248,6 +239,21 @@ _BOOL_LITERALS = {
     "off": False,
 }
 
+# `cm find` and global `cm` options that take a value argument; registered on the
+# `find` parser so space-separated forms (e.g. `--model gemini-2.5-pro`) don't steal `target`.
+_CM_FIND_VALUE_FLAGS = (
+    ("-c", "--context"),
+    ("--deep-max-turns",),
+    ("--deep-workers",),
+    ("--diff-job-timeout",),
+    ("--diff-max-neighbors",),
+    ("--diff-workers",),
+    ("--format",),
+    ("--model",),
+    ("--output",),
+    ("--team-id",),
+)
+
 
 def _parse_bool_flag(flag: str, raw: str) -> bool:
     val = _BOOL_LITERALS.get(raw.strip().lower())
@@ -256,139 +262,107 @@ def _parse_bool_flag(flag: str, raw: str) -> bool:
     return bool(val)
 
 
-# `cm find` and global `cm` flags that consume a following value argument when space-separated.
-_CM_FIND_VALUE_FLAGS = frozenset({
-    "-c",
-    "--context",
-    "--deep-max-turns",
-    "--deep-workers",
-    "--diff-job-timeout",
-    "--diff-max-neighbors",
-    "--diff-workers",
-    "--fail-on",
-    "--format",
-    "--model",
-    "--output",
-    "--team-id",
-})
-_CM_FIND_BOOL_FLAGS = frozenset({
-    "-h",
-    "--help",
-    "-v",
-    "--verbose",
-    "-y",
-    "--yes",
-    "--allow-all-commands",
-    "--allow-all-paths",
-    "--bypass-warning",
-    "--compact",
-    "--deep",
-    "--dry-run",
-    "--enable-bash",
-    "--fail-on-truncation",
-    "--include-hidden",
-    "--no-model-fallback",
-    "--notices",
-    "--plain",
-    "--quick",
-    "--sandbox",
-    "--staged",
-    "--validate",
-    "--version",
-})
+class _ForwardValueAction(argparse.Action):
+    """Appends `[option_string, value]` to `namespace.passthrough` for forwarding to `cm find`."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: Any,
+        option_string: Optional[str] = None,
+    ) -> None:
+        items = list(getattr(namespace, self.dest, None) or ())
+        if option_string:
+            items.append(option_string)
+        items.append(str(values))
+        setattr(namespace, self.dest, items)
+
+
+class _DiffAction(argparse.Action):
+    """Switches scan mode to `diff` and captures an optional git ref."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: Any,
+        option_string: Optional[str] = None,
+    ) -> None:
+        namespace.mode = "diff"
+        namespace.diff_ref = values
+
+
+def _build_find_parser() -> _ArgumentParser:
+    parser = _ArgumentParser(prog="cm-ci.py find")
+    parser.set_defaults(mode="deep", diff_ref=None, passthrough=None)
+    parser.add_argument("--repo")
+    parser.add_argument("--existing")
+    parser.add_argument("--known")
+    parser.add_argument("--out-dir", default=".codemender")
+    parser.add_argument("--fail-on")
+    parser.add_argument("--no-update", action="store_true")
+    parser.add_argument("--no-dedup", action="store_true")
+    parser.add_argument("--complete-runs", type=int, default=5)
+    parser.add_argument("--quick", dest="mode", action="store_const", const="quick")
+    parser.add_argument("--deep", dest="mode", action="store_const", const="deep")
+    parser.add_argument("--complete", dest="mode", action="store_const", const="complete")
+    parser.add_argument("--diff", action=_DiffAction, nargs="?", const="")
+    parser.add_argument("--critical-high-only", dest="critical_high_only", nargs="?", const="true", default=None)
+    parser.add_argument("--no-critical-high-only", dest="critical_high_only", action="store_const", const="false")
+    for flag_names in _CM_FIND_VALUE_FLAGS:
+        parser.add_argument(*flag_names, dest="passthrough", action=_ForwardValueAction)
+    parser.add_argument("target", nargs="?")
+    return parser
 
 
 def cmd_find(argv: List[str]) -> int:
-    opts, cm_args = parse_opts(argv, ("--repo", "--existing", "--known", "--out-dir", "--fail-on", "--complete-runs"),
-                               ("--no-update", "--no-dedup"), passthrough=True)
+    args, unknown = _build_find_parser().parse_known_args(argv)
     need("cm")
-    ctx = Ctx(opts.get("--repo"))
-    out_dir = opts.get("--out-dir") or ".codemender"
-    known_path = opts.get("--known") or os.path.join(out_dir, "known_findings.json")
-    existing_path = opts.get("--existing")
+    ctx = Ctx(args.repo)
+    out_dir = args.out_dir or ".codemender"
+    known_path = args.known or os.path.join(out_dir, "known_findings.json")
+    existing_path = args.existing
     check_config(ctx, "warn")
     os.makedirs(out_dir, exist_ok=True)
 
     before = ctx.report()
     before_ids = {str(f.finding_id or "") for f in before}
     pre_find_rows = _snapshot_db_findings(ctx.cm)
-    scan_mode = ScanMode.DEEP
-    is_complete_scan = False
-    target: Optional[str] = None
+
+    target: Optional[str] = args.target
     extra_cm_flags: List[str] = []
-    complete_runs = int(opts["--complete-runs"]) if opts.get("--complete-runs") is not None else 5
-    critical_high_flag: Optional[bool] = None
-    idx = 0
-    while idx < len(cm_args):
-        arg = cm_args[idx]
-        if arg == "--":
-            for pos in cm_args[idx + 1:]:
-                if target is None:
-                    target = pos
-                else:
-                    extra_cm_flags.append(pos)
-            break
-        elif arg == "--quick":
-            scan_mode = ScanMode.QUICK
-            is_complete_scan = False
-        elif arg == "--diff":
-            scan_mode = ScanMode.DIFF
-            is_complete_scan = False
-            if idx + 1 < len(cm_args) and not cm_args[idx + 1].startswith("-"):
-                next_tok = cm_args[idx + 1]
-                if target is not None or not os.path.exists(next_tok):
-                    extra_cm_flags.append(f"--diff={next_tok}")
-                    idx += 1
-        elif arg.startswith("--diff="):
-            scan_mode = ScanMode.DIFF
-            is_complete_scan = False
-            extra_cm_flags.append(arg)
-        elif arg == "--deep":
-            scan_mode = ScanMode.DEEP
-            is_complete_scan = False
-        elif arg == "--complete":
-            is_complete_scan = True
-        elif arg.startswith("--complete-runs="):
-            complete_runs = int(arg.split("=", 1)[1])
-        elif arg == "--critical-high-only":
-            if idx + 1 < len(cm_args) and cm_args[idx + 1].strip().lower() in _BOOL_LITERALS:
-                critical_high_flag = _parse_bool_flag(arg, cm_args[idx + 1])
-                idx += 1
-            else:
-                critical_high_flag = True
-        elif arg.startswith("--critical-high-only="):
-            critical_high_flag = _parse_bool_flag("--critical-high-only", arg.split("=", 1)[1])
-        elif arg == "--no-critical-high-only":
-            critical_high_flag = False
-        elif arg in _CM_FIND_VALUE_FLAGS:
-            if idx + 1 >= len(cm_args):
-                die(f"option {arg} needs a value")
-            extra_cm_flags.extend([arg, cm_args[idx + 1]])
-            idx += 1
-        elif not arg.startswith("-") and target is None:
-            target = arg
+    if args.mode == "diff" and args.diff_ref:
+        if target is None and os.path.exists(args.diff_ref):
+            target = args.diff_ref
         else:
-            extra_cm_flags.append(arg)
-            if (
-                arg.startswith("-")
-                and "=" not in arg
-                and arg not in _CM_FIND_BOOL_FLAGS
-                and idx + 1 < len(cm_args)
-                and not cm_args[idx + 1].startswith("-")
-                and (target is not None or not os.path.exists(cm_args[idx + 1]))
-            ):
-                extra_cm_flags.append(cm_args[idx + 1])
-                idx += 1
-        idx += 1
+            extra_cm_flags.append(f"--diff={args.diff_ref}")
+
+    critical_high_flag: Optional[bool] = None
+    if args.critical_high_only is not None:
+        raw_ch = args.critical_high_only
+        if raw_ch.strip().lower() not in _BOOL_LITERALS and target is None and os.path.exists(raw_ch):
+            target = raw_ch
+            critical_high_flag = True
+        else:
+            critical_high_flag = _parse_bool_flag("--critical-high-only", raw_ch)
+
+    if args.passthrough:
+        extra_cm_flags.extend(args.passthrough)
+    extra_cm_flags.extend(unknown)
+
+    is_complete_scan = args.mode == "complete"
+    scan_mode = ScanMode.DEEP if is_complete_scan else ScanMode(args.mode)
     critical_high_only = critical_high_flag if critical_high_flag is not None else is_complete_scan
-    print(f"cm-ci: cm find {' '.join(cm_args)}".rstrip(), flush=True)
+    preview_parts = ([target] if target else []) + [f"--{args.mode}"] + extra_cm_flags
+    print(f"cm-ci: cm find {' '.join(preview_parts)}".rstrip(), flush=True)
     try:
         if is_complete_scan:
             run_complete_scan(
                 ctx.cm,
                 target_or_id=target,
                 extra_flags=extra_cm_flags or None,
-                complete_runs=complete_runs,
+                complete_runs=args.complete_runs,
                 critical_high_only=critical_high_only,
             )
         else:
@@ -414,7 +388,7 @@ def cmd_find(argv: List[str]) -> int:
         print(f"cm-ci: this run (CRITICAL/HIGH mode) → {findings_path} ({len(this_run_shown)} CRITICAL/HIGH active finding(s))")
     else:
         print(f"cm-ci: this run → {findings_path} ({len(this_run)} active finding(s))")
-    if opts["--no-dedup"]:
+    if args.no_dedup:
         return 0
 
     # Pool = what CodeMender already knows on this machine (previous sessions in its DB),
@@ -467,7 +441,7 @@ def cmd_find(argv: List[str]) -> int:
     elif res["suppressed_duplicates"]:
         print(f"cm-ci: note — state.db not found, duplicates only recorded in {new_path}")
 
-    if not existing_path and not opts["--no-update"]:
+    if not existing_path and not args.no_update:
         after_by_id = {str(f.finding_id): f for f in ctx.report() if f.finding_id}
         upgraded_known: List[Finding] = []
         for kf in known:
@@ -499,7 +473,7 @@ def cmd_find(argv: List[str]) -> int:
     for f in shown_findings:
         print(f"  🆕 NEW      {f.severity or ''} {f.file_path}:{f.start_line or ''} {f.title or ''}")
 
-    fail_on = opts.get("--fail-on")
+    fail_on = args.fail_on
     if fail_on:
         sevs = {s.strip().upper() for s in fail_on.split(",") if s.strip()}
         hits = [f for f in shown_findings + shown_reopened if str(f.severity or "").upper() in sevs]
@@ -583,11 +557,20 @@ def exclude_cm_marker(repo: str) -> None:
 
 
 def cmd_fix(argv: List[str]) -> int:
-    opts, ids = parse_opts(argv, ("--repo", "--model", "--max", "--known"), ("--include-new-files", "--dry-run"), passthrough=False)
+    parser = _ArgumentParser(prog="cm-ci.py fix")
+    parser.add_argument("--repo")
+    parser.add_argument("--model")
+    parser.add_argument("--max", dest="max_n", type=int, default=10)
+    parser.add_argument("--known")
+    parser.add_argument("--include-new-files", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("ids", nargs="*")
+    args = parser.parse_intermixed_args(argv)
     need("cm")
-    ctx = Ctx(opts.get("--repo"))
-    max_n = int(opts.get("--max") or 10)
-    known_path = opts.get("--known") or os.path.join(".codemender", "known_findings.json")
+    ctx = Ctx(args.repo)
+    max_n = args.max_n
+    ids = list(args.ids)
+    known_path = args.known or os.path.join(".codemender", "known_findings.json")
 
     ok = cfg_checks(ctx)
     if not (ok["project_paths"] and ok["reset"]):
@@ -614,7 +597,7 @@ def cmd_fix(argv: List[str]) -> int:
     if not ids:
         print("cm-ci: nothing to fix")
         return 0
-    if opts["--dry-run"]:
+    if args.dry_run:
         return 0
 
     pre = nested_git(ctx.repo)
@@ -624,7 +607,7 @@ def cmd_fix(argv: List[str]) -> int:
     fixed = failed = 0
     for fid in ids:
         print(f"\n── cm fix {fid} ──", flush=True)
-        cmd = ["cm", "fix", fid, "-y", "--bypass-warning"] + (["--model", opts["--model"]] if opts.get("--model") else [])
+        cmd = ["cm", "fix", fid, "-y", "--bypass-warning"] + (["--model", args.model] if args.model else [])
         rc = subprocess.call(cmd, stdin=subprocess.DEVNULL)
         n = nested_git(ctx.repo)
         if n:
@@ -637,7 +620,7 @@ def cmd_fix(argv: List[str]) -> int:
             continue
         exclude_cm_marker(ctx.repo)
         sh("git", "reset", "-q")  # drop whatever cm staged itself (e.g. its .cm_project marker)
-        sh("git", "add", "-A" if opts["--include-new-files"] else "-u")
+        sh("git", "add", "-A" if args.include_new_files else "-u")
         if sh("git", "diff", "--cached", "--quiet").returncode == 0:
             print(f"cm-ci: {fid} produced no tracked changes")
         else:
@@ -673,17 +656,19 @@ def cmd_fix(argv: List[str]) -> int:
 # ─── dedup (standalone) ──────────────────────────────────────────────────────
 
 def cmd_dedup(argv: List[str]) -> int:
-    opts, rest = parse_opts(argv, ("--existing", "--new", "--out", "--repo", "--repo-root"), (), passthrough=False)
-    if rest or not opts.get("--existing") or not opts.get("--new"):
-        die("dedup: --existing and --new are required")
-    root = opts.get("--repo") or opts.get("--repo-root") or ""
-    root = os.path.realpath(root) if root else ""
-    existing = load_findings(opts["--existing"])
-    current = load_findings(opts["--new"])
+    parser = _ArgumentParser(prog="cm-ci.py dedup")
+    parser.add_argument("--existing", required=True)
+    parser.add_argument("--new", required=True)
+    parser.add_argument("--out")
+    parser.add_argument("--repo", "--repo-root", dest="repo")
+    args = parser.parse_args(argv)
+    root = os.path.realpath(args.repo) if args.repo else ""
+    existing = load_findings(args.existing)
+    current = load_findings(args.new)
     res = dedup(existing, current, root)
     print(summary_line(len(existing), len(current), res))
-    if opts.get("--out"):
-        write_json(opts["--out"], res)
+    if args.out:
+        write_json(args.out, res)
     return 0
 
 

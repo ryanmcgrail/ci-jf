@@ -320,7 +320,7 @@ class TestCmCi(unittest.TestCase):
             mock_complete_scan.assert_called_once_with(
                 mock_cm,
                 target_or_id=None,
-                extra_flags=["--deep-workers=16"],
+                extra_flags=["--deep-workers", "16"],
                 complete_runs=3,
                 critical_high_only=True,
             )
@@ -352,7 +352,7 @@ class TestCmCi(unittest.TestCase):
             mock_complete_scan.assert_called_once_with(
                 mock_cm,
                 target_or_id=None,
-                extra_flags=["--deep-workers=16"],
+                extra_flags=["--deep-workers", "16"],
                 complete_runs=5,
                 critical_high_only=False,
             )
@@ -1055,6 +1055,69 @@ class TestCmCi(unittest.TestCase):
                 find_cmds[7][find_cmds[7].index("--context") + 1],
                 f"{base_complete_ctx}\n\nComplete ctx",
             )
+
+    def test_argparse_edge_cases_across_subcommands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "src"), exist_ok=True)
+            out_dir = os.path.join(tmpdir, ".codemender")
+            mock_cm = MockCodeMender(repo_dir=os.path.realpath(tmpdir))
+            captured_kwargs: list[dict[str, Any]] = []
+            orig_find = mock_cm.find
+
+            def _spy_find(**kwargs: Any) -> Any:
+                captured_kwargs.append(kwargs)
+                return orig_find(**kwargs)
+
+            with (
+                patch.object(cm_ci, "need"),
+                patch.object(cm_ci, "check_config", return_value=True),
+                patch.object(cm_ci, "CodeMender", return_value=mock_cm),
+                patch.object(mock_cm, "find", side_effect=_spy_find),
+                patch("sys.stdout", new_callable=io.StringIO),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                # `--fail-on-truncation` must pass through to `cm find` (no prefix collision with `--fail-on`)
+                self.assertEqual(
+                    cm_ci.cmd_find(
+                        ["--repo", tmpdir, "--out-dir", out_dir, "--fail-on-truncation", "src"]
+                    ),
+                    0,
+                )
+                # `--diff src` where `src` exists on disk sets `target="src"` rather than `--diff=src`
+                self.assertEqual(
+                    cm_ci.cmd_find(["--repo", tmpdir, "--out-dir", out_dir, "--diff", "src"]),
+                    0,
+                )
+                # `--critical-high-only src` where `src` exists sets `target="src"` and `critical_high_only=True`
+                self.assertEqual(
+                    cm_ci.cmd_find(
+                        ["--repo", tmpdir, "--out-dir", out_dir, "--critical-high-only", "src"]
+                    ),
+                    0,
+                )
+
+            self.assertEqual(
+                captured_kwargs,
+                [
+                    {
+                        "target_or_id": "src",
+                        "scan_mode": ScanMode.DEEP,
+                        "extra_flags": ["--fail-on-truncation"],
+                    },
+                    {"target_or_id": "src", "scan_mode": ScanMode.DIFF},
+                    {"target_or_id": "src", "scan_mode": ScanMode.DEEP},
+                ],
+            )
+
+            # CLI usage errors exit with code 1 (preserving exit code 2 for missing config)
+            with patch("sys.stderr", new_callable=io.StringIO):
+                with self.assertRaises(SystemExit) as bad_dedup:
+                    cm_ci.cmd_dedup(["--existing", "only_one.json"])
+                self.assertEqual(bad_dedup.exception.code, 1)
+
+                with self.assertRaises(SystemExit) as bad_cfg:
+                    cm_ci.cmd_check_config(["--unknown-flag"])
+                self.assertEqual(bad_cfg.exception.code, 1)
 
 
 if __name__ == "__main__":
