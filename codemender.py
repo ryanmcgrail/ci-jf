@@ -1,14 +1,17 @@
 """CodeMender CLI wrapper class and helpers."""
 
+import contextlib
 import enum
 import json
 import logging
 import os
 import re
+import signal
 import sqlite3
 import subprocess
 import sys
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+import threading
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
 from finding import Finding
 
@@ -101,6 +104,35 @@ def build_cm_command(
   return cmd
 
 
+def _raise_signal_exit(signum: int, _frame: Any) -> None:
+  raise SystemExit(128 + signum)
+
+
+@contextlib.contextmanager
+def handle_termination_signals() -> Iterator[None]:
+  """Converts SIGTERM/SIGHUP into SystemExit so `finally:` cleanup blocks execute."""
+  if threading.current_thread() is not threading.main_thread():
+    yield
+    return
+  handled = [signal.SIGTERM]
+  if hasattr(signal, "SIGHUP"):
+    handled.append(signal.SIGHUP)
+  previous: Dict[int, Any] = {}
+  try:
+    for sig in handled:
+      prev = signal.getsignal(sig)
+      if prev != signal.SIG_IGN:
+        previous[sig] = prev
+        signal.signal(sig, _raise_signal_exit)
+    yield
+  finally:
+    for sig, prev in previous.items():
+      try:
+        signal.signal(sig, prev)
+      except (OSError, ValueError):
+        pass
+
+
 def run_command(
     cmd: List[str],
     cwd: Optional[str] = None,
@@ -124,14 +156,25 @@ def run_command(
   )
 
   stdout_lines = []
-  for line in process.stdout:
-    stdout_lines.append(line)
-    if print_to_stdout:
-      sys.stdout.write(line)
-      sys.stdout.flush()
-  process.stdout.close()
-
-  return_code = process.wait()
+  try:
+    with handle_termination_signals():
+      assert process.stdout is not None
+      for line in process.stdout:
+        stdout_lines.append(line)
+        if print_to_stdout:
+          sys.stdout.write(line)
+          sys.stdout.flush()
+      return_code = process.wait()
+  finally:
+    if process.stdout is not None and not process.stdout.closed:
+      process.stdout.close()
+    if process.poll() is None:
+      process.terminate()
+      try:
+        process.wait(timeout=3)
+      except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
 
   logger.info(f"Command completed with exit code {return_code}")
 
@@ -140,6 +183,15 @@ def run_command(
     raise subprocess.CalledProcessError(return_code, cmd, stdout_lines, "")
 
   return subprocess.CompletedProcess(cmd, return_code, "".join(stdout_lines), "")
+
+
+def resolve_cm_home(env: Optional[Dict[str, str]] = None) -> str:
+  """Returns the CodeMender state directory (`CM_HOME` or `~/.codemender`)."""
+  return (
+      (env or {}).get("CM_HOME")
+      or os.environ.get("CM_HOME")
+      or os.path.join(os.path.expanduser("~"), ".codemender")
+  )
 
 
 class CodeMender:
@@ -160,11 +212,7 @@ class CodeMender:
   def db(self) -> Optional[sqlite3.Connection]:
     """Returns a sqlite3 connection to CodeMender's state.db, or None if not found."""
     if self._db is None:
-      cm_dir = (
-          (self.env or {}).get("CM_HOME")
-          or os.environ.get("CM_HOME")
-          or os.path.join(os.path.expanduser("~"), ".codemender")
-      )
+      cm_dir = resolve_cm_home(self.env)
       db_path = os.path.join(cm_dir, "state.db")
       if not os.path.exists(db_path):
         return None

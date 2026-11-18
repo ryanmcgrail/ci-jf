@@ -1,5 +1,6 @@
 """Multi-pass complete scan orchestration on top of CodeMender deep scans."""
 
+import hashlib
 import json
 import os
 import re
@@ -811,6 +812,80 @@ def deduplicate_db_findings(
     )
 
 
+_SCRATCH_DIR_NAME = ".codemender"
+_PASS_REPORT_REL_PATH = f"{_SCRATCH_DIR_NAME}/.cm_pass_report.json"
+_WORKSPACE_BACKUPS_DIR = "workspace_backups"
+
+
+def _workspace_backup_path(repo_dir: str, cm_dir: str) -> str:
+  """Returns the path in `CM_HOME` storing crash-recovery metadata for `repo_dir`."""
+  real_repo = os.path.realpath(repo_dir)
+  digest = hashlib.sha256(real_repo.encode("utf-8")).hexdigest()[:24]
+  return os.path.join(cm_dir, _WORKSPACE_BACKUPS_DIR, f"{digest}.json")
+
+
+def _atomic_write_text(path: str, content: str) -> None:
+  """Writes `content` atomically via a sibling `.tmp` file."""
+  os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+  tmp_path = f"{path}.tmp"
+  with open(tmp_path, "w", encoding="utf-8") as fh:
+    fh.write(content)
+  os.replace(tmp_path, path)
+
+
+def _safe_remove(path: str) -> None:
+  try:
+    if os.path.exists(path):
+      os.remove(path)
+  except OSError:
+    pass
+
+
+def restore_interrupted_workspace(
+    repo_dir: Optional[str],
+    cm_dir: Optional[str] = None,
+) -> None:
+  """Restores `.cmignore` and removes temporary complete-scan scratch files left by SIGTERM/SIGKILL."""
+  if not repo_dir or not os.path.isdir(repo_dir):
+    return
+  resolved_cm_dir = cm_dir or codemender.resolve_cm_home()
+  report_path = os.path.join(repo_dir, *_PASS_REPORT_REL_PATH.split("/"))
+  backup_path = _workspace_backup_path(repo_dir, resolved_cm_dir)
+  _safe_remove(report_path)
+  _safe_remove(f"{report_path}.tmp")
+  _safe_remove(f"{backup_path}.tmp")
+  if not os.path.exists(backup_path):
+    return
+  try:
+    with open(backup_path, "r", encoding="utf-8") as fh:
+      backup = json.load(fh)
+  except (OSError, json.JSONDecodeError):
+    _safe_remove(backup_path)
+    return
+
+  cmignore_path = os.path.join(repo_dir, ".cmignore")
+  if backup.get("existed"):
+    orig_content = str(backup.get("content") or "")
+    current_content: Optional[str] = None
+    if os.path.exists(cmignore_path):
+      try:
+        with open(cmignore_path, "r", encoding="utf-8") as fh:
+          current_content = fh.read()
+      except OSError:
+        current_content = None
+    if current_content != orig_content:
+      _atomic_write_text(cmignore_path, orig_content)
+  else:
+    _safe_remove(cmignore_path)
+
+  _safe_remove(backup_path)
+  if backup.get("created_scratch_dir"):
+    try:
+      os.rmdir(os.path.join(repo_dir, _SCRATCH_DIR_NAME))
+    except OSError:
+      pass
+
+
 def run_complete_scan(
     cm: CodeMender,
     target_or_id: Optional[str] = None,
@@ -820,131 +895,147 @@ def run_complete_scan(
     context: Optional[str] = None,
 ) -> Any:
   """Runs sequential deep scans, tracking clean files in .cmignore, scoping follow-up passes to active files, and stopping early when converged."""
-  cmignore_path = (
-      os.path.join(cm.repo_dir, ".cmignore")
-      if os.path.isdir(cm.repo_dir)
-      else None
-  )
+  has_repo_dir = os.path.isdir(cm.repo_dir)
+  cm_dir = codemender.resolve_cm_home(cm.env)
+  cmignore_path: Optional[str] = None
   orig_cmignore: Optional[str] = None
-  if cmignore_path and os.path.exists(cmignore_path):
-    with open(cmignore_path, "r", encoding="utf-8") as fh:
-      orig_cmignore = fh.read()
+  if has_repo_dir:
+    restore_interrupted_workspace(cm.repo_dir, cm_dir=cm_dir)
+    scratch_dir = os.path.join(cm.repo_dir, _SCRATCH_DIR_NAME)
+    created_scratch_dir = not os.path.exists(scratch_dir)
+    cmignore_path = os.path.join(cm.repo_dir, ".cmignore")
+    cmignore_existed = os.path.exists(cmignore_path)
+    if cmignore_existed:
+      with open(cmignore_path, "r", encoding="utf-8") as fh:
+        orig_cmignore = fh.read()
+    backup_path = _workspace_backup_path(cm.repo_dir, cm_dir)
+    _atomic_write_text(
+        backup_path,
+        json.dumps({
+            "repo_dir": os.path.realpath(cm.repo_dir),
+            "existed": cmignore_existed,
+            "content": orig_cmignore or "",
+            "created_scratch_dir": created_scratch_dir,
+        }),
+    )
 
-  try:
-    result = None
-    prev_active_files: Optional[List[str]] = None
-    cleared_files: Set[str] = set()
-    pre_scan_session_ids = _snapshot_db_session_ids(cm)
-    pre_scan_finding_ids = set(_snapshot_db_findings(cm).keys())
-    excluded_finding_ids = set(pre_scan_finding_ids)
-    discouraged_cwes = _load_discouraged_cwes()
-    temp_dir = cm.repo_dir if os.path.isdir(cm.repo_dir) else None
-    for scan_index in range(complete_runs):
-      active_files: Optional[List[str]] = None
-      preprocessed_report = "[]"
-      has_prior_state = False
-      if scan_index > 0:
-        last_stdout = getattr(result, "stdout", "") if result is not None else ""
-        counts = get_latest_session_finding_counts(
+  with codemender.handle_termination_signals():
+    try:
+      result = None
+      prev_active_files: Optional[List[str]] = None
+      cleared_files: Set[str] = set()
+      pre_scan_session_ids = _snapshot_db_session_ids(cm)
+      pre_scan_finding_ids = set(_snapshot_db_findings(cm).keys())
+      excluded_finding_ids = set(pre_scan_finding_ids)
+      discouraged_cwes = _load_discouraged_cwes()
+      for scan_index in range(complete_runs):
+        active_files: Optional[List[str]] = None
+        preprocessed_report = "[]"
+        has_prior_state = False
+        if scan_index > 0:
+          last_stdout = getattr(result, "stdout", "") if result is not None else ""
+          counts = get_latest_session_finding_counts(
+              cm,
+              last_pass_files=prev_active_files,
+              last_pass_stdout=last_stdout,
+              critical_high_only=critical_high_only,
+              exclude_session_ids=pre_scan_session_ids or None,
+              exclude_finding_ids=excluded_finding_ids or None,
+          )
+          for cleared in cleared_files:
+            counts[cleared] = 0
+          cleared_files.update(t for t, c in counts.items() if c == 0)
+          clean_files = sorted(t for t, c in counts.items() if c == 0)
+          active_files = sorted(t for t, c in counts.items() if c > 0)
+          if counts and not active_files:
+            break
+          if cmignore_path:
+            base = orig_cmignore or ""
+            if base and not base.endswith("\n"):
+              base += "\n"
+            extra = "".join(f"{f}\n" for f in clean_files)
+            _atomic_write_text(cmignore_path, base + extra)
+          report_cmd = codemender.build_cm_command(
+              cm.cm_binary,
+              "report",
+              extra_flags=["--format", "json"],
+          )
+          report_res = codemender.run_command(
+              report_cmd,
+              cwd=cm.repo_dir,
+              env=cm.env,
+              check=False,
+          )
+          preprocessed_report = preprocess_report_for_context(
+              getattr(report_res, "stdout", "") or "",
+              repo_dir=cm.repo_dir,
+              exclude_finding_ids=excluded_finding_ids or None,
+          )
+          has_prior_state = (preprocessed_report != "[]") or bool(active_files)
+
+        report_file: Optional[str] = None
+        pass_extra_flags = list(extra_flags) if extra_flags else []
+        try:
+          if has_prior_state:
+            if has_repo_dir:
+              report_file = os.path.join(
+                  cm.repo_dir, *_PASS_REPORT_REL_PATH.split("/")
+              )
+              _atomic_write_text(report_file, preprocessed_report)
+              report_ref = _PASS_REPORT_REL_PATH
+            else:
+              with tempfile.NamedTemporaryFile(
+                  mode="w",
+                  suffix=".json",
+                  delete=False,
+                  encoding="utf-8",
+              ) as tmp_file:
+                tmp_file.write(preprocessed_report)
+                report_file = tmp_file.name
+                report_ref = report_file
+            pass_context = _FIND_CONTEXT_FOR_LATER_PASSES.format(
+                report_file=report_ref,
+                discouraged_cwes=discouraged_cwes,
+            )
+            if not codemender._has_flag(pass_extra_flags, "--enable-bash"):
+              pass_extra_flags.append("--enable-bash")
+          else:
+            pass_context = _FIND_CONTEXT_FOR_FIRST_PASS.format(
+                discouraged_cwes=discouraged_cwes,
+            )
+          if critical_high_only:
+            pass_context = pass_context.replace(
+                _DEFAULT_AUDIT_BULLET,
+                _CRITICAL_HIGH_AUDIT_BULLET,
+                1,
+            )
+          if context and context.strip():
+            pass_context = f"{pass_context}\n\n{context.strip()}"
+          pre_pass_rows = _snapshot_db_findings(cm)
+          result = cm.find(
+              target_or_id=target_or_id,
+              scan_mode=ScanMode.DEEP,
+              extra_flags=pass_extra_flags or None,
+              max_turns=12 if scan_index > 0 else 8,
+              context=pass_context,
+          )
+        finally:
+          if report_file is not None:
+            _safe_remove(report_file)
+            _safe_remove(f"{report_file}.tmp")
+        prev_active_files = active_files
+        _reconcile_overwritten_findings(
             cm,
-            last_pass_files=prev_active_files,
-            last_pass_stdout=last_stdout,
-            critical_high_only=critical_high_only,
-            exclude_session_ids=pre_scan_session_ids or None,
-            exclude_finding_ids=excluded_finding_ids or None,
+            pre_pass_rows,
+            pre_scan_session_ids=pre_scan_session_ids,
+            pre_scan_finding_ids=pre_scan_finding_ids,
         )
-        for cleared in cleared_files:
-          counts[cleared] = 0
-        cleared_files.update(t for t, c in counts.items() if c == 0)
-        clean_files = sorted(t for t, c in counts.items() if c == 0)
-        active_files = sorted(t for t, c in counts.items() if c > 0)
-        if counts and not active_files:
-          break
-        if cmignore_path:
-          base = orig_cmignore or ""
-          if base and not base.endswith("\n"):
-            base += "\n"
-          extra = "".join(f"{f}\n" for f in clean_files)
-          with open(cmignore_path, "w", encoding="utf-8") as clean_f:
-            clean_f.write(base + extra)
-        report_cmd = codemender.build_cm_command(
-            cm.cm_binary,
-            "report",
-            extra_flags=["--format", "json"],
+        excluded_finding_ids = _active_preexisting_finding_ids(
+            cm, pre_scan_finding_ids, pre_scan_session_ids
         )
-        report_res = codemender.run_command(
-            report_cmd,
-            cwd=cm.repo_dir,
-            env=cm.env,
-            check=False,
-        )
-        preprocessed_report = preprocess_report_for_context(
-            getattr(report_res, "stdout", "") or "",
-            repo_dir=cm.repo_dir,
-            exclude_finding_ids=excluded_finding_ids or None,
-        )
-        has_prior_state = (preprocessed_report != "[]") or bool(active_files)
-
-      report_file: Optional[str] = None
-      pass_extra_flags = list(extra_flags) if extra_flags else []
-      try:
-        if has_prior_state:
-          with tempfile.NamedTemporaryFile(
-              mode="w",
-              suffix="",
-              dir=temp_dir,
-              delete=False,
-              encoding="utf-8",
-          ) as tmp_file:
-            tmp_file.write(preprocessed_report)
-            report_file = tmp_file.name
-            report_ref = os.path.basename(report_file) if temp_dir else report_file
-          pass_context = _FIND_CONTEXT_FOR_LATER_PASSES.format(
-              report_file=report_ref,
-              discouraged_cwes=discouraged_cwes,
-          )
-          if not codemender._has_flag(pass_extra_flags, "--enable-bash"):
-            pass_extra_flags.append("--enable-bash")
-        else:
-          pass_context = _FIND_CONTEXT_FOR_FIRST_PASS.format(
-              discouraged_cwes=discouraged_cwes,
-          )
-        if critical_high_only:
-          pass_context = pass_context.replace(
-              _DEFAULT_AUDIT_BULLET,
-              _CRITICAL_HIGH_AUDIT_BULLET,
-              1,
-          )
-        if context and context.strip():
-          pass_context = f"{pass_context}\n\n{context.strip()}"
-        pre_pass_rows = _snapshot_db_findings(cm)
-        result = cm.find(
-            target_or_id=target_or_id,
-            scan_mode=ScanMode.DEEP,
-            extra_flags=pass_extra_flags or None,
-            max_turns=12 if scan_index > 0 else 8,
-            context=pass_context,
-        )
-      finally:
-        if report_file is not None and os.path.exists(report_file):
-          os.remove(report_file)
-      prev_active_files = active_files
-      _reconcile_overwritten_findings(
-          cm,
-          pre_pass_rows,
-          pre_scan_session_ids=pre_scan_session_ids,
-          pre_scan_finding_ids=pre_scan_finding_ids,
-      )
-      excluded_finding_ids = _active_preexisting_finding_ids(
-          cm, pre_scan_finding_ids, pre_scan_session_ids
-      )
-      deduplicate_db_findings(cm, exclude_finding_ids=excluded_finding_ids or None)
-    return result
-  finally:
-    if cmignore_path:
-      if orig_cmignore is not None:
-        with open(cmignore_path, "w", encoding="utf-8") as fh:
-          fh.write(orig_cmignore)
-      elif os.path.exists(cmignore_path):
-        os.remove(cmignore_path)
+        deduplicate_db_findings(cm, exclude_finding_ids=excluded_finding_ids or None)
+      return result
+    finally:
+      if has_repo_dir:
+        restore_interrupted_workspace(cm.repo_dir, cm_dir=cm_dir)
 

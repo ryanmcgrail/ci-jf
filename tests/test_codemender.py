@@ -3,9 +3,12 @@
 import io
 import json
 import os
+import signal
 import sqlite3
 import sys
 import tempfile
+import threading
+import time
 import types
 import unittest
 from unittest.mock import patch
@@ -315,6 +318,47 @@ class CodeMenderTests(unittest.TestCase):
     self.assertEqual(res.stdout, "hello from cm find\n")
     self.assertEqual(fake_stdout.getvalue(), "hello from cm find\n")
     self.assertEqual(fake_stderr.getvalue(), "")
+
+  def test_run_command_terminates_child_and_runs_finally_on_sigterm(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      pid_file = os.path.join(tmpdir, "child.pid")
+      cleanup_ran = False
+
+      def send_sigterm_once_child_starts():
+        deadline = time.monotonic() + 5.0
+        while not os.path.exists(pid_file) and time.monotonic() < deadline:
+          time.sleep(0.02)
+        time.sleep(0.05)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+      sender = threading.Thread(target=send_sigterm_once_child_starts, daemon=True)
+      sender.start()
+      with self.assertRaises(SystemExit) as exit_ctx:
+        try:
+          codemender.run_command(
+              [
+                  sys.executable,
+                  "-c",
+                  (
+                      "import os, sys, time;"
+                      f" open({pid_file!r}, 'w').write(str(os.getpid()));"
+                      " print('started', flush=True);"
+                      " time.sleep(60)"
+                  ),
+              ],
+              check=False,
+          )
+        finally:
+          cleanup_ran = True
+      sender.join(timeout=2.0)
+
+      self.assertTrue(cleanup_ran)
+      self.assertEqual(exit_ctx.exception.code, 128 + signal.SIGTERM)
+      with open(pid_file, "r", encoding="utf-8") as fh:
+        child_pid = int(fh.read().strip())
+      # Child process must already be terminated and reaped by run_command's finally block
+      with self.assertRaises(ProcessLookupError):
+        os.kill(child_pid, 0)
 
   def test_find_deduplicates_extra_flags_and_merges_custom_context(self):
     cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")

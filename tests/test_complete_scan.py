@@ -2,6 +2,7 @@
 
 import json
 import os
+import signal
 import sqlite3
 import tempfile
 import types
@@ -1075,11 +1076,12 @@ class CompleteScanTests(unittest.TestCase):
           elif find_scan_num == 1:
             self.assertIn("--enable-bash", cmd)
             self.assertIn("# Initial Pre-Audit Check", ctx_arg)
-            for fname in os.listdir(repo_dir):
-              if fname.startswith("tmp"):
-                with open(os.path.join(repo_dir, fname), "r", encoding="utf-8") as fh:
-                  import json as _json
-                  pass2_report_payloads.append(_json.load(fh))
+            report_path = os.path.join(
+                repo_dir, *complete_scan._PASS_REPORT_REL_PATH.split("/")
+            )
+            if os.path.exists(report_path):
+              with open(report_path, "r", encoding="utf-8") as fh:
+                pass2_report_payloads.append(json.load(fh))
             db_con.execute(
                 "INSERT INTO sessions VALUES ('s1-cur', 'FIND', 'COMPLETED', 'app.py', 't1', 't1', ?, 'parent-1')",
                 (repo_dir,),
@@ -1365,11 +1367,17 @@ class CompleteScanTests(unittest.TestCase):
                 "INSERT INTO findings VALUES ('f0-1', 's0-vuln', 'OPEN', 'HIGH', 'vuln.py', 'CWE-89', 10, 12, 'sink()')"
             )
           elif find_scan_num == 1:
-            # Verify temporary preprocessed report exists in repo_dir during Pass 2
+            # Verify preprocessed report is stored at the deterministic scratch path (not tmpXXXXXX in repo root)
             ctx_val = cmd[cmd.index("--context") + 1]
-            for name in os.listdir(repo_dir):
-              if name != ".cmignore" and name in ctx_val:
-                observed_report_files.append(os.path.join(repo_dir, name))
+            expected_path = os.path.join(
+                repo_dir, *complete_scan._PASS_REPORT_REL_PATH.split("/")
+            )
+            if os.path.exists(expected_path) and complete_scan._PASS_REPORT_REL_PATH in ctx_val:
+              observed_report_files.append(expected_path)
+            self.assertEqual(
+                [n for n in os.listdir(repo_dir) if n.startswith("tmp")],
+                [],
+            )
             db_con.execute(
                 "INSERT INTO sessions VALUES ('s1-vuln', 'FIND', 'COMPLETED', 'vuln.py', 't1', 't1', ?, 'parent-1')",
                 (repo_dir,),
@@ -1407,8 +1415,9 @@ class CompleteScanTests(unittest.TestCase):
       )
 
       self.assertEqual(len(observed_report_files), 1)
-      report_ref = os.path.basename(observed_report_files[0])
+      report_ref = complete_scan._PASS_REPORT_REL_PATH
       self.assertFalse(os.path.exists(observed_report_files[0]))
+      self.assertEqual(os.listdir(repo_dir), [])
       expected_pass2 = (
           complete_scan._FIND_CONTEXT_FOR_LATER_PASSES.format(
               report_file=report_ref,
@@ -1420,6 +1429,134 @@ class CompleteScanTests(unittest.TestCase):
       self.assertEqual(
           find_cmds[1][find_cmds[1].index("--context") + 1],
           expected_pass2,
+      )
+
+  def test_run_complete_scan_restores_workspace_on_sigterm(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      repo_dir = os.path.join(tmpdir, "repo")
+      cm_home = os.path.join(tmpdir, "cm_home")
+      os.makedirs(repo_dir)
+      os.makedirs(cm_home)
+      cmignore_path = os.path.join(repo_dir, ".cmignore")
+      with open(cmignore_path, "w", encoding="utf-8") as fh:
+        fh.write("vendor/\n")
+
+      db_path = os.path.join(cm_home, "state.db")
+      con = sqlite3.connect(db_path)
+      con.execute(
+          "CREATE TABLE sessions ("
+          "session_id TEXT PRIMARY KEY, "
+          "session_type TEXT, "
+          "status TEXT, "
+          "target TEXT, "
+          "created_at TEXT, "
+          "updated_at TEXT, "
+          "project_root TEXT, "
+          "parent_session_id TEXT)"
+      )
+      con.execute(
+          "CREATE TABLE findings ("
+          "finding_id TEXT PRIMARY KEY, "
+          "session_id TEXT, "
+          "status TEXT, "
+          "severity TEXT, "
+          "file_path TEXT, "
+          "vuln_type TEXT, "
+          "start_line INTEGER, "
+          "end_line INTEGER, "
+          "snippet TEXT)"
+      )
+      con.commit()
+      con.close()
+
+      cm = CodeMender(cm_binary="cm", repo_dir=repo_dir, env={"CM_HOME": cm_home})
+      find_scan_num = 0
+      mutated_during_pass2 = False
+      report_existed_during_pass2 = False
+
+      def fake_run_command(cmd, **kwargs):
+        nonlocal find_scan_num, mutated_during_pass2, report_existed_during_pass2
+        if cmd[:2] == ["cm", "report"]:
+          return types.SimpleNamespace(
+              returncode=0,
+              stdout=json.dumps([{
+                  "finding_id": "f0-1",
+                  "status": "OPEN",
+                  "file_path": "vuln.py",
+                  "snippet": "sink()",
+              }]),
+              stderr="",
+          )
+        if cmd[:2] == ["cm", "find"]:
+          if find_scan_num == 0:
+            db_con = sqlite3.connect(db_path)
+            db_con.executemany(
+                "INSERT INTO sessions VALUES (?, 'FIND', 'COMPLETED', ?, 't0', 't0', ?, 'parent-0')",
+                [("s0-clean", "clean.py", repo_dir), ("s0-vuln", "vuln.py", repo_dir)],
+            )
+            db_con.execute(
+                "INSERT INTO findings VALUES ('f0-1', 's0-vuln', 'OPEN', 'HIGH', 'vuln.py', 'CWE-89', 1, 2, 'sink()')"
+            )
+            db_con.commit()
+            db_con.close()
+            find_scan_num += 1
+            return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+          # Pass 2: verify `.cmignore` and `.cm_pass_report.json` are active, then send real SIGTERM
+          with open(cmignore_path, "r", encoding="utf-8") as fh:
+            mutated_during_pass2 = "clean.py\n" in fh.read()
+          report_existed_during_pass2 = os.path.exists(
+              os.path.join(repo_dir, *complete_scan._PASS_REPORT_REL_PATH.split("/"))
+          )
+          os.kill(os.getpid(), signal.SIGTERM)
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+      with patch("codemender.run_command", side_effect=fake_run_command):
+        with self.assertRaises(SystemExit) as exit_ctx:
+          run_complete_scan(cm, complete_runs=3)
+
+      self.assertEqual(exit_ctx.exception.code, 128 + signal.SIGTERM)
+      self.assertTrue(mutated_during_pass2)
+      self.assertTrue(report_existed_during_pass2)
+      with open(cmignore_path, "r", encoding="utf-8") as fh:
+        self.assertEqual(fh.read(), "vendor/\n")
+      self.assertFalse(
+          os.path.exists(os.path.join(repo_dir, complete_scan._SCRATCH_DIR_NAME))
+      )
+      self.assertFalse(
+          os.path.exists(complete_scan._workspace_backup_path(repo_dir, cm_home))
+      )
+
+  def test_sigkill_crash_heals_workspace_on_recovery_without_vcs(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      repo_dir = os.path.join(tmpdir, "repo")
+      cm_home = os.path.join(tmpdir, "cm_home")
+      os.makedirs(repo_dir)
+      os.makedirs(cm_home)
+
+      # Simulate state left behind on disk if SIGKILL strikes mid-Pass-2 (no `.cmignore` existed originally)
+      complete_scan._atomic_write_text(
+          complete_scan._workspace_backup_path(repo_dir, cm_home),
+          json.dumps({
+              "repo_dir": os.path.realpath(repo_dir),
+              "existed": False,
+              "content": "",
+              "created_scratch_dir": True,
+          }),
+      )
+      complete_scan._atomic_write_text(os.path.join(repo_dir, ".cmignore"), "clean.py\n")
+      complete_scan._atomic_write_text(
+          os.path.join(repo_dir, *complete_scan._PASS_REPORT_REL_PATH.split("/")),
+          "[]",
+      )
+
+      # Recovery heals `.cmignore` and removes scratch artifacts from both `repo_dir` and `CM_HOME`
+      complete_scan.restore_interrupted_workspace(repo_dir, cm_dir=cm_home)
+      self.assertFalse(os.path.exists(os.path.join(repo_dir, ".cmignore")))
+      self.assertFalse(
+          os.path.exists(os.path.join(repo_dir, complete_scan._SCRATCH_DIR_NAME))
+      )
+      self.assertFalse(
+          os.path.exists(complete_scan._workspace_backup_path(repo_dir, cm_home))
       )
 
 

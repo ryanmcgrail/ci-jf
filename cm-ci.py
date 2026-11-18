@@ -49,6 +49,7 @@ from codemender import CodeMender, ScanMode
 from complete_scan import (
     _reconcile_overwritten_findings,
     _snapshot_db_findings,
+    restore_interrupted_workspace,
     run_complete_scan,
 )
 from deduplication import (
@@ -94,6 +95,7 @@ class Ctx:
         self.repo = os.path.realpath(repo)
         os.chdir(self.repo)
         self.cm_dir = os.environ.get("CM_HOME") or os.path.join(os.path.expanduser("~"), ".codemender")
+        restore_interrupted_workspace(self.repo, cm_dir=self.cm_dir)
         self.cfg = os.path.join(self.cm_dir, "config.yaml")
         self.cm = CodeMender(repo_dir=self.repo)
 

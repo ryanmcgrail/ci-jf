@@ -981,7 +981,6 @@ class TestCmCi(unittest.TestCase):
 
     def test_cmd_find_forwards_context_across_all_scan_modes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            subprocess.run(["git", "init", tmpdir], check=True, capture_output=True)
             out_dir = os.path.join(tmpdir, ".codemender")
             cm_home = os.path.join(tmpdir, "cm_home")
             os.makedirs(cm_home, exist_ok=True)
@@ -1118,6 +1117,46 @@ class TestCmCi(unittest.TestCase):
                 with self.assertRaises(SystemExit) as bad_cfg:
                     cm_ci.cmd_check_config(["--unknown-flag"])
                 self.assertEqual(bad_cfg.exception.code, 1)
+
+    def test_ctx_restores_interrupted_complete_scan_workspace_before_fix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_dir = os.path.join(tmpdir, "repo")
+            cm_home = os.path.join(tmpdir, "cm_home")
+            os.makedirs(repo_dir)
+            os.makedirs(cm_home)
+            cmignore_path = os.path.join(repo_dir, ".cmignore")
+            scratch_dir = os.path.join(repo_dir, ".codemender")
+            os.makedirs(scratch_dir)
+            with open(cmignore_path, "w", encoding="utf-8") as fh:
+                fh.write("vendor/\nnode_modules/\nclean_from_killed_pass.py\n")
+            with open(os.path.join(scratch_dir, ".cm_pass_report.json"), "w", encoding="utf-8") as fh:
+                fh.write('[{"file_path": "a.py", "snippet": "sink()"}]')
+
+            import complete_scan
+            backup_path = complete_scan._workspace_backup_path(repo_dir, cm_home)
+            os.makedirs(os.path.dirname(backup_path), exist_ok=True)
+            with open(backup_path, "w", encoding="utf-8") as fh:
+                json.dump(
+                    {
+                        "repo_dir": os.path.realpath(repo_dir),
+                        "existed": True,
+                        "content": "vendor/\nnode_modules/\n",
+                        "created_scratch_dir": False,
+                    },
+                    fh,
+                )
+
+            mock_cm = MockCodeMender(repo_dir=os.path.realpath(repo_dir))
+            with (
+                patch.dict(os.environ, {"CM_HOME": cm_home}),
+                patch.object(cm_ci, "CodeMender", return_value=mock_cm),
+            ):
+                cm_ci.Ctx(repo_dir)
+
+            with open(cmignore_path, "r", encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), "vendor/\nnode_modules/\n")
+            self.assertFalse(os.path.exists(os.path.join(scratch_dir, ".cm_pass_report.json")))
+            self.assertFalse(os.path.exists(backup_path))
 
 
 if __name__ == "__main__":
