@@ -1422,7 +1422,7 @@ class CompleteScanTests(unittest.TestCase):
 
       expected_pass1 = (
           complete_scan._FIND_CONTEXT_FOR_FIRST_PASS.format(discouraged_cwes=cwes)
-          + "\n\nCustom user guidance"
+          + "\n\n# Additional Context\nCustom user guidance"
       )
       self.assertEqual(find_cmds[0].count("--context"), 1)
       self.assertEqual(
@@ -1439,12 +1439,27 @@ class CompleteScanTests(unittest.TestCase):
               report_file=report_ref,
               discouraged_cwes=cwes,
           )
-          + "\n\nCustom user guidance"
+          + "\n\n# Additional Context\nCustom user guidance"
       )
       self.assertEqual(find_cmds[1].count("--context"), 1)
       self.assertEqual(
           find_cmds[1][find_cmds[1].index("--context") + 1],
           expected_pass2,
+      )
+
+      direct_proc = types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+      with patch("codemender.run_command", return_value=direct_proc) as mock_direct:
+        run_complete_scan(
+            cm,
+            complete_runs=1,
+            critical_high_only=False,
+            context="Direct user guidance",
+        )
+      direct_cmd = mock_direct.call_args.args[0]
+      self.assertEqual(
+          direct_cmd[direct_cmd.index("--context") + 1],
+          complete_scan._FIND_CONTEXT_FOR_FIRST_PASS.format(discouraged_cwes=cwes)
+          + "\n\n# Additional Context\nDirect user guidance",
       )
 
   def test_run_complete_scan_restores_workspace_on_sigterm(self):

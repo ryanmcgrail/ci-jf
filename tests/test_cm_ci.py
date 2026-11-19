@@ -1052,7 +1052,7 @@ class TestCmCi(unittest.TestCase):
             self.assertEqual(find_cmds[6][find_cmds[6].index("--context") + 1], "Deep ctx")
             self.assertEqual(
                 find_cmds[7][find_cmds[7].index("--context") + 1],
-                f"{base_complete_ctx}\n\nComplete ctx",
+                f"{base_complete_ctx}\n\n# Additional Context\nComplete ctx",
             )
 
     def test_argparse_edge_cases_across_subcommands(self) -> None:

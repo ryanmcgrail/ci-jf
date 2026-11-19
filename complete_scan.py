@@ -608,6 +608,14 @@ def run_complete_scan(
       pre_scan_finding_ids = set(snapshot_db_findings(cm).keys())
       excluded_finding_ids = set(pre_scan_finding_ids)
       discouraged_cwes = _load_discouraged_cwes()
+      cleaned_extra_flags, extra_contexts = codemender._extract_context_flags(
+          extra_flags
+      )
+      user_contexts: List[str] = []
+      if context and context.strip():
+        user_contexts.append(context.strip())
+      user_contexts.extend(c.strip() for c in extra_contexts if c and c.strip())
+      additional_context = "\n\n".join(user_contexts)
       for scan_index in range(complete_runs):
         active_files: Optional[List[str]] = None
         preprocessed_report = "[]"
@@ -654,7 +662,7 @@ def run_complete_scan(
           has_prior_state = (preprocessed_report != "[]") or bool(active_files)
 
         report_file: Optional[str] = None
-        pass_extra_flags = list(extra_flags) if extra_flags else []
+        pass_extra_flags = list(cleaned_extra_flags)
         try:
           if has_prior_state:
             if has_repo_dir:
@@ -689,8 +697,10 @@ def run_complete_scan(
                 _CRITICAL_HIGH_AUDIT_BULLET,
                 1,
             )
-          if context and context.strip():
-            pass_context = f"{pass_context}\n\n{context.strip()}"
+          if additional_context:
+            pass_context = (
+                f"{pass_context}\n\n# Additional Context\n{additional_context}"
+            )
           pre_pass_rows = snapshot_db_findings(cm)
           result = cm.find(
               target_or_id=target_or_id,
