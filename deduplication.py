@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -35,15 +36,95 @@ def now_rfc3339() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def norm_rel_path(file_path: str, repo_root: str = "") -> str:
+_FS_CASE_SENSITIVE_CACHE: Dict[str, bool] = {}
+
+
+def _swap_first_alpha_case(name: str) -> Optional[str]:
+    for idx, ch in enumerate(name):
+        swapped = ch.swapcase()
+        if swapped != ch:
+            return name[:idx] + swapped + name[idx + 1 :]
+    return None
+
+
+def _is_case_sensitive_fs(repo_root: str = "") -> bool:
+    """Detects whether the filesystem hosting `repo_root` (or cwd) is case-sensitive."""
+    probe_dir = repo_root if (repo_root and os.path.exists(repo_root)) else os.getcwd()
+    real_dir = os.path.realpath(probe_dir)
+    cached = _FS_CASE_SENSITIVE_CACHE.get(real_dir)
+    if cached is not None:
+        return cached
+
+    result: Optional[bool] = None
+    if os.path.isdir(real_dir):
+        try:
+            for entry in os.listdir(real_dir):
+                swapped = _swap_first_alpha_case(entry)
+                if swapped:
+                    orig_p = os.path.join(real_dir, entry)
+                    swap_p = os.path.join(real_dir, swapped)
+                    result = not (os.path.exists(swap_p) and os.path.samefile(orig_p, swap_p))
+                    break
+        except OSError:
+            result = None
+
+    if result is None:
+        parent = os.path.dirname(real_dir)
+        base = os.path.basename(real_dir)
+        swapped_base = _swap_first_alpha_case(base)
+        if parent and swapped_base and os.path.exists(real_dir):
+            swap_dir = os.path.join(parent, swapped_base)
+            try:
+                result = not (os.path.exists(swap_dir) and os.path.samefile(real_dir, swap_dir))
+            except OSError:
+                result = None
+
+    if result is None:
+        mod_path = os.path.abspath(__file__)
+        swapped_mod = _swap_first_alpha_case(os.path.basename(mod_path))
+        if swapped_mod:
+            swap_mod_path = os.path.join(os.path.dirname(mod_path), swapped_mod)
+            try:
+                result = not (os.path.exists(swap_mod_path) and os.path.samefile(mod_path, swap_mod_path))
+            except OSError:
+                result = os.name != "nt"
+        else:
+            result = os.name != "nt"
+
+    _FS_CASE_SENSITIVE_CACHE[real_dir] = result
+    return result
+
+
+def _strip_dot_slash(path: str) -> str:
+    p = path
+    while p.startswith("./"):
+        p = p[2:]
+    return p.lstrip("/")
+
+
+def norm_rel_path(
+    file_path: str,
+    repo_root: str = "",
+    case_sensitive: Optional[bool] = None,
+) -> str:
     p = (file_path or "").strip().replace("\\", "/")
     if not p:
         return ""
+    is_cs = _is_case_sensitive_fs(repo_root) if case_sensitive is None else case_sensitive
+    rel = p
     if repo_root:
-        root = repo_root.strip().replace("\\", "/").rstrip("/") + "/"
-        if p.startswith(root):
-            return p[len(root):].lstrip("./").lower()
-    return p.lstrip("./").lower()
+        candidates = [repo_root]
+        if os.path.exists(repo_root):
+            candidates.extend([os.path.abspath(repo_root), os.path.realpath(repo_root)])
+        for cand in candidates:
+            root = cand.strip().replace("\\", "/").rstrip("/") + "/"
+            if root == "/":
+                continue
+            if rel.startswith(root) or (not is_cs and rel.lower().startswith(root.lower())):
+                rel = rel[len(root) :]
+                break
+    rel = _strip_dot_slash(rel)
+    return rel if is_cs else rel.lower()
 
 
 def code_lines(snippet: str) -> set:
@@ -98,7 +179,7 @@ def make_github_marker(f: Finding, repo_root: str = "") -> str:
     cwe_id = parse_cwe_id(f)
     vuln_type = f"CWE-{cwe_id}" if cwe_id is not None else str(f.vuln_type or f.vuln_id or "UNKNOWN")
     payload = {
-        "file_path": norm_rel_path(f.file_path or "", repo_root),
+        "file_path": norm_rel_path(f.file_path or "", repo_root, case_sensitive=True),
         "vuln_type": vuln_type,
         "start_line": _int(f.start_line),
         "end_line": _int(f.end_line),

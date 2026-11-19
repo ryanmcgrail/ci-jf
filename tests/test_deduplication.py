@@ -8,6 +8,7 @@ import tempfile
 import types
 from typing import Any
 import unittest
+from unittest.mock import patch
 
 import deduplication
 from finding import Finding
@@ -39,25 +40,41 @@ class TestDeduplication(unittest.TestCase):
 
     @parameterized(
         [
-            ("", "", ""),
-            ("   ", "", ""),
-            ("./src/Main.py", "", "src/main.py"),
-            ("src\\utils\\Helper.py", "", "src/utils/helper.py"),
-            ("/repo/root/./pkg/Server.go", "/repo/root/", "pkg/server.go"),
+            ("", "", True, ""),
+            ("   ", "", False, ""),
+            ("./src/Main.py", "", True, "src/Main.py"),
+            ("./src/Main.py", "", False, "src/main.py"),
+            ("src\\utils\\Helper.py", "", True, "src/utils/Helper.py"),
+            ("src\\utils\\Helper.py", "", False, "src/utils/helper.py"),
+            ("/repo/root/./pkg/Server.go", "/repo/root/", True, "pkg/Server.go"),
+            ("/repo/root/./pkg/Server.go", "/repo/root/", False, "pkg/server.go"),
+            ("/my repo/src/my file.py", "/my repo", True, "src/my file.py"),
+            ("./.github/workflows/ci.yml", "", True, ".github/workflows/ci.yml"),
             (
                 "frontend/src/app/search-result/search-result.component.ts",
                 "/Users/alice/juice-shop",
+                True,
                 "frontend/src/app/search-result/search-result.component.ts",
             ),
             (
                 "backend/src/utils.ts",
                 "/Users/alice/monorepo",
+                True,
                 "backend/src/utils.ts",
             ),
         ]
     )
-    def test_norm_rel_path(self, file_path: str, repo_root: str, expected: str) -> None:
-        self.assertEqual(deduplication.norm_rel_path(file_path, repo_root), expected)
+    def test_norm_rel_path(
+        self,
+        file_path: str,
+        repo_root: str,
+        case_sensitive: bool,
+        expected: str,
+    ) -> None:
+        self.assertEqual(
+            deduplication.norm_rel_path(file_path, repo_root, case_sensitive=case_sensitive),
+            expected,
+        )
 
     # ─── code_lines ──────────────────────────────────────────────────────────
 
@@ -96,7 +113,7 @@ class TestDeduplication(unittest.TestCase):
                     end_line=20,
                 ),
                 Finding(
-                    file_path="./src/BUFFER.c",
+                    file_path="./src/buffer.c",
                     vuln_type="CWE-129: Improper Validation of Array Index",
                     start_line=18,
                     end_line=25,
@@ -195,6 +212,14 @@ class TestDeduplication(unittest.TestCase):
     def test_is_duplicate(self, _desc: str, a: Finding, b: Finding, expected: bool) -> None:
         self.assertEqual(deduplication.is_duplicate(a, b), expected)
 
+    def test_is_duplicate_respects_filesystem_case_sensitivity(self) -> None:
+        lower = Finding(file_path="src/user.py", vuln_type="CWE-89", start_line=10, end_line=15)
+        upper = Finding(file_path="src/User.py", vuln_type="CWE-89", start_line=10, end_line=15)
+        with patch("deduplication._is_case_sensitive_fs", return_value=True):
+            self.assertFalse(deduplication.is_duplicate(lower, upper))
+        with patch("deduplication._is_case_sensitive_fs", return_value=False):
+            self.assertTrue(deduplication.is_duplicate(lower, upper))
+
     # ─── make_github_marker ──────────────────────────────────────────────────
 
     @parameterized(
@@ -209,7 +234,7 @@ class TestDeduplication(unittest.TestCase):
                 ),
                 "/repo",
                 {
-                    "file_path": "src/auth.py",
+                    "file_path": "src/Auth.py",
                     "vuln_type": "CWE-79",
                     "start_line": 12,
                     "end_line": 16,

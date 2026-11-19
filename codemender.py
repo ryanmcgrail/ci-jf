@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import signal
 import sqlite3
 import subprocess
@@ -142,7 +143,7 @@ def run_command(
     interactive: bool = False,
 ) -> subprocess.CompletedProcess:
   """Executes a subprocess command, streaming stdout/stderr in real-time."""
-  logger.info("Executing comand: %s", " ".join(cmd))
+  logger.info("Executing command: %s", shlex.join(cmd))
 
   process = subprocess.Popen(
       cmd,

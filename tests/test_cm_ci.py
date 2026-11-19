@@ -1125,11 +1125,10 @@ class TestCmCi(unittest.TestCase):
             os.makedirs(repo_dir)
             os.makedirs(cm_home)
             cmignore_path = os.path.join(repo_dir, ".cmignore")
-            scratch_dir = os.path.join(repo_dir, ".codemender")
-            os.makedirs(scratch_dir)
+            report_path = os.path.join(repo_dir, "_cm_pass_report")
             with open(cmignore_path, "w", encoding="utf-8") as fh:
                 fh.write("vendor/\nnode_modules/\nclean_from_killed_pass.py\n")
-            with open(os.path.join(scratch_dir, ".cm_pass_report.json"), "w", encoding="utf-8") as fh:
+            with open(report_path, "w", encoding="utf-8") as fh:
                 fh.write('[{"file_path": "a.py", "snippet": "sink()"}]')
 
             import complete_scan
@@ -1141,7 +1140,6 @@ class TestCmCi(unittest.TestCase):
                         "repo_dir": os.path.realpath(repo_dir),
                         "existed": True,
                         "content": "vendor/\nnode_modules/\n",
-                        "created_scratch_dir": False,
                     },
                     fh,
                 )
@@ -1155,7 +1153,7 @@ class TestCmCi(unittest.TestCase):
 
             with open(cmignore_path, "r", encoding="utf-8") as fh:
                 self.assertEqual(fh.read(), "vendor/\nnode_modules/\n")
-            self.assertFalse(os.path.exists(os.path.join(scratch_dir, ".cm_pass_report.json")))
+            self.assertFalse(os.path.exists(report_path))
             self.assertFalse(os.path.exists(backup_path))
 
 

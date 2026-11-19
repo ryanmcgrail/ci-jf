@@ -1252,8 +1252,24 @@ class CompleteScanTests(unittest.TestCase):
         ],
     )
     self.assertIn(
-        'covered_lines.py {report_file} "<file>"',
+        'covered_lines.py" "{report_file}" "<file>"',
         complete_scan._FIND_CONTEXT_FOR_LATER_PASSES,
+    )
+
+  def test_batch_line_regexes_support_file_paths_with_spaces_and_parentheses(self):
+    stdout = (
+        "[1/4 batches] ✅ src/my folder/clean file.py (5.0s) | 3.0k tok - 0 vulnerabilities\n"
+        "[2/4 batches] 🚨 app/(admin)/user settings.tsx (8.2s) - 2 vulnerabilities\n"
+        "[3/4 batches] ❌ src/my folder/flaky handler.js — session failed\n"
+        "[4/4 batches] ❌ routes/slow route.ts (10.5s): context deadline exceeded\n"
+    )
+    self.assertEqual(
+        complete_scan._extract_batch_files_from_stdout(stdout),
+        ["src/my folder/clean file.py", "app/(admin)/user settings.tsx"],
+    )
+    self.assertEqual(
+        complete_scan._extract_failed_batch_files_from_stdout(stdout),
+        {"src/my folder/flaky handler.js", "routes/slow route.ts"},
     )
 
   def test_complete_scan_critical_high_only_modifies_context_to_focus_on_critical_issues(self):
@@ -1520,7 +1536,7 @@ class CompleteScanTests(unittest.TestCase):
       with open(cmignore_path, "r", encoding="utf-8") as fh:
         self.assertEqual(fh.read(), "vendor/\n")
       self.assertFalse(
-          os.path.exists(os.path.join(repo_dir, complete_scan._SCRATCH_DIR_NAME))
+          os.path.exists(os.path.join(repo_dir, complete_scan._PASS_REPORT_REL_PATH))
       )
       self.assertFalse(
           os.path.exists(complete_scan._workspace_backup_path(repo_dir, cm_home))
@@ -1540,12 +1556,11 @@ class CompleteScanTests(unittest.TestCase):
               "repo_dir": os.path.realpath(repo_dir),
               "existed": False,
               "content": "",
-              "created_scratch_dir": True,
           }),
       )
       complete_scan._atomic_write_text(os.path.join(repo_dir, ".cmignore"), "clean.py\n")
       complete_scan._atomic_write_text(
-          os.path.join(repo_dir, *complete_scan._PASS_REPORT_REL_PATH.split("/")),
+          os.path.join(repo_dir, complete_scan._PASS_REPORT_REL_PATH),
           "[]",
       )
 
@@ -1553,7 +1568,7 @@ class CompleteScanTests(unittest.TestCase):
       complete_scan.restore_interrupted_workspace(repo_dir, cm_dir=cm_home)
       self.assertFalse(os.path.exists(os.path.join(repo_dir, ".cmignore")))
       self.assertFalse(
-          os.path.exists(os.path.join(repo_dir, complete_scan._SCRATCH_DIR_NAME))
+          os.path.exists(os.path.join(repo_dir, complete_scan._PASS_REPORT_REL_PATH))
       )
       self.assertFalse(
           os.path.exists(complete_scan._workspace_backup_path(repo_dir, cm_home))

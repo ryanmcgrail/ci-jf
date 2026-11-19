@@ -65,7 +65,7 @@ _FIND_CONTEXT_FOR_FIRST_PASS = f"""\
 - Assign each finding exactly one `CWE-<number>` ID, and never use these discouraged/prohibited CWEs: {{discouraged_cwes}}"""
 _FIND_CONTEXT_FOR_LATER_PASSES = f"""\
 # Initial Pre-Audit Check
-- First, run `python3 {_COVERED_LINES_SCRIPT_PATH} {{report_file}} "<file>"` (using the target file's repo-relative path) to list already-covered lines and snippets; use `run_command` strictly for this single check (never invoke `node`, `sh`, or other commands, or query other files).
+- First, run `python3 "{_COVERED_LINES_SCRIPT_PATH}" "{{report_file}}" "<file>"` (using the target file's repo-relative path) to list already-covered lines and snippets; use `run_command` strictly for this single check (never invoke `node`, `sh`, or other commands, or query other files).
 - Never re-report a covered vulnerability (its covered/sink lines, enclosing declaration/caller, or any intra-file helper/validator/sanitizer whose caller/sink in this file is already covered, or vice versa); audit the remaining uncovered lines and report 0 if no distinct vulnerabilities remain.
 
 {_FIND_CONTEXT_FOR_FIRST_PASS}"""
@@ -77,6 +77,24 @@ def _load_discouraged_cwes() -> str:
     return ""
   with open(_DISCOURAGED_CWES_PATH, "r", encoding="utf-8") as cwe_f:
     return ", ".join(cwe_f.read().split())
+
+
+def _strip_dot_slash(path: str) -> str:
+  """Strips leading `./` and `/` prefixes without stripping leading dots on hidden directories like `.github`."""
+  p = path
+  while p.startswith("./"):
+    p = p[2:]
+  return p.lstrip("/")
+
+
+def _format_cmignore_entry(rel_path: str) -> str:
+  """Escapes gitignore-significant leading `#`/`!` and trailing spaces while preserving interior spaces."""
+  entry = rel_path
+  if entry.startswith(("#", "!")):
+    entry = "\\" + entry
+  if entry.endswith(" "):
+    entry = entry[:-1] + "\\ "
+  return entry
 
 
 def _normalize_report_file_path(file_path: str, repo_dir: str = "") -> str:
@@ -97,8 +115,8 @@ def _normalize_report_file_path(file_path: str, repo_dir: str = "") -> str:
   for root in roots:
     prefix = root + "/"
     if path.startswith(prefix):
-      return path[len(prefix) :].lstrip("./")
-  return path.lstrip("./")
+      return _strip_dot_slash(path[len(prefix) :])
+  return _strip_dot_slash(path)
 
 
 def preprocess_report_for_context(
@@ -134,13 +152,14 @@ def preprocess_report_for_context(
 # Matches per-batch completion lines emitted by `cm find --deep`, e.g.:
 #   [1/124 batches] ✅ data/static/codefixes/forgedReviewChallenge_3.ts (1m13.6s) | 14.2k tok - 0 vulnerabilities
 _DEEP_BATCH_LINE_RE = re.compile(
-    r"^\[\d+/\d+\s+batches\]\s+\S+\s+(\S+)\s+\([^)]+\)\s+\|.*-\s+\d+\s+vulnerabilit",
+    r"^\[\d+/\d+\s+batches\]\s+\S+\s+(.+?)\s+\(\d[^)]*\)(?:\s+\|[^\n]*)?\s+-\s+\d+\s+vulnerabilit",
     re.MULTILINE,
 )
 # Matches per-batch failure lines emitted by `cm find --deep`, e.g.:
 #   [2/12 batches] ❌ routes/auth.js — session failed
+#   [2/12 batches] ❌ src/my dir/auth.js (10.2s): context deadline exceeded
 _DEEP_FAILED_BATCH_LINE_RE = re.compile(
-    r"^\[\d+/\d+\s+batches\]\s+(?:❌|✗|FAIL)\S*\s+(\S+)",
+    r"^\[\d+/\d+\s+batches\]\s+(?:❌|✗|FAIL)\S*\s+(.+?)(?:\s+\(\d[^)]*\)\s*:|\s+(?:—|--|-)\s+|\s*$)",
     re.MULTILINE,
 )
 
@@ -152,16 +171,16 @@ def _rel_target_path(
     project_root: str = "",
 ) -> str:
   """Normalizes a session target or finding file_path to a case-preserved repo-relative path."""
-  path = (file_path or "").strip()
+  path = (file_path or "").strip().replace("\\", "/")
   if not path:
     return ""
   for root in (repo_dir, repo_real, project_root):
     if not root or root == ".":
       continue
-    prefix = root.rstrip("/\\") + "/"
+    prefix = root.replace("\\", "/").rstrip("/") + "/"
     if path.startswith(prefix):
-      return path[len(prefix) :].lstrip("./")
-  return path.lstrip("./")
+      return _strip_dot_slash(path[len(prefix) :])
+  return _strip_dot_slash(path)
 
 
 def _extract_batch_files_from_stdout(stdout: str) -> List[str]:
@@ -171,7 +190,7 @@ def _extract_batch_files_from_stdout(stdout: str) -> List[str]:
   seen: Set[str] = set()
   ordered: List[str] = []
   for match in _DEEP_BATCH_LINE_RE.finditer(stdout):
-    rel_path = match.group(1).strip().lstrip("./")
+    rel_path = _strip_dot_slash(match.group(1).strip())
     if rel_path and rel_path not in seen:
       seen.add(rel_path)
       ordered.append(rel_path)
@@ -182,11 +201,12 @@ def _extract_failed_batch_files_from_stdout(stdout: str) -> Set[str]:
   """Extracts repo-relative file paths from failed `cm find --deep` batch lines."""
   if not stdout:
     return set()
-  return {
-      match.group(1).strip().lstrip("./")
-      for match in _DEEP_FAILED_BATCH_LINE_RE.finditer(stdout)
-      if match.group(1).strip().lstrip("./")
-  }
+  out: Set[str] = set()
+  for match in _DEEP_FAILED_BATCH_LINE_RE.finditer(stdout):
+    rel_path = _strip_dot_slash(match.group(1).strip())
+    if rel_path:
+      out.add(rel_path)
+  return out
 
 
 def get_latest_session_finding_counts(
@@ -479,8 +499,9 @@ def _active_preexisting_finding_ids(
   return still_preexisting
 
 
-_SCRATCH_DIR_NAME = ".codemender"
-_PASS_REPORT_REL_PATH = f"{_SCRATCH_DIR_NAME}/.cm_pass_report.json"
+# Extensionless, slashless filename so `cm find` neither discovers it as a source
+# file nor interprets its mention in `--context` as a target file scope filter.
+_PASS_REPORT_REL_PATH = "_cm_pass_report"
 _WORKSPACE_BACKUPS_DIR = "workspace_backups"
 
 
@@ -546,11 +567,6 @@ def restore_interrupted_workspace(
     _safe_remove(cmignore_path)
 
   _safe_remove(backup_path)
-  if backup.get("created_scratch_dir"):
-    try:
-      os.rmdir(os.path.join(repo_dir, _SCRATCH_DIR_NAME))
-    except OSError:
-      pass
 
 
 def run_complete_scan(
@@ -568,8 +584,6 @@ def run_complete_scan(
   orig_cmignore: Optional[str] = None
   if has_repo_dir:
     restore_interrupted_workspace(cm.repo_dir, cm_dir=cm_dir)
-    scratch_dir = os.path.join(cm.repo_dir, _SCRATCH_DIR_NAME)
-    created_scratch_dir = not os.path.exists(scratch_dir)
     cmignore_path = os.path.join(cm.repo_dir, ".cmignore")
     cmignore_existed = os.path.exists(cmignore_path)
     if cmignore_existed:
@@ -582,7 +596,6 @@ def run_complete_scan(
             "repo_dir": os.path.realpath(cm.repo_dir),
             "existed": cmignore_existed,
             "content": orig_cmignore or "",
-            "created_scratch_dir": created_scratch_dir,
         }),
     )
 
@@ -620,7 +633,7 @@ def run_complete_scan(
             base = orig_cmignore or ""
             if base and not base.endswith("\n"):
               base += "\n"
-            extra = "".join(f"{f}\n" for f in clean_files)
+            extra = "".join(f"{_format_cmignore_entry(f)}\n" for f in clean_files)
             _atomic_write_text(cmignore_path, base + extra)
           report_cmd = codemender.build_cm_command(
               cm.cm_binary,
@@ -653,7 +666,7 @@ def run_complete_scan(
             else:
               with tempfile.NamedTemporaryFile(
                   mode="w",
-                  suffix=".json",
+                  suffix="",
                   delete=False,
                   encoding="utf-8",
               ) as tmp_file:
