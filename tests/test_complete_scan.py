@@ -804,8 +804,8 @@ class CompleteScanTests(unittest.TestCase):
           if call.args[0][:2] == ["cm", "find"]
       ]
       for cmd in find_cmds:
-        self.assertIn(
-            "focusing on the most critical security issues (CRITICAL and HIGH severity)",
+        self.assertNotIn(
+            "focusing on the most critical security issues",
             cmd[cmd.index("--context") + 1],
         )
 
@@ -1272,7 +1272,7 @@ class CompleteScanTests(unittest.TestCase):
         {"src/my folder/flaky handler.js", "routes/slow route.ts"},
     )
 
-  def test_complete_scan_critical_high_only_modifies_context_to_focus_on_critical_issues(self):
+  def test_complete_scan_critical_high_only_keeps_pass_context_unbiased(self):
     with tempfile.TemporaryDirectory() as tmpdir:
       cm = CodeMender(cm_binary="cm", repo_dir=tmpdir)
       proc = types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
@@ -1282,35 +1282,39 @@ class CompleteScanTests(unittest.TestCase):
 
     ch_cmd = mock_run.call_args_list[0].args[0]
     ch_ctx = ch_cmd[ch_cmd.index("--context") + 1]
-    self.assertIn(
-        "focusing on the most critical security issues (CRITICAL and HIGH severity)",
-        ch_ctx,
-    )
-
     all_cmd = mock_run.call_args_list[1].args[0]
     all_ctx = all_cmd[all_cmd.index("--context") + 1]
-    self.assertNotIn(
-        "focusing on the most critical security issues (CRITICAL and HIGH severity)",
-        all_ctx,
-    )
+    self.assertEqual(ch_ctx, all_ctx)
+    self.assertNotIn("focusing on the most critical security issues", ch_ctx)
 
-  def test_complete_scan_context_includes_intra_file_sink_anchoring_and_iac_reachability(self):
+  def test_complete_scan_context_uses_concise_principle_based_invariants(self):
+    self.assertIn("# Audit Strategy", complete_scan._FIND_CONTEXT_FOR_FIRST_PASS)
+    self.assertIn("# CWE Requirements", complete_scan._FIND_CONTEXT_FOR_FIRST_PASS)
+    self.assertNotIn(
+        "# Vulnerabilities to Report", complete_scan._FIND_CONTEXT_FOR_FIRST_PASS
+    )
     self.assertIn(
-        "report the vulnerability once at the function/block where the sink or security defect resides",
+        "most specific root-cause CWE",
         complete_scan._FIND_CONTEXT_FOR_FIRST_PASS,
     )
     self.assertIn(
-        "ineffective/disabled intra-file validator/sanitizer lacking the sink",
+        "never on pure pass-through wrappers/callers or sinkless intra-file helpers",
         complete_scan._FIND_CONTEXT_FOR_FIRST_PASS,
     )
     self.assertIn(
-        "check repository-wide routing and deployment/IaC manifests (including at the repository root",
+        "minimal contiguous sink lines",
         complete_scan._FIND_CONTEXT_FOR_FIRST_PASS,
     )
     self.assertIn(
-        "dead/undeployed handlers",
+        "never blanket-skip internal services, workers, or serverless handlers",
         complete_scan._FIND_CONTEXT_FOR_FIRST_PASS,
     )
+    self.assertIn(
+        "third-party/vendored code, stop immediately and report 0",
+        complete_scan._FIND_CONTEXT_FOR_FIRST_PASS,
+    )
+    self.assertNotIn("dead/undeployed handlers", complete_scan._FIND_CONTEXT_FOR_FIRST_PASS)
+    self.assertNotIn("wallet addresses", complete_scan._FIND_CONTEXT_FOR_FIRST_PASS)
     self.assertIn(
         "intra-file helper/validator/sanitizer whose caller/sink in this file is already covered",
         complete_scan._FIND_CONTEXT_FOR_LATER_PASSES,
