@@ -264,7 +264,7 @@ class CodeMender:
       extra_flags: Optional[List[str]] = None,
       max_turns: int = 8,
       deep_workers: int = 16,
-      model: str = "gemini-4-argon",
+      model: str = "gemini-4-hydrogen",
       context: Optional[str] = None,
       allow_partial_failure: bool = False,
       allow_all_batches_failed: bool = False,
