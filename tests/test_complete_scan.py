@@ -112,10 +112,10 @@ class CompleteScanTests(unittest.TestCase):
           observed_cmignore_contents,
           [
               "existing_ignore/\n",
-              "existing_ignore/\n/clean.py\n",
-              "existing_ignore/\n/clean.py\n/vuln.py\n",
-              "existing_ignore/\n/clean.py\n/vuln.py\n",
-              "existing_ignore/\n/clean.py\n/vuln.py\n",
+              "existing_ignore/\nclean.py\n",
+              "existing_ignore/\nclean.py\nvuln.py\n",
+              "existing_ignore/\nclean.py\nvuln.py\n",
+              "existing_ignore/\nclean.py\nvuln.py\n",
           ],
       )
       self.assertEqual(
@@ -343,7 +343,7 @@ class CompleteScanTests(unittest.TestCase):
 
       self.assertEqual(res.returncode, 0)
       self.assertEqual(find_scan_num, 2)
-      self.assertEqual(observed_cmignore, [None, "/child_clean.py\n"])
+      self.assertEqual(observed_cmignore, [None, "child_clean.py\n"])
       find_cmds = [
           call.args[0]
           for call in mock_run.call_args_list
@@ -474,7 +474,7 @@ class CompleteScanTests(unittest.TestCase):
       self.assertEqual(find_scan_num, 3)
       self.assertEqual(
           observed_cmignore,
-          [None, "/clean.py\n", "/a.py\n/clean.py\n"],
+          [None, "clean.py\n", "a.py\nclean.py\n"],
       )
       self.assertEqual(
           get_latest_session_finding_counts(cm),
@@ -565,7 +565,7 @@ class CompleteScanTests(unittest.TestCase):
 
       self.assertEqual(res.returncode, 0)
       self.assertEqual(find_scan_num, 2)
-      self.assertEqual(observed_cmignore, [None, "/clean.py\n"])
+      self.assertEqual(observed_cmignore, [None, "clean.py\n"])
       find_cmds = [
           call.args[0]
           for call in mock_run.call_args_list
@@ -789,7 +789,7 @@ class CompleteScanTests(unittest.TestCase):
       self.assertEqual(find_scan_num, 2)
       self.assertEqual(
           observed_cmignore,
-          [None, "/low_only.py\n/med_only.py\n"],
+          [None, "low_only.py\nmed_only.py\n"],
       )
       self.assertEqual(
           get_latest_session_finding_counts(cm, critical_high_only=True),
@@ -1253,7 +1253,11 @@ class CompleteScanTests(unittest.TestCase):
         ],
     )
     self.assertIn(
-        "read `{report_file}` with `read_file`",
+        'read "{report_file}" with `read_file`',
+        complete_scan._FIND_CONTEXT_FOR_LATER_PASSES,
+    )
+    self.assertNotIn(
+        "`{report_file}`",
         complete_scan._FIND_CONTEXT_FOR_LATER_PASSES,
     )
     self.assertNotIn(
@@ -1547,7 +1551,7 @@ class CompleteScanTests(unittest.TestCase):
             return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
           # Pass 2: verify `.cmignore` and `_cm_pass_report` are active, then send real SIGTERM
           with open(cmignore_path, "r", encoding="utf-8") as fh:
-            mutated_during_pass2 = "/clean.py\n" in fh.read()
+            mutated_during_pass2 = "clean.py\n" in fh.read()
           report_existed_during_pass2 = os.path.exists(
               os.path.join(repo_dir, *complete_scan._PASS_REPORT_REL_PATH.split("/"))
           )
@@ -1602,19 +1606,36 @@ class CompleteScanTests(unittest.TestCase):
           os.path.exists(complete_scan._workspace_backup_path(repo_dir, cm_home))
       )
 
-  def test_format_cmignore_entry_root_anchors_and_escapes_trailing_spaces(self):
-    self.assertEqual(complete_scan._format_cmignore_entry("index.php"), "/index.php")
-    self.assertEqual(complete_scan._format_cmignore_entry("./src/clean.py"), "/src/clean.py")
-    self.assertEqual(complete_scan._format_cmignore_entry("/src/clean.py"), "/src/clean.py")
+  def test_format_and_filter_cmignore_entries_without_slash_or_root_shadowing(self):
+    self.assertEqual(complete_scan._format_cmignore_entry("index.php"), "index.php")
+    self.assertEqual(complete_scan._format_cmignore_entry("./src/clean.py"), "src/clean.py")
+    self.assertEqual(complete_scan._format_cmignore_entry("/src/clean.py"), "src/clean.py")
     self.assertEqual(
         complete_scan._format_cmignore_entry(".github/workflows/ci.yml"),
-        "/.github/workflows/ci.yml",
+        ".github/workflows/ci.yml",
     )
-    self.assertEqual(complete_scan._format_cmignore_entry("#hash.py"), "/#hash.py")
-    self.assertEqual(complete_scan._format_cmignore_entry("!bang.py"), "/!bang.py")
+    self.assertEqual(complete_scan._format_cmignore_entry("#hash.py"), "\\#hash.py")
+    self.assertEqual(complete_scan._format_cmignore_entry("!bang.py"), "\\!bang.py")
     self.assertEqual(
         complete_scan._format_cmignore_entry("my dir/trailing space.py "),
-        "/my dir/trailing space.py\\ ",
+        "my dir/trailing space.py\\ ",
+    )
+    # Root-level `index.php` is omitted when `vulnerabilities/fi/index.php` is kept,
+    # while `vulnerabilities/cmdi/index.php` (contains `/`) is still ignored safely.
+    self.assertEqual(
+        complete_scan._filter_cmignore_entries(
+            ["index.php", "vulnerabilities/cmdi/index.php", "logout.php"],
+            keep_files=["vulnerabilities/fi/index.php"],
+        ),
+        ["logout.php", "vulnerabilities/cmdi/index.php"],
+    )
+    # Once no active file has basename `index.php`, root `index.php` is ignored normally.
+    self.assertEqual(
+        complete_scan._filter_cmignore_entries(
+            ["index.php", "vulnerabilities/cmdi/index.php", "logout.php"],
+            keep_files=["vulnerabilities/ssti/home.php"],
+        ),
+        ["index.php", "logout.php", "vulnerabilities/cmdi/index.php"],
     )
 
   def test_partial_batch_failure_retried_in_pass2_and_succeeds(self):
@@ -1737,7 +1758,7 @@ class CompleteScanTests(unittest.TestCase):
       self.assertEqual(find_scan_num, 3)
       self.assertEqual(
           observed_cmignore,
-          [None, "/Logout.java\n", "/Logout.java\n/Open.java\n"],
+          [None, "Logout.java\n", "Logout.java\nOpen.java\n"],
       )
       self.assertEqual(
           get_latest_session_finding_counts(cm),
@@ -2173,7 +2194,7 @@ class CompleteScanTests(unittest.TestCase):
                 "[3/3 batches] 🚨 Controller.cs (12.0s) - 1 vulnerabilities\n"
                 "Error: deep scan incomplete: 1 of 3 batch(es) failed (Update/VLAUpdate.cs): The prompt is blocked due to safety\n"
             )
-            return types.SimpleNamespace(returncode=1, stdout=stdout, stderr="")
+            return types.SimpleNamespace(returncode=2, stdout=stdout, stderr="")
           if pass_idx == 1:
             # Hydrogen Pass 2: Controller.cs converges (Update/VLAUpdate.cs is in .cmignore)
             db_con.execute(
@@ -2231,19 +2252,19 @@ class CompleteScanTests(unittest.TestCase):
               {
                   "model": "gemini-4-hydrogen",
                   "disable_fallback": "true",
-                  "cmignore": "/Update/VLAUpdate.cs\n/clean.cs\n",
+                  "cmignore": "Update/VLAUpdate.cs\nclean.cs\n",
                   "max_turns": "12",
               },
               {
                   "model": "gemini-4-argon",
                   "disable_fallback": None,
-                  "cmignore": "/Controller.cs\n/clean.cs\n",
+                  "cmignore": "Controller.cs\nclean.cs\n",
                   "max_turns": "8",
               },
               {
                   "model": "gemini-4-argon",
                   "disable_fallback": None,
-                  "cmignore": "/Controller.cs\n/clean.cs\n",
+                  "cmignore": "Controller.cs\nclean.cs\n",
                   "max_turns": "12",
               },
           ],
@@ -2285,7 +2306,7 @@ class CompleteScanTests(unittest.TestCase):
             db_con.commit()
             db_con.close()
             return types.SimpleNamespace(
-                returncode=1,
+                returncode=2,
                 stdout="Error: all 1 deep scan batch(es) failed: The prompt is blocked due to safety\n",
                 stderr="",
             )

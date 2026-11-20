@@ -60,8 +60,8 @@ def is_partial_deep_scan_failure(
     find_stdout: str,
     allow_all_batches_failed: bool = False,
 ) -> bool:
-  """Whether cm find exited 1 because deep scan batch(es) failed in a retryable pass."""
-  if returncode != 1:
+  """Whether cm find exited non-zero (1 or 2) because deep scan batch(es) failed in a retryable pass."""
+  if returncode not in (1, 2):
     return False
   text = find_stdout or ""
   if _CI_GATE_TRUNCATED.search(text):
@@ -72,8 +72,8 @@ def is_partial_deep_scan_failure(
 
 
 def is_safety_block_failure(returncode: int, find_stdout: str) -> bool:
-  """Whether cm find exited 1 because batches were blocked by a safety/prohibited_content filter."""
-  if returncode != 1:
+  """Whether cm find exited non-zero (1 or 2) because batches were blocked by a safety/prohibited_content filter."""
+  if returncode not in (1, 2):
     return False
   text = find_stdout or ""
   return bool(_SAFETY_BLOCK_ERROR.search(text)) and not _CI_GATE_TRUNCATED.search(text)

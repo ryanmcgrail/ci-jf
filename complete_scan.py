@@ -37,7 +37,7 @@ _FIND_CONTEXT_FOR_FIRST_PASS = """\
 - Assign each finding exactly one valid `CWE-<number>` ID, and never use these discouraged/prohibited CWEs: {discouraged_cwes}"""
 _FIND_CONTEXT_FOR_LATER_PASSES = f"""\
 # Initial Pre-Audit Check
-- First, read `{{report_file}}` with `read_file` and check this target file's section (if present) for already-covered line ranges and snippets.
+- First, read "{{report_file}}" with `read_file` and check this target file's section (if present) for already-covered line ranges and snippets.
 - Never re-report a covered vulnerability (its covered/sink lines, enclosing declaration/caller, or any intra-file helper/validator/sanitizer whose caller/sink in this file is already covered, or vice versa); audit the remaining uncovered lines and report 0 if no distinct vulnerabilities remain.
 
 {_FIND_CONTEXT_FOR_FIRST_PASS}"""
@@ -60,11 +60,42 @@ def _strip_dot_slash(path: str) -> str:
 
 
 def _format_cmignore_entry(rel_path: str) -> str:
-  """Formats a repo-relative path as a root-anchored `.cmignore` entry while preserving trailing spaces."""
-  entry = "/" + _strip_dot_slash(rel_path)
+  """Formats a repo-relative path for `.cmignore` without leading `/` (`cm` matches slashless `relPath`)."""
+  entry = _strip_dot_slash(rel_path)
+  if entry.startswith(("#", "!")):
+    entry = "\\" + entry
   if entry.endswith(" "):
     entry = entry[:-1] + "\\ "
   return entry
+
+
+def _filter_cmignore_entries(
+    ignored_files: Iterable[str],
+    keep_files: Optional[Iterable[str]] = None,
+) -> List[str]:
+  """Formats sorted `.cmignore` entries while avoiding root-basename shadowing.
+
+  `cm` matches `.cmignore` patterns containing `/` against the full repo-relative
+  path, whereas patterns without `/` are matched against `filepath.Base(relPath)`
+  across all subdirectories. If a root-level file (no `/`) is ignored while a
+  subdirectory file with the same basename remains active, omit the root-level
+  entry so the subdirectory file is still audited.
+  """
+  protected_basenames_lower: Set[str] = set()
+  if keep_files:
+    for kept in keep_files:
+      norm_kept = _strip_dot_slash(str(kept or ""))
+      if norm_kept:
+        protected_basenames_lower.add(os.path.basename(norm_kept).lower())
+
+  entries: List[str] = []
+  for raw in sorted({_strip_dot_slash(str(f or "")) for f in ignored_files}):
+    if not raw:
+      continue
+    if "/" not in raw and raw.lower() in protected_basenames_lower:
+      continue
+    entries.append(_format_cmignore_entry(raw))
+  return entries
 
 
 def _normalize_report_file_path(file_path: str, repo_dir: str = "") -> str:
@@ -232,7 +263,8 @@ def _extract_batch_files_from_stdout(stdout: str) -> List[str]:
 
 
 _DEEP_FAILED_SUMMARY_BLOCK_RE = re.compile(
-    r"deep scan batch\(es\)\s+failed\s*\(coverage is incomplete\):\s*\n((?:\s*•\s+.+\n?)+)",
+    r"deep scan batch\(es\)\s+failed\s*\(coverage is incomplete\):\s*\n"
+    r"((?:(?:\s*•\s+.+|─+|📊\s+Deep Scan Sifter Complete:.*|\s*Session:\s+\S.*|\s*Total tokens consumed:.*)\n?)+)",
     re.IGNORECASE,
 )
 _DEEP_FAILED_BULLET_RE = re.compile(r"^\s*•\s+(.+?)\s*$", re.MULTILINE)
@@ -712,7 +744,9 @@ def _active_preexisting_finding_ids(
 
 
 # Extensionless, slashless filename so `cm find` neither discovers it as a source
-# file nor interprets its mention in `--context` as a target file scope filter.
+# file nor interprets a double-quoted mention in `--context` as a target file
+# scope filter (never wrap it in backticks in `--context`, as `cm` checks all
+# `` `...` `` spans via `os.Stat` against the repo root).
 _PASS_REPORT_REL_PATH = "_cm_pass_report"
 _WORKSPACE_BACKUPS_DIR = "workspace_backups"
 
@@ -841,13 +875,17 @@ def run_complete_scan(
       escalated_files: Set[str] = set()
       escalate_entire_repo = False
 
-      def _write_cmignore(ignored_files: Iterable[str]) -> None:
+      def _write_cmignore(
+          ignored_files: Iterable[str],
+          keep_files: Optional[Iterable[str]] = None,
+      ) -> None:
         if not cmignore_path:
           return
         base = orig_cmignore or ""
         if base and not base.endswith("\n"):
           base += "\n"
-        extra = "".join(f"{_format_cmignore_entry(f)}\n" for f in sorted(set(ignored_files)))
+        entries = _filter_cmignore_entries(ignored_files, keep_files=keep_files)
+        extra = "".join(f"{entry}\n" for entry in entries)
         _atomic_write_text(cmignore_path, base + extra)
 
       def _fetch_covered_report(only_files: Optional[Iterable[str]]) -> str:
@@ -983,7 +1021,10 @@ def run_complete_scan(
           )
           if counts and not active_files:
             break
-          _write_cmignore(set(clean_files) | escalated_files)
+          _write_cmignore(
+              set(clean_files) | escalated_files,
+              keep_files=active_files,
+          )
           covered_report = _fetch_covered_report(active_files or None)
           has_prior_state = bool(covered_report) or bool(active_files)
 
@@ -1056,7 +1097,7 @@ def run_complete_scan(
               argon_active = sorted(t for t, c in argon_counts.items() if c > 0)
               if argon_counts and not argon_active:
                 break
-              _write_cmignore(argon_clean)
+              _write_cmignore(argon_clean, keep_files=argon_active)
               covered_report = _fetch_covered_report(argon_active or None)
               has_prior_state = bool(covered_report) or bool(argon_active)
             else:
@@ -1084,7 +1125,7 @@ def run_complete_scan(
                 | cleared_files
                 | argon_cleared_files
             )
-            _write_cmignore(ignored_for_argon)
+            _write_cmignore(ignored_for_argon, keep_files=argon_active)
             covered_report = _fetch_covered_report(argon_active)
             has_prior_state = bool(covered_report) or (argon_index > 0)
 

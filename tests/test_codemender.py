@@ -458,11 +458,15 @@ class CodeMenderTests(unittest.TestCase):
     all_failed_stdout = "Error: all 2 deep scan batch(es) failed: timeout\n"
 
     self.assertTrue(codemender.is_partial_deep_scan_failure(1, partial_stdout))
-    self.assertFalse(codemender.is_partial_deep_scan_failure(2, partial_stdout))
+    self.assertTrue(codemender.is_partial_deep_scan_failure(2, partial_stdout))
+    self.assertFalse(codemender.is_partial_deep_scan_failure(3, partial_stdout))
+    self.assertTrue(codemender.is_safety_block_failure(1, partial_stdout))
+    self.assertTrue(codemender.is_safety_block_failure(2, partial_stdout))
+    self.assertFalse(codemender.is_safety_block_failure(3, partial_stdout))
     self.assertFalse(codemender.is_partial_deep_scan_failure(1, all_failed_stdout))
     self.assertTrue(
         codemender.is_partial_deep_scan_failure(
-            1, all_failed_stdout, allow_all_batches_failed=True
+            2, all_failed_stdout, allow_all_batches_failed=True
         )
     )
 
