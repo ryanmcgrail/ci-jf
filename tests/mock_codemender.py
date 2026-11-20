@@ -146,6 +146,8 @@ class MockCodeMender:
         deep_workers: int = 16,
         model: str = "gemini-4-argon",
         context: str | None = None,
+        allow_partial_failure: bool = False,
+        allow_all_batches_failed: bool = False,
         **_kwargs: Any,
     ) -> Any:
         self.find_calls.append((target_or_id, scan_mode))

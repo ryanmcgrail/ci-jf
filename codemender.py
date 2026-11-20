@@ -20,6 +20,15 @@ logger = logging.getLogger("codemender")
 
 _CI_GATE_BLOCKING = re.compile(r"CI Gate Failure:\s*\d+ blocking finding")
 _CI_GATE_TRUNCATED = re.compile(r"CI Gate Failure:\s*Impact expansion truncated")
+_DEEP_PARTIAL_BATCH_FAILURE = re.compile(
+    r"deep scan incomplete:\s*\d+\s+of\s+\d+\s+(?:deep scan\s+)?batch\(es\)\s+failed"
+    r"|\d+\s+of\s+\d+\s+deep scan batch\(es\)\s+failed\s*\(coverage is incomplete\)",
+    re.IGNORECASE,
+)
+_DEEP_ALL_BATCHES_FAILED = re.compile(
+    r"\ball\s+\d+\s+deep scan batch\(es\)\s+failed\b",
+    re.IGNORECASE,
+)
 _ADC_REAUTH_ERROR = re.compile(
     r"invalid_grant|invalid_rapt|reauth related error|could not find default credentials",
     re.IGNORECASE,
@@ -40,6 +49,22 @@ def is_ci_gate_exit(returncode: int, find_stdout: str) -> bool:
       and bool(_CI_GATE_BLOCKING.search(text))
       and not _CI_GATE_TRUNCATED.search(text)
   )
+
+
+def is_partial_deep_scan_failure(
+    returncode: int,
+    find_stdout: str,
+    allow_all_batches_failed: bool = False,
+) -> bool:
+  """Whether cm find exited 1 because deep scan batch(es) failed in a retryable pass."""
+  if returncode != 1:
+    return False
+  text = find_stdout or ""
+  if _CI_GATE_TRUNCATED.search(text):
+    return False
+  if _DEEP_PARTIAL_BATCH_FAILURE.search(text):
+    return True
+  return bool(allow_all_batches_failed and _DEEP_ALL_BATCHES_FAILED.search(text))
 
 
 def is_adc_reauth_error(returncode: int, stdout: str, stderr: str = "") -> bool:
@@ -195,6 +220,18 @@ def resolve_cm_home(env: Optional[Dict[str, str]] = None) -> str:
   )
 
 
+def resolve_subprocess_env(
+    env: Optional[Dict[str, str]] = None,
+) -> Dict[str, str]:
+  """Builds CodeMender's subprocess env, defaulting CM_STALL_DETECTION=on unless overridden."""
+  resolved = dict(os.environ)
+  if env is not None:
+    resolved.update(env)
+  if not str(resolved.get("CM_STALL_DETECTION") or "").strip():
+    resolved["CM_STALL_DETECTION"] = "on"
+  return resolved
+
+
 class CodeMender:
   """Encapsulates CodeMender CLI configuration and operations for a repository."""
 
@@ -229,6 +266,8 @@ class CodeMender:
       deep_workers: int = 16,
       model: str = "gemini-4-argon",
       context: Optional[str] = None,
+      allow_partial_failure: bool = False,
+      allow_all_batches_failed: bool = False,
   ) -> Any:
     """Runs the CodeMender find command on the target repository directory."""
     target = target_or_id if target_or_id is not None else self.repo_dir
@@ -265,7 +304,8 @@ class CodeMender:
         target_or_id=target,
         extra_flags=cmd_flags,
     )
-    result = run_command(command, cwd=self.repo_dir, env=self.env, check=False, print_to_stdout=True)
+    subproc_env = resolve_subprocess_env(self.env)
+    result = run_command(command, cwd=self.repo_dir, env=subproc_env, check=False, print_to_stdout=True)
     returncode = getattr(result, "returncode", 0)
     stdout = getattr(result, "stdout", "")
     stderr = getattr(result, "stderr", "")
@@ -280,16 +320,27 @@ class CodeMender:
       run_command(
           ["gcloud", "auth", "application-default", "login"],
           cwd=self.repo_dir,
-          env=self.env,
+          env=subproc_env,
           check=True,
           print_to_stdout=True,
           interactive=True,
       )
-      result = run_command(command, cwd=self.repo_dir, env=self.env, check=False, print_to_stdout=True)
+      result = run_command(command, cwd=self.repo_dir, env=subproc_env, check=False, print_to_stdout=True)
       returncode = getattr(result, "returncode", 0)
       stdout = getattr(result, "stdout", "")
 
-    if returncode and not is_ci_gate_exit(returncode, stdout or ""):
+    if (
+        returncode
+        and not is_ci_gate_exit(returncode, stdout or "")
+        and not (
+            allow_partial_failure
+            and is_partial_deep_scan_failure(
+                returncode,
+                stdout or "",
+                allow_all_batches_failed=allow_all_batches_failed,
+            )
+        )
+    ):
       raise RuntimeError(f"cm find failed with exit code {returncode}")
     return result
 
@@ -305,7 +356,7 @@ class CodeMender:
     res = run_command(
         report_cmd,
         cwd=self.repo_dir,
-        env=self.env,
+        env=resolve_subprocess_env(self.env),
         check=False,
     )
     if res.returncode != 0:

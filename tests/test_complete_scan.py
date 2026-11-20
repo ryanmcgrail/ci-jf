@@ -112,10 +112,10 @@ class CompleteScanTests(unittest.TestCase):
           observed_cmignore_contents,
           [
               "existing_ignore/\n",
-              "existing_ignore/\nclean.py\n",
-              "existing_ignore/\nclean.py\nvuln.py\n",
-              "existing_ignore/\nclean.py\nvuln.py\n",
-              "existing_ignore/\nclean.py\nvuln.py\n",
+              "existing_ignore/\n/clean.py\n",
+              "existing_ignore/\n/clean.py\n/vuln.py\n",
+              "existing_ignore/\n/clean.py\n/vuln.py\n",
+              "existing_ignore/\n/clean.py\n/vuln.py\n",
           ],
       )
       self.assertEqual(
@@ -342,7 +342,7 @@ class CompleteScanTests(unittest.TestCase):
 
       self.assertEqual(res.returncode, 0)
       self.assertEqual(find_scan_num, 2)
-      self.assertEqual(observed_cmignore, [None, "child_clean.py\n"])
+      self.assertEqual(observed_cmignore, [None, "/child_clean.py\n"])
       find_cmds = [
           call.args[0]
           for call in mock_run.call_args_list
@@ -473,7 +473,7 @@ class CompleteScanTests(unittest.TestCase):
       self.assertEqual(find_scan_num, 3)
       self.assertEqual(
           observed_cmignore,
-          [None, "clean.py\n", "a.py\nclean.py\n"],
+          [None, "/clean.py\n", "/a.py\n/clean.py\n"],
       )
       self.assertEqual(
           get_latest_session_finding_counts(cm),
@@ -564,7 +564,7 @@ class CompleteScanTests(unittest.TestCase):
 
       self.assertEqual(res.returncode, 0)
       self.assertEqual(find_scan_num, 2)
-      self.assertEqual(observed_cmignore, [None, "clean.py\n"])
+      self.assertEqual(observed_cmignore, [None, "/clean.py\n"])
       find_cmds = [
           call.args[0]
           for call in mock_run.call_args_list
@@ -788,7 +788,7 @@ class CompleteScanTests(unittest.TestCase):
       self.assertEqual(find_scan_num, 2)
       self.assertEqual(
           observed_cmignore,
-          [None, "low_only.py\nmed_only.py\n"],
+          [None, "/low_only.py\n/med_only.py\n"],
       )
       self.assertEqual(
           get_latest_session_finding_counts(cm, critical_high_only=True),
@@ -1536,9 +1536,9 @@ class CompleteScanTests(unittest.TestCase):
             db_con.close()
             find_scan_num += 1
             return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
-          # Pass 2: verify `.cmignore` and `.cm_pass_report.json` are active, then send real SIGTERM
+          # Pass 2: verify `.cmignore` and `_cm_pass_report` are active, then send real SIGTERM
           with open(cmignore_path, "r", encoding="utf-8") as fh:
-            mutated_during_pass2 = "clean.py\n" in fh.read()
+            mutated_during_pass2 = "/clean.py\n" in fh.read()
           report_existed_during_pass2 = os.path.exists(
               os.path.join(repo_dir, *complete_scan._PASS_REPORT_REL_PATH.split("/"))
           )
@@ -1592,6 +1592,347 @@ class CompleteScanTests(unittest.TestCase):
       self.assertFalse(
           os.path.exists(complete_scan._workspace_backup_path(repo_dir, cm_home))
       )
+
+  def test_format_cmignore_entry_root_anchors_and_escapes_trailing_spaces(self):
+    self.assertEqual(complete_scan._format_cmignore_entry("index.php"), "/index.php")
+    self.assertEqual(complete_scan._format_cmignore_entry("./src/clean.py"), "/src/clean.py")
+    self.assertEqual(complete_scan._format_cmignore_entry("/src/clean.py"), "/src/clean.py")
+    self.assertEqual(
+        complete_scan._format_cmignore_entry(".github/workflows/ci.yml"),
+        "/.github/workflows/ci.yml",
+    )
+    self.assertEqual(complete_scan._format_cmignore_entry("#hash.py"), "/#hash.py")
+    self.assertEqual(complete_scan._format_cmignore_entry("!bang.py"), "/!bang.py")
+    self.assertEqual(
+        complete_scan._format_cmignore_entry("my dir/trailing space.py "),
+        "/my dir/trailing space.py\\ ",
+    )
+
+  def test_partial_batch_failure_retried_in_pass2_and_succeeds(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      repo_dir = os.path.join(tmpdir, "repo")
+      cm_home = os.path.join(tmpdir, "cm_home")
+      os.makedirs(repo_dir)
+      os.makedirs(cm_home)
+      db_path = os.path.join(cm_home, "state.db")
+      con = sqlite3.connect(db_path)
+      con.execute(
+          "CREATE TABLE sessions ("
+          "session_id TEXT PRIMARY KEY, "
+          "session_type TEXT, "
+          "status TEXT, "
+          "target TEXT, "
+          "created_at TEXT, "
+          "updated_at TEXT, "
+          "project_root TEXT, "
+          "parent_session_id TEXT)"
+      )
+      con.execute(
+          "CREATE TABLE findings ("
+          "finding_id TEXT PRIMARY KEY, "
+          "session_id TEXT, "
+          "status TEXT, "
+          "severity TEXT, "
+          "file_path TEXT, "
+          "vuln_type TEXT, "
+          "start_line INTEGER, "
+          "end_line INTEGER, "
+          "snippet TEXT)"
+      )
+      con.commit()
+      con.close()
+
+      cm = CodeMender(cm_binary="cm", repo_dir=repo_dir, env={"CM_HOME": cm_home})
+      find_scan_num = 0
+      observed_cmignore = []
+
+      def fake_run_command(cmd, **kwargs):
+        nonlocal find_scan_num
+        self.assertEqual(kwargs.get("env", {}).get("CM_STALL_DETECTION"), "on")
+        if cmd[:2] == ["cm", "report"]:
+          db_con = sqlite3.connect(db_path)
+          rows = db_con.execute(
+              "SELECT finding_id, status, file_path, snippet FROM findings"
+          ).fetchall()
+          db_con.close()
+          payload = [
+              {"finding_id": r[0], "status": r[1], "file_path": r[2], "snippet": r[3]}
+              for r in rows
+          ]
+          return types.SimpleNamespace(returncode=0, stdout=json.dumps(payload), stderr="")
+        if cmd[:2] == ["cm", "find"]:
+          cmignore_path = os.path.join(repo_dir, ".cmignore")
+          observed_cmignore.append(
+              open(cmignore_path, "r", encoding="utf-8").read()
+              if os.path.exists(cmignore_path)
+              else None
+          )
+          db_con = sqlite3.connect(db_path)
+          if find_scan_num == 0:
+            db_con.executemany(
+                "INSERT INTO sessions VALUES (?, 'FIND', ?, ?, 't0', 't0', ?, 'parent-0')",
+                [
+                    ("s0-clean", "COMPLETED", "Logout.java", repo_dir),
+                    ("s0-open", "COMPLETED", "Open.java", repo_dir),
+                    ("s0-reg", "FAILED", "src/Register.java", repo_dir),
+                ],
+            )
+            db_con.execute(
+                "INSERT INTO findings VALUES ('f0-open', 's0-open', 'OPEN', 'HIGH', 'Open.java', 'CWE-601', 10, 12, 'redirect()')"
+            )
+            db_con.commit()
+            db_con.close()
+            find_scan_num += 1
+            stdout = (
+                "[1/3 batches] ✅ Logout.java (10.0s) | 5.0k tok - 0 vulnerabilities\n"
+                "[2/3 batches] 🚨 Open.java (12.0s) | 8.0k tok - 1 vulnerabilities\n"
+                "[3/3 batches] ❌ src/Register.java (15.0s): [permission_denied] The caller does not have permission\n"
+                "⚠️ 1 of 3 deep scan batch(es) failed (coverage is incomplete):\n"
+                "     • src/Register.java\n"
+                "Error: deep scan incomplete: 1 of 3 batch(es) failed (src/Register.java): [permission_denied]\n"
+            )
+            return types.SimpleNamespace(returncode=1, stdout=stdout, stderr="")
+          if find_scan_num == 1:
+            # Pass 2 retries Open.java (0 new findings) and src/Register.java (succeeds with 1 finding)
+            db_con.executemany(
+                "INSERT INTO sessions VALUES (?, 'FIND', 'COMPLETED', ?, 't1', 't1', ?, 'parent-1')",
+                [
+                    ("s1-open", "Open.java", repo_dir),
+                    ("s1-reg", "src/Register.java", repo_dir),
+                ],
+            )
+            db_con.execute(
+                "INSERT INTO findings VALUES ('f1-reg', 's1-reg', 'OPEN', 'CRITICAL', 'src/Register.java', 'CWE-89', 20, 24, 'stmt.execute()')"
+            )
+            db_con.commit()
+            db_con.close()
+            find_scan_num += 1
+            return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+          if find_scan_num == 2:
+            # Pass 3 converges src/Register.java cleanly with 0 new findings
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s2-reg', 'FIND', 'COMPLETED', 'src/Register.java', 't2', 't2', ?, 'parent-2')",
+                (repo_dir,),
+            )
+            db_con.commit()
+            db_con.close()
+            find_scan_num += 1
+            return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+          raise AssertionError("Should have converged after Pass 3")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+      with patch("codemender.run_command", side_effect=fake_run_command):
+        res = run_complete_scan(cm, complete_runs=5)
+
+      self.assertEqual(res.returncode, 0)
+      self.assertEqual(find_scan_num, 3)
+      self.assertEqual(
+          observed_cmignore,
+          [None, "/Logout.java\n", "/Logout.java\n/Open.java\n"],
+      )
+      self.assertEqual(
+          get_latest_session_finding_counts(cm),
+          {"Logout.java": 0, "Open.java": 0, "src/Register.java": 0},
+      )
+
+  def test_partial_batch_failure_tolerates_single_remaining_batch_failure_on_intermediate_pass(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      repo_dir = os.path.join(tmpdir, "repo")
+      cm_home = os.path.join(tmpdir, "cm_home")
+      os.makedirs(repo_dir)
+      os.makedirs(cm_home)
+      db_path = os.path.join(cm_home, "state.db")
+      con = sqlite3.connect(db_path)
+      con.execute(
+          "CREATE TABLE sessions ("
+          "session_id TEXT PRIMARY KEY, "
+          "session_type TEXT, "
+          "status TEXT, "
+          "target TEXT, "
+          "created_at TEXT, "
+          "updated_at TEXT, "
+          "project_root TEXT, "
+          "parent_session_id TEXT)"
+      )
+      con.execute(
+          "CREATE TABLE findings ("
+          "finding_id TEXT PRIMARY KEY, "
+          "session_id TEXT, "
+          "status TEXT, "
+          "severity TEXT, "
+          "file_path TEXT, "
+          "vuln_type TEXT, "
+          "start_line INTEGER, "
+          "end_line INTEGER, "
+          "snippet TEXT)"
+      )
+      con.commit()
+      con.close()
+
+      cm = CodeMender(cm_binary="cm", repo_dir=repo_dir, env={"CM_HOME": cm_home})
+      find_scan_num = 0
+
+      def fake_run_command(cmd, **kwargs):
+        nonlocal find_scan_num
+        if cmd[:2] == ["cm", "report"]:
+          return types.SimpleNamespace(returncode=0, stdout="[]", stderr="")
+        if cmd[:2] == ["cm", "find"]:
+          db_con = sqlite3.connect(db_path)
+          if find_scan_num == 0:
+            db_con.executemany(
+                "INSERT INTO sessions VALUES (?, 'FIND', ?, ?, 't0', 't0', ?, 'parent-0')",
+                [
+                    ("s0-clean", "COMPLETED", "clean.py", repo_dir),
+                    ("s0-flaky", "FAILED", "flaky.py", repo_dir),
+                ],
+            )
+            db_con.commit()
+            db_con.close()
+            find_scan_num += 1
+            return types.SimpleNamespace(
+                returncode=1,
+                stdout="Error: deep scan incomplete: 1 of 2 batch(es) failed (flaky.py): timeout\n",
+                stderr="",
+            )
+          if find_scan_num == 1:
+            # Pass 2 only scans flaky.py (1 batch total) and fails transiently as promoted parent
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('parent-1', 'FIND', 'FAILED', ?, 't1', 't1', ?, '')",
+                (repo_dir, repo_dir),
+            )
+            db_con.commit()
+            db_con.close()
+            find_scan_num += 1
+            return types.SimpleNamespace(
+                returncode=1,
+                stdout="Error: all 1 deep scan batch(es) failed: transient error\n",
+                stderr="",
+            )
+          if find_scan_num == 2:
+            # Pass 3 (final pass) succeeds cleanly on flaky.py
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s2-flaky', 'FIND', 'COMPLETED', 'flaky.py', 't2', 't2', ?, 'parent-2')",
+                (repo_dir,),
+            )
+            db_con.commit()
+            db_con.close()
+            find_scan_num += 1
+            return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+          raise AssertionError("Unexpected pass")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+      with patch("codemender.run_command", side_effect=fake_run_command):
+        res = run_complete_scan(cm, complete_runs=3)
+
+      self.assertEqual(res.returncode, 0)
+      self.assertEqual(find_scan_num, 3)
+
+  def test_partial_batch_failure_raises_if_batch_remains_failed_after_final_pass(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      repo_dir = os.path.join(tmpdir, "repo")
+      cm_home = os.path.join(tmpdir, "cm_home")
+      os.makedirs(repo_dir)
+      os.makedirs(cm_home)
+      db_path = os.path.join(cm_home, "state.db")
+      con = sqlite3.connect(db_path)
+      con.execute(
+          "CREATE TABLE sessions ("
+          "session_id TEXT PRIMARY KEY, "
+          "session_type TEXT, "
+          "status TEXT, "
+          "target TEXT, "
+          "created_at TEXT, "
+          "updated_at TEXT, "
+          "project_root TEXT, "
+          "parent_session_id TEXT)"
+      )
+      con.execute(
+          "CREATE TABLE findings ("
+          "finding_id TEXT PRIMARY KEY, "
+          "session_id TEXT, "
+          "status TEXT, "
+          "severity TEXT, "
+          "file_path TEXT, "
+          "vuln_type TEXT, "
+          "start_line INTEGER, "
+          "end_line INTEGER, "
+          "snippet TEXT)"
+      )
+      con.commit()
+      con.close()
+
+      cm = CodeMender(cm_binary="cm", repo_dir=repo_dir, env={"CM_HOME": cm_home})
+      find_scan_num = 0
+
+      def fake_persistent_failure(cmd, **kwargs):
+        nonlocal find_scan_num
+        if cmd[:2] == ["cm", "report"]:
+          return types.SimpleNamespace(returncode=0, stdout="[]", stderr="")
+        if cmd[:2] == ["cm", "find"]:
+          db_con = sqlite3.connect(db_path)
+          if find_scan_num == 0:
+            db_con.executemany(
+                "INSERT INTO sessions VALUES (?, 'FIND', ?, ?, 't0', 't0', ?, 'parent-0')",
+                [
+                    ("s0-clean", "COMPLETED", "clean.py", repo_dir),
+                    ("s0-broken", "FAILED", "broken.py", repo_dir),
+                ],
+            )
+            stdout = "Error: deep scan incomplete: 1 of 2 batch(es) failed (broken.py): safety\n"
+          else:
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s1-broken', 'FIND', 'FAILED', 'broken.py', 't1', 't1', ?, 'parent-1')",
+                (repo_dir,),
+            )
+            stdout = "Error: all 1 deep scan batch(es) failed: safety\n"
+          db_con.commit()
+          db_con.close()
+          find_scan_num += 1
+          return types.SimpleNamespace(returncode=1, stdout=stdout, stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+      with patch("codemender.run_command", side_effect=fake_persistent_failure):
+        with self.assertRaises(RuntimeError) as err_ctx:
+          run_complete_scan(cm, complete_runs=2)
+
+      self.assertEqual(find_scan_num, 2)
+      self.assertIn("exit code 1", str(err_ctx.exception))
+      self.assertFalse(os.path.exists(os.path.join(repo_dir, ".cmignore")))
+
+      # Also verify unresolved FAILED session in state.db fails even if final pass returned 0
+      find_scan_num_db = 0
+
+      def fake_unretried_db_failure(cmd, **kwargs):
+        nonlocal find_scan_num_db
+        if cmd[:2] == ["cm", "report"]:
+          return types.SimpleNamespace(returncode=0, stdout="[]", stderr="")
+        if cmd[:2] == ["cm", "find"]:
+          db_con = sqlite3.connect(db_path)
+          if find_scan_num_db == 0:
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s2-still-broken', 'FIND', 'FAILED', 'still_broken.py', 't2', 't2', ?, 'parent-2')",
+                (repo_dir,),
+            )
+            db_con.commit()
+            db_con.close()
+            find_scan_num_db += 1
+            return types.SimpleNamespace(
+                returncode=1,
+                stdout="Error: deep scan incomplete: 1 of 2 batch(es) failed (still_broken.py): err\n",
+                stderr="",
+            )
+          db_con.close()
+          find_scan_num_db += 1
+          return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+      with patch("codemender.run_command", side_effect=fake_unretried_db_failure):
+        with self.assertRaises(RuntimeError) as db_err_ctx:
+          run_complete_scan(cm, complete_runs=2)
+
+      self.assertEqual(find_scan_num_db, 2)
+      self.assertIn("exit code 1", str(db_err_ctx.exception))
+      self.assertIn("still_broken.py", str(db_err_ctx.exception))
 
 
 if __name__ == "__main__":

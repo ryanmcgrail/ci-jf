@@ -410,6 +410,77 @@ class CodeMenderTests(unittest.TestCase):
     self.assertNotIn("--deep-max-turns", diff_cmd)
     self.assertNotIn("--context", diff_cmd)
 
+  def test_subprocess_env_defaults_stall_detection_on_unless_overridden(self):
+    proc_find = types.SimpleNamespace(returncode=0, stdout="Success")
+    proc_report = types.SimpleNamespace(returncode=0, stdout="[]")
+
+    with patch.dict(os.environ, {}, clear=False):
+      os.environ.pop("CM_STALL_DETECTION", None)
+      cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
+      with patch("codemender.run_command", side_effect=[proc_find, proc_report]) as mock_run:
+        cm.find()
+        cm.list_findings()
+      self.assertIsNone(cm.env)
+      self.assertEqual(mock_run.call_args_list[0].kwargs["env"]["CM_STALL_DETECTION"], "on")
+      self.assertEqual(mock_run.call_args_list[1].kwargs["env"]["CM_STALL_DETECTION"], "on")
+
+    # Empty string in os.environ still defaults to "on"
+    with patch.dict(os.environ, {"CM_STALL_DETECTION": "  "}, clear=False):
+      cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
+      with patch("codemender.run_command", return_value=proc_find) as mock_run:
+        cm.find()
+      self.assertEqual(mock_run.call_args.kwargs["env"]["CM_STALL_DETECTION"], "on")
+
+    # User override in os.environ is respected
+    with patch.dict(os.environ, {"CM_STALL_DETECTION": "off"}, clear=False):
+      cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
+      with patch("codemender.run_command", return_value=proc_find) as mock_run:
+        cm.find()
+      self.assertEqual(mock_run.call_args.kwargs["env"]["CM_STALL_DETECTION"], "off")
+
+    # Explicit CodeMender(env=...) override takes precedence over os.environ
+    with patch.dict(os.environ, {"CM_STALL_DETECTION": "on"}, clear=False):
+      cm = CodeMender(
+          cm_binary="cm",
+          repo_dir="/tmp/test_repo",
+          env={"CM_STALL_DETECTION": "off", "CM_HOME": "/tmp/custom_cm"},
+      )
+      with patch("codemender.run_command", return_value=proc_find) as mock_run:
+        cm.find()
+      self.assertEqual(mock_run.call_args.kwargs["env"]["CM_STALL_DETECTION"], "off")
+      self.assertEqual(mock_run.call_args.kwargs["env"]["CM_HOME"], "/tmp/custom_cm")
+
+  def test_is_partial_deep_scan_failure_and_find_flag(self):
+    partial_stdout = (
+        "Error: deep scan incomplete: 1 of 7 batch(es) failed"
+        " (Update/VLAUpdate.cs): The prompt is blocked due to safety\n"
+    )
+    all_failed_stdout = "Error: all 2 deep scan batch(es) failed: timeout\n"
+
+    self.assertTrue(codemender.is_partial_deep_scan_failure(1, partial_stdout))
+    self.assertFalse(codemender.is_partial_deep_scan_failure(2, partial_stdout))
+    self.assertFalse(codemender.is_partial_deep_scan_failure(1, all_failed_stdout))
+    self.assertTrue(
+        codemender.is_partial_deep_scan_failure(
+            1, all_failed_stdout, allow_all_batches_failed=True
+        )
+    )
+
+    cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo")
+    proc_partial = types.SimpleNamespace(returncode=1, stdout=partial_stdout, stderr="")
+    with patch("codemender.run_command", return_value=proc_partial):
+      with self.assertRaises(RuntimeError):
+        cm.find()
+      res = cm.find(allow_partial_failure=True)
+      self.assertEqual(res.returncode, 1)
+
+    proc_all_failed = types.SimpleNamespace(returncode=1, stdout=all_failed_stdout, stderr="")
+    with patch("codemender.run_command", return_value=proc_all_failed):
+      with self.assertRaises(RuntimeError):
+        cm.find(allow_partial_failure=True)
+      res_all = cm.find(allow_partial_failure=True, allow_all_batches_failed=True)
+      self.assertEqual(res_all.returncode, 1)
+
 
 if __name__ == "__main__":
   unittest.main()

@@ -61,10 +61,8 @@ def _strip_dot_slash(path: str) -> str:
 
 
 def _format_cmignore_entry(rel_path: str) -> str:
-  """Escapes gitignore-significant leading `#`/`!` and trailing spaces while preserving interior spaces."""
-  entry = rel_path
-  if entry.startswith(("#", "!")):
-    entry = "\\" + entry
+  """Formats a repo-relative path as a root-anchored `.cmignore` entry while preserving trailing spaces."""
+  entry = "/" + _strip_dot_slash(rel_path)
   if entry.endswith(" "):
     entry = entry[:-1] + "\\ "
   return entry
@@ -170,8 +168,15 @@ def _extract_batch_files_from_stdout(stdout: str) -> List[str]:
   return ordered
 
 
+_DEEP_FAILED_SUMMARY_BLOCK_RE = re.compile(
+    r"deep scan batch\(es\)\s+failed\s*\(coverage is incomplete\):\s*\n((?:\s*•\s+.+\n?)+)",
+    re.IGNORECASE,
+)
+_DEEP_FAILED_BULLET_RE = re.compile(r"^\s*•\s+(.+?)\s*$", re.MULTILINE)
+
+
 def _extract_failed_batch_files_from_stdout(stdout: str) -> Set[str]:
-  """Extracts repo-relative file paths from failed `cm find --deep` batch lines."""
+  """Extracts repo-relative file paths from failed `cm find --deep` batch lines and summary blocks."""
   if not stdout:
     return set()
   out: Set[str] = set()
@@ -179,6 +184,11 @@ def _extract_failed_batch_files_from_stdout(stdout: str) -> Set[str]:
     rel_path = _strip_dot_slash(match.group(1).strip())
     if rel_path:
       out.add(rel_path)
+  for block_match in _DEEP_FAILED_SUMMARY_BLOCK_RE.finditer(stdout):
+    for bullet_match in _DEEP_FAILED_BULLET_RE.finditer(block_match.group(1)):
+      rel_path = _strip_dot_slash(bullet_match.group(1).strip())
+      if rel_path:
+        out.add(rel_path)
   return out
 
 
@@ -262,6 +272,7 @@ def get_latest_session_finding_counts(
 
   latest_counts: Dict[str, int] = {}
   latest_parent_id: Optional[str] = None
+  latest_parent_completed = True
   child_targets_by_parent: Dict[str, Set[str]] = {}
   parent_finding_targets: Dict[str, Set[str]] = {}
 
@@ -290,6 +301,7 @@ def get_latest_session_finding_counts(
       # previous pass). Recover any active findings recorded under this
       # session_id by grouping on `findings.file_path`.
       latest_parent_id = sid
+      latest_parent_completed = is_completed
       parent_finding_targets.setdefault(sid, set())
       if not is_root_target:
         rel_target = _rel_target_path(
@@ -401,10 +413,13 @@ def get_latest_session_finding_counts(
           and rel_file not in latest_parent_with_findings
           and rel_file not in failed_stdout_files
       ):
-        latest_counts[rel_file] = 0
-        if rel_file not in unaccounted_clean:
-          unaccounted_clean.append(rel_file)
-    if latest_parent_id and not latest_parent_with_findings:
+        if latest_parent_id and not latest_parent_completed:
+          latest_counts[rel_file] = max(latest_counts.get(rel_file, 0), 1)
+        else:
+          latest_counts[rel_file] = 0
+          if rel_file not in unaccounted_clean:
+            unaccounted_clean.append(rel_file)
+    if latest_parent_id and latest_parent_completed and not latest_parent_with_findings:
       promoted_target: Optional[str] = None
       if len(unaccounted_clean) == 1:
         promoted_target = unaccounted_clean[0]
@@ -441,6 +456,70 @@ def _snapshot_db_session_ids(cm: CodeMender) -> Set[str]:
   except sqlite3.Error:
     return set()
   return {str(r[0]) for r in rows if r and r[0]}
+
+
+def _get_unresolved_failed_targets(
+    cm: CodeMender,
+    exclude_session_ids: Optional[Set[str]] = None,
+) -> List[str]:
+  """Returns target paths whose most recent current-scan FIND session in state.db remains FAILED."""
+  con = cm.db
+  if con is None:
+    return []
+  repo_real = os.path.realpath(cm.repo_dir)
+  try:
+    rows = con.execute(
+        """
+        SELECT s.session_id,
+               s.status,
+               s.target,
+               s.project_root,
+               EXISTS (
+                   SELECT 1 FROM sessions c WHERE c.parent_session_id = s.session_id
+               ) AS has_children
+        FROM sessions s
+        WHERE s.session_type = 'FIND'
+          AND s.target != ''
+          AND (s.project_root = '' OR s.project_root = ? OR s.project_root = ?)
+        ORDER BY s.updated_at ASC,
+                 CASE WHEN UPPER(COALESCE(s.status, '')) = 'COMPLETED' THEN 1 ELSE 0 END ASC,
+                 s.created_at ASC,
+                 s.rowid ASC
+        """,
+        (cm.repo_dir, repo_real),
+    ).fetchall()
+  except sqlite3.Error:
+    return []
+
+  latest_status: Dict[str, str] = {}
+  latest_root_failed = False
+  last_root_target = "."
+  for session_id, status, target, project_root, has_children in rows:
+    sid = str(session_id)
+    if exclude_session_ids and sid in exclude_session_ids:
+      continue
+    norm_status = str(status or "").upper()
+    target_str = str(target or "")
+    proj_root_str = str(project_root or "")
+    is_root_target = target_str in (".", cm.repo_dir, repo_real, proj_root_str)
+    if has_children or is_root_target:
+      latest_root_failed = norm_status == "FAILED"
+      last_root_target = target_str or "."
+      if not is_root_target:
+        rel = _rel_target_path(target_str, cm.repo_dir, repo_real, proj_root_str)
+        if rel:
+          latest_status[rel] = norm_status
+    else:
+      if norm_status == "COMPLETED":
+        latest_root_failed = False
+      rel = _rel_target_path(target_str, cm.repo_dir, repo_real, proj_root_str)
+      if rel:
+        latest_status[rel] = norm_status
+
+  unresolved = sorted(t for t, st in latest_status.items() if st == "FAILED")
+  if not unresolved and latest_root_failed:
+    unresolved.append(last_root_target)
+  return unresolved
 
 
 def _active_preexisting_finding_ids(
@@ -624,7 +703,7 @@ def run_complete_scan(
           report_res = codemender.run_command(
               report_cmd,
               cwd=cm.repo_dir,
-              env=cm.env,
+              env=codemender.resolve_subprocess_env(cm.env),
               check=False,
           )
           preprocessed_report = preprocess_report_for_context(
@@ -636,6 +715,8 @@ def run_complete_scan(
 
         report_file: Optional[str] = None
         pass_extra_flags = list(cleaned_extra_flags)
+        is_non_final_pass = scan_index < complete_runs - 1
+        pass_error: Optional[RuntimeError] = None
         try:
           if has_prior_state:
             if has_repo_dir:
@@ -669,13 +750,18 @@ def run_complete_scan(
                 f"{pass_context}\n\n# Additional Context\n{additional_context}"
             )
           pre_pass_rows = snapshot_db_findings(cm)
-          result = cm.find(
-              target_or_id=target_or_id,
-              scan_mode=ScanMode.DEEP,
-              extra_flags=pass_extra_flags or None,
-              max_turns=12 if scan_index > 0 else 8,
-              context=pass_context,
-          )
+          try:
+            result = cm.find(
+                target_or_id=target_or_id,
+                scan_mode=ScanMode.DEEP,
+                extra_flags=pass_extra_flags or None,
+                max_turns=12 if scan_index > 0 else 8,
+                context=pass_context,
+                allow_partial_failure=is_non_final_pass,
+                allow_all_batches_failed=(scan_index > 0 and has_prior_state),
+            )
+          except RuntimeError as exc:
+            pass_error = exc
         finally:
           if report_file is not None:
             _safe_remove(report_file)
@@ -691,6 +777,34 @@ def run_complete_scan(
             cm, pre_scan_finding_ids, pre_scan_session_ids
         )
         deduplicate_db_findings(cm, exclude_finding_ids=excluded_finding_ids or None)
+        if pass_error is not None:
+          raise pass_error
+
+      if result is not None:
+        final_stdout = getattr(result, "stdout", "") or ""
+        get_latest_session_finding_counts(
+            cm,
+            last_pass_files=prev_active_files,
+            last_pass_stdout=final_stdout,
+            critical_high_only=critical_high_only,
+            exclude_session_ids=pre_scan_session_ids or None,
+            exclude_finding_ids=excluded_finding_ids or None,
+        )
+        unresolved_failed = set(
+            _get_unresolved_failed_targets(
+                cm, exclude_session_ids=pre_scan_session_ids or None
+            )
+        )
+        if getattr(result, "returncode", 0) != 0:
+          unresolved_failed.update(
+              _extract_failed_batch_files_from_stdout(final_stdout)
+          )
+        if unresolved_failed:
+          failed_list = ", ".join(sorted(unresolved_failed))
+          raise RuntimeError(
+              "cm find failed with exit code 1: deep scan incomplete"
+              f" (unresolved failed batch(es): {failed_list})"
+          )
       return result
     finally:
       if has_repo_dir:
