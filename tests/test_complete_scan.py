@@ -142,7 +142,7 @@ class CompleteScanTests(unittest.TestCase):
           find_cmds[0][find_cmds[0].index("--context") + 1],
       )
       self.assertEqual(find_cmds[1][find_cmds[1].index("--deep-max-turns") + 1], "12")
-      self.assertIn("--enable-bash", find_cmds[1])
+      self.assertNotIn("--enable-bash", find_cmds[1])
       self.assertIn(
           "# Initial Pre-Audit Check",
           find_cmds[1][find_cmds[1].index("--context") + 1],
@@ -153,6 +153,7 @@ class CompleteScanTests(unittest.TestCase):
       )
       for cmd in find_cmds[2:]:
         self.assertEqual(cmd[cmd.index("--deep-max-turns") + 1], "12")
+        self.assertNotIn("--enable-bash", cmd)
         self.assertNotIn(
             "Only audit these remaining files:",
             cmd[cmd.index("--context") + 1],
@@ -1074,14 +1075,14 @@ class CompleteScanTests(unittest.TestCase):
                 "INSERT INTO findings VALUES ('f0-cur', 's0-cur', 'OPEN', 'HIGH', 'app.py', 'CWE-79', 10, 12, 'cur_sink()')"
             )
           elif find_scan_num == 1:
-            self.assertIn("--enable-bash", cmd)
+            self.assertNotIn("--enable-bash", cmd)
             self.assertIn("# Initial Pre-Audit Check", ctx_arg)
             report_path = os.path.join(
                 repo_dir, *complete_scan._PASS_REPORT_REL_PATH.split("/")
             )
             if os.path.exists(report_path):
               with open(report_path, "r", encoding="utf-8") as fh:
-                pass2_report_payloads.append(json.load(fh))
+                pass2_report_payloads.append(fh.read())
             db_con.execute(
                 "INSERT INTO sessions VALUES ('s1-cur', 'FIND', 'COMPLETED', 'app.py', 't1', 't1', ?, 'parent-1')",
                 (repo_dir,),
@@ -1100,7 +1101,7 @@ class CompleteScanTests(unittest.TestCase):
       self.assertEqual(find_scan_num, 2)
       self.assertEqual(
           pass2_report_payloads,
-          [[{"file_path": "app.py", "snippet": "cur_sink()"}]],
+          ["Already-covered vulnerabilities in app.py:\n- Snippet: cur_sink()"],
       )
 
   def test_preexisting_findings_can_only_increase_severity_never_decrease(self):
@@ -1252,7 +1253,11 @@ class CompleteScanTests(unittest.TestCase):
         ],
     )
     self.assertIn(
-        'covered_lines.py" "{report_file}" "<file>"',
+        "read `{report_file}` with `read_file`",
+        complete_scan._FIND_CONTEXT_FOR_LATER_PASSES,
+    )
+    self.assertNotIn(
+        "covered_lines.py",
         complete_scan._FIND_CONTEXT_FOR_LATER_PASSES,
     )
 
@@ -1307,6 +1312,10 @@ class CompleteScanTests(unittest.TestCase):
     )
     self.assertIn(
         "never blanket-skip internal services, workers, or serverless handlers",
+        complete_scan._FIND_CONTEXT_FOR_FIRST_PASS,
+    )
+    self.assertIn(
+        "as `HIGH` or `CRITICAL` when reachable without prior privileged access",
         complete_scan._FIND_CONTEXT_FOR_FIRST_PASS,
     )
     self.assertIn(
@@ -1933,6 +1942,422 @@ class CompleteScanTests(unittest.TestCase):
       self.assertEqual(find_scan_num_db, 2)
       self.assertIn("exit code 1", str(db_err_ctx.exception))
       self.assertIn("still_broken.py", str(db_err_ctx.exception))
+
+  def test_host_precomputed_covered_lines_manifest_resolves_line_ranges_without_enable_bash(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      repo_dir = os.path.join(tmpdir, "repo")
+      cm_home = os.path.join(tmpdir, "cm_home")
+      os.makedirs(os.path.join(repo_dir, "src"))
+      os.makedirs(cm_home)
+      with open(os.path.join(repo_dir, "src", "auth.py"), "w", encoding="utf-8") as fh:
+        fh.write(
+            "\n".join([
+                "import sqlite3",
+                "",
+                "def login(user):",
+                '    query = f"SELECT * FROM users WHERE name = \'{user}\'"',
+                "    return sqlite3.connect('db').execute(query)",
+                "",
+                "def run_diag(host):",
+                "    return os.system('ping ' + host)",
+            ])
+            + "\n"
+        )
+      with open(os.path.join(repo_dir, "src", "other.py"), "w", encoding="utf-8") as fh:
+        fh.write("def dump(x):\n    return eval(x)\n")
+
+      db_path = os.path.join(cm_home, "state.db")
+      con = sqlite3.connect(db_path)
+      con.execute(
+          "CREATE TABLE sessions ("
+          "session_id TEXT PRIMARY KEY, "
+          "session_type TEXT, "
+          "status TEXT, "
+          "target TEXT, "
+          "created_at TEXT, "
+          "updated_at TEXT, "
+          "project_root TEXT, "
+          "parent_session_id TEXT)"
+      )
+      con.execute(
+          "CREATE TABLE findings ("
+          "finding_id TEXT PRIMARY KEY, "
+          "session_id TEXT, "
+          "status TEXT, "
+          "severity TEXT, "
+          "file_path TEXT, "
+          "vuln_type TEXT, "
+          "start_line INTEGER, "
+          "end_line INTEGER, "
+          "snippet TEXT)"
+      )
+      con.commit()
+      con.close()
+
+      cm = CodeMender(cm_binary="cm", repo_dir=repo_dir, env={"CM_HOME": cm_home})
+      find_scan_num = 0
+      observed_reports = []
+
+      def fake_run_command(cmd, **kwargs):
+        nonlocal find_scan_num
+        if cmd[:2] == ["cm", "report"]:
+          db_con = sqlite3.connect(db_path)
+          rows = db_con.execute(
+              "SELECT finding_id, status, file_path, snippet FROM findings"
+          ).fetchall()
+          db_con.close()
+          return types.SimpleNamespace(
+              returncode=0,
+              stdout=json.dumps([
+                  {"finding_id": r[0], "status": r[1], "file_path": r[2], "snippet": r[3]}
+                  for r in rows
+              ]),
+              stderr="",
+          )
+        if cmd[:2] == ["cm", "find"]:
+          self.assertNotIn("--enable-bash", cmd)
+          report_path = os.path.join(repo_dir, complete_scan._PASS_REPORT_REL_PATH)
+          if os.path.exists(report_path):
+            with open(report_path, "r", encoding="utf-8") as fh:
+              observed_reports.append(fh.read())
+          db_con = sqlite3.connect(db_path)
+          if find_scan_num == 0:
+            db_con.executemany(
+                "INSERT INTO sessions VALUES (?, 'FIND', 'COMPLETED', ?, 't0', 't0', ?, 'parent-0')",
+                [("s0-auth", "src/auth.py", repo_dir), ("s0-other", "src/other.py", repo_dir)],
+            )
+            db_con.executemany(
+                "INSERT INTO findings VALUES (?, ?, 'OPEN', 'HIGH', ?, ?, ?, ?, ?)",
+                [
+                    (
+                        "f0-auth",
+                        "s0-auth",
+                        "src/auth.py",
+                        "CWE-89",
+                        4,
+                        5,
+                        '    query = f"SELECT * FROM users WHERE name = \'{user}\'"\n    return sqlite3.connect(\'db\').execute(query)',
+                    ),
+                    ("f0-other", "s0-other", "src/other.py", "CWE-94", 2, 2, "    return eval(x)"),
+                ],
+            )
+          elif find_scan_num == 1:
+            # src/other.py converges (0 new findings); src/auth.py finds 2nd vulnerability on line 8
+            db_con.executemany(
+                "INSERT INTO sessions VALUES (?, 'FIND', 'COMPLETED', ?, 't1', 't1', ?, 'parent-1')",
+                [("s1-auth", "src/auth.py", repo_dir), ("s1-other", "src/other.py", repo_dir)],
+            )
+            db_con.execute(
+                "INSERT INTO findings VALUES ('f1-auth', 's1-auth', 'OPEN', 'CRITICAL', 'src/auth.py', 'CWE-78', 8, 8, \"    return os.system('ping ' + host)\")"
+            )
+          elif find_scan_num == 2:
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s2-auth', 'FIND', 'COMPLETED', 'src/auth.py', 't2', 't2', ?, 'parent-2')",
+                (repo_dir,),
+            )
+          db_con.commit()
+          db_con.close()
+          find_scan_num += 1
+          return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+      with patch("codemender.run_command", side_effect=fake_run_command):
+        run_complete_scan(cm, complete_runs=5)
+
+      self.assertEqual(find_scan_num, 3)
+      self.assertEqual(len(observed_reports), 2)
+      # Pass 2 report has both active files with resolved line numbers
+      self.assertIn("Already-covered vulnerabilities in src/auth.py:\n- Lines 4-5:", observed_reports[0])
+      self.assertIn("Already-covered vulnerabilities in src/other.py:\n- Line 2:", observed_reports[0])
+      # Pass 3 report scopes strictly to remaining active file (`src/auth.py`), omitting converged `src/other.py`
+      self.assertIn("Already-covered vulnerabilities in src/auth.py:", observed_reports[1])
+      self.assertIn("- Lines 4-5:", observed_reports[1])
+      self.assertIn("- Line 8:", observed_reports[1])
+      self.assertNotIn("src/other.py", observed_reports[1])
+
+  def test_safety_blocked_files_escalate_to_argon_with_scoped_cmignore(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      repo_dir = os.path.join(tmpdir, "repo")
+      cm_home = os.path.join(tmpdir, "cm_home")
+      os.makedirs(repo_dir)
+      os.makedirs(cm_home)
+      db_path = os.path.join(cm_home, "state.db")
+      con = sqlite3.connect(db_path)
+      con.execute(
+          "CREATE TABLE sessions ("
+          "session_id TEXT PRIMARY KEY, "
+          "session_type TEXT, "
+          "status TEXT, "
+          "target TEXT, "
+          "created_at TEXT, "
+          "updated_at TEXT, "
+          "project_root TEXT, "
+          "parent_session_id TEXT, "
+          "model TEXT)"
+      )
+      con.execute(
+          "CREATE TABLE findings ("
+          "finding_id TEXT PRIMARY KEY, "
+          "session_id TEXT, "
+          "status TEXT, "
+          "severity TEXT, "
+          "file_path TEXT, "
+          "vuln_type TEXT, "
+          "start_line INTEGER, "
+          "end_line INTEGER, "
+          "snippet TEXT)"
+      )
+      con.commit()
+      con.close()
+
+      cm = CodeMender(cm_binary="cm", repo_dir=repo_dir, env={"CM_HOME": cm_home})
+      recorded_passes = []
+
+      def fake_run_command(cmd, **kwargs):
+        if cmd[:2] == ["cm", "report"]:
+          db_con = sqlite3.connect(db_path)
+          rows = db_con.execute(
+              "SELECT finding_id, status, file_path, snippet FROM findings"
+          ).fetchall()
+          db_con.close()
+          return types.SimpleNamespace(
+              returncode=0,
+              stdout=json.dumps([
+                  {"finding_id": r[0], "status": r[1], "file_path": r[2], "snippet": r[3]}
+                  for r in rows
+              ]),
+              stderr="",
+          )
+        if cmd[:2] == ["cm", "find"]:
+          cmignore_path = os.path.join(repo_dir, ".cmignore")
+          cmignore_txt = (
+              open(cmignore_path, "r", encoding="utf-8").read()
+              if os.path.exists(cmignore_path)
+              else None
+          )
+          env_passed = kwargs.get("env") or {}
+          model_flags = [
+              f for f in cmd if f == "--model" or f.startswith("--model=")
+          ]
+          if model_flags == ["--model"]:
+            model_val = cmd[cmd.index("--model") + 1]
+          else:
+            model_val = model_flags[0].split("=", 1)[1]
+          pass_idx = len(recorded_passes)
+          recorded_passes.append({
+              "model": model_val,
+              "disable_fallback": env_passed.get("CM_DISABLE_MODEL_FALLBACK"),
+              "cmignore": cmignore_txt,
+              "max_turns": cmd[cmd.index("--deep-max-turns") + 1],
+          })
+
+          db_con = sqlite3.connect(db_path)
+          if pass_idx == 0:
+            # Hydrogen Pass 1: clean.cs (0), Controller.cs (1 HIGH), Update/VLAUpdate.cs (FAILED safety)
+            db_con.executemany(
+                "INSERT INTO sessions VALUES (?, 'FIND', ?, ?, 't0', 't0', ?, 'parent-0', 'gemini-4-hydrogen')",
+                [
+                    ("s0-clean", "COMPLETED", "clean.cs", repo_dir),
+                    ("s0-ctrl", "COMPLETED", "Controller.cs", repo_dir),
+                    ("s0-upd", "FAILED", "Update/VLAUpdate.cs", repo_dir),
+                ],
+            )
+            db_con.execute(
+                "INSERT INTO findings VALUES ('f0-ctrl', 's0-ctrl', 'OPEN', 'HIGH', 'Controller.cs', 'CWE-787', 10, 15, 'stackalloc char[16]')"
+            )
+            db_con.commit()
+            db_con.close()
+            stdout = (
+                "[1/3 batches] ✅ clean.cs (5.0s) - 0 vulnerabilities\n"
+                "[2/3 batches] ❌ Update/VLAUpdate.cs (8.0s): The prompt is blocked due to safety\n"
+                "[3/3 batches] 🚨 Controller.cs (12.0s) - 1 vulnerabilities\n"
+                "Error: deep scan incomplete: 1 of 3 batch(es) failed (Update/VLAUpdate.cs): The prompt is blocked due to safety\n"
+            )
+            return types.SimpleNamespace(returncode=1, stdout=stdout, stderr="")
+          if pass_idx == 1:
+            # Hydrogen Pass 2: Controller.cs converges (Update/VLAUpdate.cs is in .cmignore)
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s1-ctrl', 'FIND', 'COMPLETED', 'Controller.cs', 't1', 't1', ?, 'parent-1', 'gemini-4-hydrogen')",
+                (repo_dir,),
+            )
+            db_con.commit()
+            db_con.close()
+            return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+          if pass_idx == 2:
+            # Argon Pass 1 on Update/VLAUpdate.cs ONLY: finds both CWE-94 and CWE-494
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s2-upd-argon', 'FIND', 'COMPLETED', 'Update/VLAUpdate.cs', 't2', 't2', ?, 'parent-2', 'gemini-4-argon')",
+                (repo_dir,),
+            )
+            db_con.executemany(
+                "INSERT INTO findings VALUES (?, 's2-upd-argon', 'OPEN', 'CRITICAL', 'Update/VLAUpdate.cs', ?, ?, ?, ?)",
+                [
+                    ("f2-cwe94", "CWE-94", 28, 92, "VirtualAlloc(...)"),
+                    ("f2-cwe494", "CWE-494", 94, 109, "ExtractPayloadFromFile(...)"),
+                ],
+            )
+            db_con.commit()
+            db_con.close()
+            return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+          if pass_idx == 3:
+            # Argon Pass 2 on Update/VLAUpdate.cs ONLY: converges with 0 new findings
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s3-upd-argon', 'FIND', 'COMPLETED', 'Update/VLAUpdate.cs', 't3', 't3', ?, 'parent-3', 'gemini-4-argon')",
+                (repo_dir,),
+            )
+            db_con.commit()
+            db_con.close()
+            return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+          raise AssertionError(f"Unexpected pass {pass_idx}")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+      with patch("codemender.run_command", side_effect=fake_run_command):
+        res = run_complete_scan(
+            cm,
+            extra_flags=["--model", "gemini-4-hydrogen"],
+            complete_runs=5,
+        )
+
+      self.assertEqual(res.returncode, 0)
+      self.assertEqual(
+          recorded_passes,
+          [
+              {
+                  "model": "gemini-4-hydrogen",
+                  "disable_fallback": "true",
+                  "cmignore": None,
+                  "max_turns": "8",
+              },
+              {
+                  "model": "gemini-4-hydrogen",
+                  "disable_fallback": "true",
+                  "cmignore": "/Update/VLAUpdate.cs\n/clean.cs\n",
+                  "max_turns": "12",
+              },
+              {
+                  "model": "gemini-4-argon",
+                  "disable_fallback": None,
+                  "cmignore": "/Controller.cs\n/clean.cs\n",
+                  "max_turns": "8",
+              },
+              {
+                  "model": "gemini-4-argon",
+                  "disable_fallback": None,
+                  "cmignore": "/Controller.cs\n/clean.cs\n",
+                  "max_turns": "12",
+              },
+          ],
+      )
+
+  def test_single_file_safety_block_and_db_fallback_escalate_and_opt_out_respected(self):
+    # 1) Single-file repo hitting `all 1 deep scan batch(es) failed: ... blocked due to safety`
+    with tempfile.TemporaryDirectory() as tmpdir:
+      repo_dir = os.path.join(tmpdir, "repo")
+      cm_home = os.path.join(tmpdir, "cm_home")
+      os.makedirs(repo_dir)
+      os.makedirs(cm_home)
+      db_path = os.path.join(cm_home, "state.db")
+      con = sqlite3.connect(db_path)
+      con.execute(
+          "CREATE TABLE sessions (session_id TEXT PRIMARY KEY, session_type TEXT, status TEXT, target TEXT, created_at TEXT, updated_at TEXT, project_root TEXT, parent_session_id TEXT, model TEXT)"
+      )
+      con.execute(
+          "CREATE TABLE findings (finding_id TEXT PRIMARY KEY, session_id TEXT, status TEXT, severity TEXT, file_path TEXT, vuln_type TEXT, start_line INTEGER, end_line INTEGER, snippet TEXT)"
+      )
+      con.commit()
+      con.close()
+
+      cm = CodeMender(cm_binary="cm", repo_dir=repo_dir, env={"CM_HOME": cm_home})
+      models_seen = []
+
+      def fake_single_file(cmd, **kwargs):
+        if cmd[:2] == ["cm", "report"]:
+          return types.SimpleNamespace(returncode=0, stdout="[]", stderr="")
+        if cmd[:2] == ["cm", "find"]:
+          mdl = [f.split("=", 1)[1] for f in cmd if f.startswith("--model=")][0]
+          models_seen.append(mdl)
+          db_con = sqlite3.connect(db_path)
+          if len(models_seen) == 1:
+            db_con.execute(
+                "INSERT OR REPLACE INTO sessions VALUES ('s0-root', 'FIND', 'FAILED', ?, 't0', 't0', ?, '', 'gemini-4-hydrogen')",
+                (repo_dir, repo_dir),
+            )
+            db_con.commit()
+            db_con.close()
+            return types.SimpleNamespace(
+                returncode=1,
+                stdout="Error: all 1 deep scan batch(es) failed: The prompt is blocked due to safety\n",
+                stderr="",
+            )
+          db_con.execute(
+              "INSERT INTO sessions VALUES ('s1-dsvw', 'FIND', 'COMPLETED', 'dsvw.py', 't1', 't1', ?, 'p1', 'gemini-4-argon')",
+              (repo_dir,),
+          )
+          db_con.commit()
+          db_con.close()
+          return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+      with patch("codemender.run_command", side_effect=fake_single_file):
+        res = run_complete_scan(cm, complete_runs=3)
+      self.assertEqual(res.returncode, 0)
+      self.assertEqual(models_seen, ["gemini-4-hydrogen", "gemini-4-argon"])
+
+      # 2) Opt-out via --no-model-fallback disables wrapper Argon escalation
+      models_seen.clear()
+      with patch("codemender.run_command", side_effect=fake_single_file):
+        with self.assertRaises(RuntimeError):
+          run_complete_scan(cm, extra_flags=["--no-model-fallback"], complete_runs=3)
+
+    # 3) state.db fallback model (`gemini-3.8-flash-cyber`) also triggers Argon escalation
+    with tempfile.TemporaryDirectory() as tmpdir:
+      repo_dir = os.path.join(tmpdir, "repo")
+      cm_home = os.path.join(tmpdir, "cm_home")
+      os.makedirs(repo_dir)
+      os.makedirs(cm_home)
+      db_path = os.path.join(cm_home, "state.db")
+      con = sqlite3.connect(db_path)
+      con.execute(
+          "CREATE TABLE sessions (session_id TEXT PRIMARY KEY, session_type TEXT, status TEXT, target TEXT, created_at TEXT, updated_at TEXT, project_root TEXT, parent_session_id TEXT, model TEXT)"
+      )
+      con.execute(
+          "CREATE TABLE findings (finding_id TEXT PRIMARY KEY, session_id TEXT, status TEXT, severity TEXT, file_path TEXT, vuln_type TEXT, start_line INTEGER, end_line INTEGER, snippet TEXT)"
+      )
+      con.commit()
+      con.close()
+
+      cm = CodeMender(cm_binary="cm", repo_dir=repo_dir, env={"CM_HOME": cm_home})
+      models_seen_db = []
+
+      def fake_db_fallback(cmd, **kwargs):
+        if cmd[:2] == ["cm", "report"]:
+          return types.SimpleNamespace(returncode=0, stdout="[]", stderr="")
+        if cmd[:2] == ["cm", "find"]:
+          mdl = [f.split("=", 1)[1] for f in cmd if f.startswith("--model=")][0]
+          models_seen_db.append(mdl)
+          db_con = sqlite3.connect(db_path)
+          if len(models_seen_db) == 1:
+            db_con.executemany(
+                "INSERT INTO sessions VALUES (?, 'FIND', 'COMPLETED', ?, 't0', 't0', ?, 'p0', ?)",
+                [
+                    ("s0-clean", "clean.ts", repo_dir, "gemini-4-hydrogen"),
+                    ("s0-fb", "mcp.tool-executor.service.ts", repo_dir, "gemini-3.8-flash-cyber"),
+                ],
+            )
+          else:
+            db_con.execute(
+                "INSERT INTO sessions VALUES ('s1-argon', 'FIND', 'COMPLETED', 'mcp.tool-executor.service.ts', 't1', 't1', ?, 'p1', 'gemini-4-argon')",
+                (repo_dir,),
+            )
+          db_con.commit()
+          db_con.close()
+          return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
+        raise AssertionError(f"Unexpected command: {cmd}")
+
+      with patch("codemender.run_command", side_effect=fake_db_fallback):
+        res_db = run_complete_scan(cm, complete_runs=3)
+      self.assertEqual(res_db.returncode, 0)
+      self.assertEqual(models_seen_db, ["gemini-4-hydrogen", "gemini-4-argon"])
 
 
 if __name__ == "__main__":

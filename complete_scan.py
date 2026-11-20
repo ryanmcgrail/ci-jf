@@ -6,10 +6,11 @@ import os
 import re
 import sqlite3
 import tempfile
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 import codemender
 from codemender import CodeMender, ScanMode
+import covered_lines
 from deduplication import (
     deduplicate_db_findings,
     reconcile_overwritten_findings,
@@ -21,10 +22,7 @@ _DISCOURAGED_CWES_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "discouraged_cwes.txt",
 )
-_COVERED_LINES_SCRIPT_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "covered_lines.py",
-)
+_SAFETY_ESCALATION_MODEL = "gemini-4-argon"
 _ACTIVE_REPORT_STATUSES = frozenset({"OPEN", "VERIFIED", "REOPENED"})
 _FIND_CONTEXT_FOR_FIRST_PASS = """\
 # Audit Strategy
@@ -32,13 +30,14 @@ _FIND_CONTEXT_FOR_FIRST_PASS = """\
 - Anchor each finding directly at the sink or security defect—never on pure pass-through wrappers/callers or sinkless intra-file helpers, validators, or sanitizers (and report shared file-level auth/state defects once at their definition rather than per caller).
 - Scope each snippet and line range strictly to the minimal contiguous sink lines (never the whole enclosing function, and never bridge non-contiguous lines with `...`).
 - Check cross-file callers, routes, or auth helpers only when needed to verify untrusted input reachability or authentication/authorization enforcement; never blanket-skip internal services, workers, or serverless handlers that process untrusted DB, queue, storage, or RPC payloads.
-- Ignore tests, build/package manifests, `.codemender` files, and vendored or minified third-party libraries (if the target file is third-party/vendored code, stop immediately and report 0).
+- Grade directly exploitable injection (SQL/NoSQL/LDAP/OS/code/XSS/XXE/SSTI), authentication or token/signature validation bypass, missing authorization/IDOR on sensitive data or state, SSRF, unrestricted file upload, and hardcoded or cleartext credential storage as `HIGH` or `CRITICAL` when reachable without prior privileged access.
+- Ignore tests, build/package manifests, developer CLI/deployment scripts, `.codemender` files, and vendored or minified third-party libraries (if the target file is third-party/vendored code, stop immediately and report 0).
 
 # CWE Requirements
 - Assign each finding exactly one valid `CWE-<number>` ID, and never use these discouraged/prohibited CWEs: {discouraged_cwes}"""
 _FIND_CONTEXT_FOR_LATER_PASSES = f"""\
 # Initial Pre-Audit Check
-- First, run `python3 "{_COVERED_LINES_SCRIPT_PATH}" "{{report_file}}" "<file>"` (using the target file's repo-relative path) to list already-covered lines and snippets; use `run_command` strictly for this single check (never invoke `node`, `sh`, or other commands, or query other files).
+- First, read `{{report_file}}` with `read_file` and check this target file's section (if present) for already-covered line ranges and snippets.
 - Never re-report a covered vulnerability (its covered/sink lines, enclosing declaration/caller, or any intra-file helper/validator/sanitizer whose caller/sink in this file is already covered, or vice versa); audit the remaining uncovered lines and report 0 if no distinct vulnerabilities remain.
 
 {_FIND_CONTEXT_FOR_FIRST_PASS}"""
@@ -120,6 +119,70 @@ def preprocess_report_for_context(
       })
   return json.dumps(filtered, indent=2)
 
+
+def build_covered_lines_report(
+    raw_report: str,
+    repo_dir: str = "",
+    exclude_finding_ids: Optional[Iterable[str]] = None,
+    only_files: Optional[Iterable[str]] = None,
+) -> str:
+  """Precomputes a compact per-file covered-lines manifest on the host via `covered_lines`."""
+  preprocessed_json = preprocess_report_for_context(
+      raw_report,
+      repo_dir=repo_dir,
+      exclude_finding_ids=exclude_finding_ids,
+  )
+  if preprocessed_json == "[]":
+    return ""
+  items = json.loads(preprocessed_json)
+  if not items:
+    return ""
+
+  allowed_exact: Optional[Set[str]] = None
+  allowed_lower: Optional[Set[str]] = None
+  if only_files is not None:
+    norm_only = {
+        _normalize_report_file_path(f, repo_dir)
+        for f in only_files
+        if f and str(f).strip()
+    }
+    norm_only.discard("")
+    if norm_only:
+      allowed_exact = norm_only
+      allowed_lower = {f.lower() for f in norm_only}
+
+  target_files = sorted({
+      str(item.get("file_path") or "")
+      for item in items
+      if isinstance(item, dict) and str(item.get("file_path") or "").strip()
+  })
+  if allowed_exact is not None and allowed_lower is not None:
+    target_files = [
+        fp
+        for fp in target_files
+        if fp in allowed_exact or fp.lower() in allowed_lower
+    ]
+  if not target_files:
+    return ""
+
+  tmp_report_path: Optional[str] = None
+  try:
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False, encoding="utf-8"
+    ) as tmp_f:
+      tmp_f.write(preprocessed_json)
+      tmp_report_path = tmp_f.name
+    sections = [
+        covered_lines.summarize_covered_lines(
+            tmp_report_path, rel_file, repo_dir=repo_dir or "."
+        )
+        for rel_file in target_files
+    ]
+  finally:
+    if tmp_report_path is not None:
+      _safe_remove(tmp_report_path)
+  return "\n\n".join(s for s in sections if s)
+
 # Matches per-batch completion lines emitted by `cm find --deep`, e.g.:
 #   [1/124 batches] ✅ data/static/codefixes/forgedReviewChallenge_3.ts (1m13.6s) | 14.2k tok - 0 vulnerabilities
 _DEEP_BATCH_LINE_RE = re.compile(
@@ -173,6 +236,14 @@ _DEEP_FAILED_SUMMARY_BLOCK_RE = re.compile(
     re.IGNORECASE,
 )
 _DEEP_FAILED_BULLET_RE = re.compile(r"^\s*•\s+(.+?)\s*$", re.MULTILINE)
+_DEEP_FAILED_BATCH_WITH_REASON_RE = re.compile(
+    r"^\[\d+/\d+\s+batches\]\s+(?:❌|✗|FAIL)\S*\s+(.+?)(?:\s+\(\d[^)]*\)\s*:\s*(.+)|\s+(?:—|--|-)\s+(.+))$",
+    re.MULTILINE,
+)
+_DEEP_SINGLE_INCOMPLETE_FILE_RE = re.compile(
+    r"deep scan incomplete:\s*1\s+of\s+\d+\s+(?:deep scan\s+)?batch\(es\)\s+failed\s*\(([^),\n]+)\)\s*:\s*(.+)$",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def _extract_failed_batch_files_from_stdout(stdout: str) -> Set[str]:
@@ -522,6 +593,95 @@ def _get_unresolved_failed_targets(
   return unresolved
 
 
+def _is_model_fallback_disabled(
+    extra_flags: Iterable[str],
+    env: Optional[Dict[str, str]] = None,
+) -> bool:
+  """Returns True if the caller explicitly disabled model fallback via CLI flag or env."""
+  for flag in extra_flags:
+    if flag == "--no-model-fallback" or (
+        flag.startswith("--no-model-fallback=")
+        and flag.split("=", 1)[1].strip().lower() not in ("false", "0", "no", "off")
+    ):
+      return True
+  raw_env = (env or {}).get("CM_DISABLE_MODEL_FALLBACK")
+  if raw_env is None:
+    raw_env = os.environ.get("CM_DISABLE_MODEL_FALLBACK", "")
+  return str(raw_env).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _extract_safety_blocked_files(
+    cm: CodeMender,
+    stdout: str,
+    pass_pre_session_ids: Set[str],
+    primary_model: str,
+) -> Tuple[Set[str], bool]:
+  """Identifies files blocked by safety filters (or downgraded to a non-Argon fallback model)."""
+  blocked: Set[str] = set()
+  text = stdout or ""
+
+  reason_matches = list(_DEEP_FAILED_BATCH_WITH_REASON_RE.finditer(text))
+  if reason_matches:
+    for m in reason_matches:
+      rel_path = _strip_dot_slash(m.group(1).strip())
+      reason = (m.group(2) or m.group(3) or "").strip()
+      if rel_path and codemender._SAFETY_BLOCK_ERROR.search(reason):
+        blocked.add(rel_path)
+  elif codemender._SAFETY_BLOCK_ERROR.search(text):
+    blocked.update(_extract_failed_batch_files_from_stdout(text))
+    for sm in _DEEP_SINGLE_INCOMPLETE_FILE_RE.finditer(text):
+      rel_path = _strip_dot_slash(sm.group(1).strip())
+      reason = sm.group(2).strip()
+      if rel_path and codemender._SAFETY_BLOCK_ERROR.search(reason):
+        blocked.add(rel_path)
+
+  con = cm.db
+  if con is not None:
+    repo_real = os.path.realpath(cm.repo_dir)
+    try:
+      session_cols = {
+          desc[1]
+          for desc in con.execute("PRAGMA table_info(sessions)").fetchall()
+      }
+      if "model" in session_cols:
+        rows = con.execute(
+            """
+            SELECT session_id, target, project_root, model
+            FROM sessions
+            WHERE session_type = 'FIND'
+              AND target != ''
+              AND (project_root = '' OR project_root = ? OR project_root = ?)
+            """,
+            (cm.repo_dir, repo_real),
+        ).fetchall()
+        primary_low = primary_model.strip().lower()
+        for sid, target, project_root, mdl in rows:
+          if str(sid) in pass_pre_session_ids:
+            continue
+          mdl_low = str(mdl or "").strip().lower()
+          if (
+              not mdl_low
+              or mdl_low == primary_low
+              or mdl_low.startswith("gemini-4-argon")
+          ):
+            continue
+          target_str = str(target or "")
+          proj_root_str = str(project_root or "")
+          if target_str not in (".", cm.repo_dir, repo_real, proj_root_str):
+            rel = _rel_target_path(target_str, cm.repo_dir, repo_real, proj_root_str)
+            if rel:
+              blocked.add(rel)
+    except sqlite3.Error:
+      pass
+
+  all_batches_safety_blocked = bool(
+      not blocked
+      and codemender._DEEP_ALL_BATCHES_FAILED.search(text)
+      and codemender._SAFETY_BLOCK_ERROR.search(text)
+  )
+  return blocked, all_batches_safety_blocked
+
+
 def _active_preexisting_finding_ids(
     cm: CodeMender,
     pre_scan_finding_ids: Set[str],
@@ -663,67 +823,76 @@ def run_complete_scan(
       cleaned_extra_flags, extra_contexts = codemender._extract_context_flags(
           extra_flags
       )
+      flags_without_model, primary_model = codemender._extract_model_flag(
+          cleaned_extra_flags,
+          default_model="gemini-4-hydrogen",
+      )
+      enable_argon_escalation = (
+          not primary_model.lower().startswith("gemini-4-argon")
+          and not _is_model_fallback_disabled(cleaned_extra_flags, cm.env)
+      )
       user_contexts: List[str] = []
       if context and context.strip():
         user_contexts.append(context.strip())
       user_contexts.extend(c.strip() for c in extra_contexts if c and c.strip())
       additional_context = "\n\n".join(user_contexts)
-      for scan_index in range(complete_runs):
-        active_files: Optional[List[str]] = None
-        preprocessed_report = "[]"
-        has_prior_state = False
-        if scan_index > 0:
-          last_stdout = getattr(result, "stdout", "") if result is not None else ""
-          counts = get_latest_session_finding_counts(
-              cm,
-              last_pass_files=prev_active_files,
-              last_pass_stdout=last_stdout,
-              critical_high_only=critical_high_only,
-              exclude_session_ids=pre_scan_session_ids or None,
-              exclude_finding_ids=excluded_finding_ids or None,
-          )
-          for cleared in cleared_files:
-            counts[cleared] = 0
-          cleared_files.update(t for t, c in counts.items() if c == 0)
-          clean_files = sorted(t for t, c in counts.items() if c == 0)
-          active_files = sorted(t for t, c in counts.items() if c > 0)
-          if counts and not active_files:
-            break
-          if cmignore_path:
-            base = orig_cmignore or ""
-            if base and not base.endswith("\n"):
-              base += "\n"
-            extra = "".join(f"{_format_cmignore_entry(f)}\n" for f in clean_files)
-            _atomic_write_text(cmignore_path, base + extra)
-          report_cmd = codemender.build_cm_command(
-              cm.cm_binary,
-              "report",
-              extra_flags=["--format", "json"],
-          )
-          report_res = codemender.run_command(
-              report_cmd,
-              cwd=cm.repo_dir,
-              env=codemender.resolve_subprocess_env(cm.env),
-              check=False,
-          )
-          preprocessed_report = preprocess_report_for_context(
-              getattr(report_res, "stdout", "") or "",
-              repo_dir=cm.repo_dir,
-              exclude_finding_ids=excluded_finding_ids or None,
-          )
-          has_prior_state = (preprocessed_report != "[]") or bool(active_files)
 
+      all_discovered_files: Set[str] = set()
+      escalated_files: Set[str] = set()
+      escalate_entire_repo = False
+
+      def _write_cmignore(ignored_files: Iterable[str]) -> None:
+        if not cmignore_path:
+          return
+        base = orig_cmignore or ""
+        if base and not base.endswith("\n"):
+          base += "\n"
+        extra = "".join(f"{_format_cmignore_entry(f)}\n" for f in sorted(set(ignored_files)))
+        _atomic_write_text(cmignore_path, base + extra)
+
+      def _fetch_covered_report(only_files: Optional[Iterable[str]]) -> str:
+        report_cmd = codemender.build_cm_command(
+            cm.cm_binary,
+            "report",
+            extra_flags=["--format", "json"],
+        )
+        report_res = codemender.run_command(
+            report_cmd,
+            cwd=cm.repo_dir,
+            env=codemender.resolve_subprocess_env(cm.env),
+            check=False,
+        )
+        return build_covered_lines_report(
+            getattr(report_res, "stdout", "") or "",
+            repo_dir=cm.repo_dir,
+            exclude_finding_ids=excluded_finding_ids or None,
+            only_files=only_files,
+        )
+
+      def _execute_pass(
+          *,
+          has_prior_state: bool,
+          covered_report: str,
+          pass_flags: List[str],
+          max_turns: int,
+          allow_partial_failure: bool,
+          allow_all_batches_failed: bool,
+          allow_safety_block_failure: bool = False,
+          model_override: Optional[str] = None,
+          env_overrides: Optional[Dict[str, str]] = None,
+      ) -> Any:
+        nonlocal excluded_finding_ids
         report_file: Optional[str] = None
-        pass_extra_flags = list(cleaned_extra_flags)
-        is_non_final_pass = scan_index < complete_runs - 1
         pass_error: Optional[RuntimeError] = None
+        pass_result = None
+        report_text = covered_report or "No preexisting findings.\n"
         try:
           if has_prior_state:
             if has_repo_dir:
               report_file = os.path.join(
                   cm.repo_dir, *_PASS_REPORT_REL_PATH.split("/")
               )
-              _atomic_write_text(report_file, preprocessed_report)
+              _atomic_write_text(report_file, report_text)
               report_ref = _PASS_REPORT_REL_PATH
             else:
               with tempfile.NamedTemporaryFile(
@@ -732,15 +901,13 @@ def run_complete_scan(
                   delete=False,
                   encoding="utf-8",
               ) as tmp_file:
-                tmp_file.write(preprocessed_report)
+                tmp_file.write(report_text)
                 report_file = tmp_file.name
                 report_ref = report_file
             pass_context = _FIND_CONTEXT_FOR_LATER_PASSES.format(
                 report_file=report_ref,
                 discouraged_cwes=discouraged_cwes,
             )
-            if not codemender._has_flag(pass_extra_flags, "--enable-bash"):
-              pass_extra_flags.append("--enable-bash")
           else:
             pass_context = _FIND_CONTEXT_FOR_FIRST_PASS.format(
                 discouraged_cwes=discouraged_cwes,
@@ -750,23 +917,27 @@ def run_complete_scan(
                 f"{pass_context}\n\n# Additional Context\n{additional_context}"
             )
           pre_pass_rows = snapshot_db_findings(cm)
+          find_kwargs: Dict[str, Any] = {
+              "target_or_id": target_or_id,
+              "scan_mode": ScanMode.DEEP,
+              "extra_flags": pass_flags or None,
+              "max_turns": max_turns,
+              "context": pass_context,
+              "allow_partial_failure": allow_partial_failure,
+              "allow_all_batches_failed": allow_all_batches_failed,
+              "allow_safety_block_failure": allow_safety_block_failure,
+              "env_overrides": env_overrides,
+          }
+          if model_override is not None:
+            find_kwargs["model"] = model_override
           try:
-            result = cm.find(
-                target_or_id=target_or_id,
-                scan_mode=ScanMode.DEEP,
-                extra_flags=pass_extra_flags or None,
-                max_turns=12 if scan_index > 0 else 8,
-                context=pass_context,
-                allow_partial_failure=is_non_final_pass,
-                allow_all_batches_failed=(scan_index > 0 and has_prior_state),
-            )
+            pass_result = cm.find(**find_kwargs)
           except RuntimeError as exc:
             pass_error = exc
         finally:
           if report_file is not None:
             _safe_remove(report_file)
             _safe_remove(f"{report_file}.tmp")
-        prev_active_files = active_files
         reconcile_overwritten_findings(
             cm,
             pre_pass_rows,
@@ -779,6 +950,156 @@ def run_complete_scan(
         deduplicate_db_findings(cm, exclude_finding_ids=excluded_finding_ids or None)
         if pass_error is not None:
           raise pass_error
+        return pass_result
+
+      primary_env_overrides = (
+          {"CM_DISABLE_MODEL_FALLBACK": "true"} if enable_argon_escalation else None
+      )
+      for scan_index in range(complete_runs):
+        active_files: Optional[List[str]] = None
+        covered_report = ""
+        has_prior_state = False
+        if scan_index > 0:
+          last_stdout = getattr(result, "stdout", "") if result is not None else ""
+          counts = get_latest_session_finding_counts(
+              cm,
+              last_pass_files=prev_active_files,
+              last_pass_stdout=last_stdout,
+              critical_high_only=critical_high_only,
+              exclude_session_ids=pre_scan_session_ids or None,
+              exclude_finding_ids=excluded_finding_ids or None,
+          )
+          all_discovered_files.update(counts.keys())
+          for cleared in cleared_files:
+            counts[cleared] = 0
+          cleared_files.update(
+              t for t, c in counts.items() if c == 0 and t not in escalated_files
+          )
+          clean_files = sorted(
+              t for t, c in counts.items() if c == 0 and t not in escalated_files
+          )
+          active_files = sorted(
+              t for t, c in counts.items() if c > 0 and t not in escalated_files
+          )
+          if counts and not active_files:
+            break
+          _write_cmignore(set(clean_files) | escalated_files)
+          covered_report = _fetch_covered_report(active_files or None)
+          has_prior_state = bool(covered_report) or bool(active_files)
+
+        pass_pre_sessions = _snapshot_db_session_ids(cm)
+        is_non_final_pass = scan_index < complete_runs - 1
+        result = _execute_pass(
+            has_prior_state=has_prior_state,
+            covered_report=covered_report,
+            pass_flags=list(cleaned_extra_flags),
+            max_turns=12 if scan_index > 0 else 8,
+            allow_partial_failure=is_non_final_pass,
+            allow_all_batches_failed=(scan_index > 0 and has_prior_state),
+            allow_safety_block_failure=enable_argon_escalation,
+            env_overrides=primary_env_overrides,
+        )
+        prev_active_files = active_files
+        if enable_argon_escalation:
+          new_blocked, all_safety_blocked = _extract_safety_blocked_files(
+              cm,
+              getattr(result, "stdout", "") or "",
+              pass_pre_sessions,
+              primary_model,
+          )
+          if new_blocked:
+            escalated_files.update(new_blocked)
+            cleared_files.difference_update(new_blocked)
+          elif scan_index == 0 and all_safety_blocked:
+            escalate_entire_repo = True
+            break
+
+      if enable_argon_escalation and (escalated_files or escalate_entire_repo):
+        if result is not None and not escalate_entire_repo:
+          last_stdout = getattr(result, "stdout", "") or ""
+          counts = get_latest_session_finding_counts(
+              cm,
+              last_pass_files=prev_active_files,
+              last_pass_stdout=last_stdout,
+              critical_high_only=critical_high_only,
+              exclude_session_ids=pre_scan_session_ids or None,
+              exclude_finding_ids=excluded_finding_ids or None,
+          )
+          all_discovered_files.update(counts.keys())
+          cleared_files.update(
+              t for t, c in counts.items() if c == 0 and t not in escalated_files
+          )
+
+        argon_cleared_files: Set[str] = set()
+        argon_prev_active: Optional[List[str]] = None
+        for argon_index in range(complete_runs):
+          argon_active: Optional[List[str]] = None
+          covered_report = ""
+          has_prior_state = False
+          if escalate_entire_repo:
+            if argon_index > 0:
+              last_stdout = getattr(result, "stdout", "") or ""
+              argon_counts = get_latest_session_finding_counts(
+                  cm,
+                  last_pass_files=argon_prev_active,
+                  last_pass_stdout=last_stdout,
+                  critical_high_only=critical_high_only,
+                  exclude_session_ids=pre_scan_session_ids or None,
+                  exclude_finding_ids=excluded_finding_ids or None,
+              )
+              for cleared in argon_cleared_files:
+                argon_counts[cleared] = 0
+              argon_cleared_files.update(
+                  t for t, c in argon_counts.items() if c == 0
+              )
+              argon_clean = sorted(t for t, c in argon_counts.items() if c == 0)
+              argon_active = sorted(t for t, c in argon_counts.items() if c > 0)
+              if argon_counts and not argon_active:
+                break
+              _write_cmignore(argon_clean)
+              covered_report = _fetch_covered_report(argon_active or None)
+              has_prior_state = bool(covered_report) or bool(argon_active)
+            else:
+              _write_cmignore([])
+          else:
+            if argon_index > 0:
+              last_stdout = getattr(result, "stdout", "") or ""
+              argon_counts = get_latest_session_finding_counts(
+                  cm,
+                  last_pass_files=argon_prev_active,
+                  last_pass_stdout=last_stdout,
+                  critical_high_only=critical_high_only,
+                  exclude_session_ids=pre_scan_session_ids or None,
+                  exclude_finding_ids=excluded_finding_ids or None,
+              )
+              all_discovered_files.update(argon_counts.keys())
+              argon_cleared_files.update(
+                  f for f in escalated_files if argon_counts.get(f, 1) == 0
+              )
+            argon_active = sorted(escalated_files - argon_cleared_files)
+            if not argon_active:
+              break
+            ignored_for_argon = (
+                (all_discovered_files - set(argon_active))
+                | cleared_files
+                | argon_cleared_files
+            )
+            _write_cmignore(ignored_for_argon)
+            covered_report = _fetch_covered_report(argon_active)
+            has_prior_state = bool(covered_report) or (argon_index > 0)
+
+          is_non_final_argon = argon_index < complete_runs - 1
+          result = _execute_pass(
+              has_prior_state=has_prior_state,
+              covered_report=covered_report,
+              pass_flags=list(flags_without_model),
+              max_turns=12 if has_prior_state else 8,
+              allow_partial_failure=is_non_final_argon,
+              allow_all_batches_failed=(argon_index > 0 and is_non_final_argon),
+              model_override=_SAFETY_ESCALATION_MODEL,
+          )
+          argon_prev_active = argon_active
+        prev_active_files = argon_prev_active
 
       if result is not None:
         final_stdout = getattr(result, "stdout", "") or ""

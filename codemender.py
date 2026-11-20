@@ -29,6 +29,10 @@ _DEEP_ALL_BATCHES_FAILED = re.compile(
     r"\ball\s+\d+\s+deep scan batch\(es\)\s+failed\b",
     re.IGNORECASE,
 )
+_SAFETY_BLOCK_ERROR = re.compile(
+    r"blocked due to safety|prohibited_content",
+    re.IGNORECASE,
+)
 _ADC_REAUTH_ERROR = re.compile(
     r"invalid_grant|invalid_rapt|reauth related error|could not find default credentials",
     re.IGNORECASE,
@@ -65,6 +69,14 @@ def is_partial_deep_scan_failure(
   if _DEEP_PARTIAL_BATCH_FAILURE.search(text):
     return True
   return bool(allow_all_batches_failed and _DEEP_ALL_BATCHES_FAILED.search(text))
+
+
+def is_safety_block_failure(returncode: int, find_stdout: str) -> bool:
+  """Whether cm find exited 1 because batches were blocked by a safety/prohibited_content filter."""
+  if returncode != 1:
+    return False
+  text = find_stdout or ""
+  return bool(_SAFETY_BLOCK_ERROR.search(text)) and not _CI_GATE_TRUNCATED.search(text)
 
 
 def is_adc_reauth_error(returncode: int, stdout: str, stderr: str = "") -> bool:
@@ -107,6 +119,34 @@ def _extract_context_flags(
     remaining.append(arg)
     idx += 1
   return remaining, [c.strip() for c in contexts if c and c.strip()]
+
+
+def _extract_model_flag(
+    extra_flags: Optional[List[str]],
+    default_model: str = "gemini-4-hydrogen",
+) -> Tuple[List[str], str]:
+  """Splits `--model` flags out of `extra_flags` and returns `(remaining_flags, resolved_model)`."""
+  if not extra_flags:
+    return [], default_model
+  remaining: List[str] = []
+  resolved = default_model
+  idx = 0
+  while idx < len(extra_flags):
+    arg = extra_flags[idx]
+    if arg == "--model":
+      if idx + 1 < len(extra_flags):
+        resolved = extra_flags[idx + 1]
+        idx += 2
+        continue
+      idx += 1
+      continue
+    if arg.startswith("--model="):
+      resolved = arg.split("=", 1)[1]
+      idx += 1
+      continue
+    remaining.append(arg)
+    idx += 1
+  return remaining, resolved
 
 
 def build_cm_command(
@@ -268,6 +308,8 @@ class CodeMender:
       context: Optional[str] = None,
       allow_partial_failure: bool = False,
       allow_all_batches_failed: bool = False,
+      allow_safety_block_failure: bool = False,
+      env_overrides: Optional[Dict[str, str]] = None,
   ) -> Any:
     """Runs the CodeMender find command on the target repository directory."""
     target = target_or_id if target_or_id is not None else self.repo_dir
@@ -305,6 +347,8 @@ class CodeMender:
         extra_flags=cmd_flags,
     )
     subproc_env = resolve_subprocess_env(self.env)
+    if env_overrides:
+      subproc_env.update(env_overrides)
     result = run_command(command, cwd=self.repo_dir, env=subproc_env, check=False, print_to_stdout=True)
     returncode = getattr(result, "returncode", 0)
     stdout = getattr(result, "stdout", "")
@@ -339,6 +383,10 @@ class CodeMender:
                 stdout or "",
                 allow_all_batches_failed=allow_all_batches_failed,
             )
+        )
+        and not (
+            allow_safety_block_failure
+            and is_safety_block_failure(returncode, stdout or "")
         )
     ):
       raise RuntimeError(f"cm find failed with exit code {returncode}")
