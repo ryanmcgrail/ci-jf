@@ -54,6 +54,31 @@ def parse_cwe_id(value: int | str | Finding) -> int | None:
     return None
 
 
+_STOPWORDS = frozenset({
+    "improper",
+    "insufficient",
+    "missing",
+    "incorrect",
+    "failure",
+    "control",
+    "element",
+    "elements",
+    "data",
+    "value",
+    "values",
+    "error",
+    "errors",
+    "resource",
+    "resources",
+    "weakness",
+    "within",
+    "without",
+    "during",
+    "using",
+    "used",
+})
+
+
 @dataclass
 class Weakness:
     """A CWE Weakness record and its relationships across all supported Natures."""
@@ -61,6 +86,7 @@ class Weakness:
     cwe_id: int
     name: str
     abstraction: str = ""
+    status: str = ""
     child_of: set[int] = field(default_factory=set)
     parent_of: set[int] = field(default_factory=set)
     can_precede: set[int] = field(default_factory=set)
@@ -73,8 +99,17 @@ class Weakness:
 class CWEDatabase:
     """In-memory relational database of CWE Weaknesses and their directed relationships."""
 
-    def __init__(self, weaknesses: dict[int, Weakness]) -> None:
+    def __init__(
+        self,
+        weaknesses: dict[int, Weakness],
+        discouraged_ids: set[int] | None = None,
+        prompt_discouraged_ids: list[int] | None = None,
+        suggestions: dict[int, list[int]] | None = None,
+    ) -> None:
         self.weaknesses: dict[int, Weakness] = weaknesses
+        self.discouraged_ids: frozenset[int] = frozenset(discouraged_ids or ())
+        self.prompt_discouraged_ids: tuple[int, ...] = tuple(prompt_discouraged_ids or ())
+        self._suggestions: dict[int, list[int]] = suggestions or {}
         self._distance_cache: dict[tuple[int, bool], dict[int, int]] = {}
         self._ancestors_le2_cache: dict[int, dict[int, int]] | None = None
         # Directed edges from (parent_id, child_id) -> set of relationship labels
@@ -107,25 +142,67 @@ class CWEDatabase:
 
         weaknesses: dict[int, Weakness] = {}
         raw_relations: list[tuple[int, str, int]] = []
+        discouraged_ids: set[int] = set()
+        prompt_discouraged_ids: list[int] = []
+        suggestions: dict[int, list[int]] = {}
 
-        for elem in root.findall(f"{prefix}Weaknesses/{prefix}Weakness", ns):
-            cwe_id = int(elem.attrib["ID"])
-            name = " ".join(elem.attrib.get("Name", "").split())
-            abstraction = elem.attrib.get("Abstraction", "")
+        for section, tag in (
+            ("Weaknesses", "Weakness"),
+            ("Categories", "Category"),
+            ("Views", "View"),
+        ):
+            for elem in root.findall(f"{prefix}{section}/{prefix}{tag}", ns):
+                cwe_id = int(elem.attrib["ID"])
+                status = elem.attrib.get("Status", "")
+                abstraction = elem.attrib.get("Abstraction", "")
+                usage_elem = elem.find(f"{prefix}Mapping_Notes/{prefix}Usage", ns)
+                usage = (usage_elem.text or "").strip() if usage_elem is not None else ""
+                if usage in DISCOURAGED_USAGES:
+                    discouraged_ids.add(cwe_id)
 
-            weaknesses[cwe_id] = Weakness(
-                cwe_id=cwe_id,
-                name=name,
-                abstraction=abstraction,
-            )
+                cands: list[int] = []
+                for s_el in elem.findall(
+                    f"{prefix}Mapping_Notes/{prefix}Suggestions/{prefix}Suggestion", ns
+                ):
+                    raw_sid = s_el.attrib.get("CWE_ID", "")
+                    if raw_sid.isdigit():
+                        cands.append(int(raw_sid))
+                if status == "Deprecated":
+                    desc_el = elem.find(f"{prefix}Description", ns)
+                    if desc_el is None:
+                        desc_el = elem.find(f"{prefix}Summary", ns)
+                    if desc_el is not None:
+                        for m in re.finditer(r"\bCWE-(\d+)\b", "".join(desc_el.itertext())):
+                            cands.append(int(m.group(1)))
+                for hm_el in elem.findall(f"{prefix}Relationships/{prefix}Has_Member", ns):
+                    raw_mid = hm_el.attrib.get("CWE_ID", "")
+                    if raw_mid.isdigit():
+                        cands.append(int(raw_mid))
+                if cands:
+                    suggestions[cwe_id] = cands
 
-            for rel in elem.findall(
-                f"{prefix}Related_Weaknesses/{prefix}Related_Weakness", ns
-            ):
-                nature = rel.attrib.get("Nature", "")
-                if nature in SUPPORTED_NATURES:
-                    target_id = int(rel.attrib["CWE_ID"])
-                    raw_relations.append((cwe_id, nature, target_id))
+                if tag == "Weakness":
+                    name = " ".join(elem.attrib.get("Name", "").split())
+                    weaknesses[cwe_id] = Weakness(
+                        cwe_id=cwe_id,
+                        name=name,
+                        abstraction=abstraction,
+                        status=status,
+                    )
+                    if (
+                        usage in DISCOURAGED_USAGES
+                        and status != "Deprecated"
+                        and abstraction != "Pillar"
+                        and (usage == "Discouraged" or bool(cands))
+                    ):
+                        prompt_discouraged_ids.append(cwe_id)
+                    for rel in elem.findall(
+                        f"{prefix}Related_Weaknesses/{prefix}Related_Weakness", ns
+                    ):
+                        nature = rel.attrib.get("Nature", "")
+                        if nature in SUPPORTED_NATURES:
+                            target_id = int(rel.attrib["CWE_ID"])
+                            raw_relations.append((cwe_id, nature, target_id))
 
         for source_id, nature, target_id in raw_relations:
             source = weaknesses.get(source_id)
@@ -162,7 +239,12 @@ class CWEDatabase:
                 source.starts_with.add(target_id)
                 target.children.add(source_id)
 
-        return cls(weaknesses)
+        return cls(
+            weaknesses,
+            discouraged_ids=discouraged_ids,
+            prompt_discouraged_ids=sorted(prompt_discouraged_ids),
+            suggestions=suggestions,
+        )
 
     def _shortest_distance(
         self,
@@ -334,10 +416,83 @@ class CWEDatabase:
         path_b = self._shortest_path_steps(parent_id, id_b) or []
         return path_a + path_b
 
+    def _is_allowed_weakness(self, cid: int) -> bool:
+        w = self.weaknesses.get(cid)
+        return (
+            w is not None
+            and cid not in self.discouraged_ids
+            and w.status != "Deprecated"
+            and w.abstraction != "Pillar"
+        )
+
+    def _neighbor_candidates(self, cid: int) -> list[int]:
+        out: list[int] = list(self._suggestions.get(cid, ()))
+        w = self.weaknesses.get(cid)
+        if w is not None:
+            out.extend(sorted(w.parent_of))
+            out.extend(sorted(w.children))
+            out.extend(sorted(w.child_of))
+        return out
+
+    def remap_discouraged_cwe(
+        self,
+        cwe_value: int | str | Finding,
+        context_text: str = "",
+    ) -> int | None:
+        """Remaps a discouraged/prohibited CWE ID to the closest allowed Weakness using CWE XML suggestions and hierarchy."""
+        cid = parse_cwe_id(cwe_value)
+        if cid is None:
+            return None
+        if cid not in self.discouraged_ids and cid in self.weaknesses:
+            return cid
+
+        ordered_allowed: list[int] = []
+        seen: set[int] = set()
+        hop1 = self._neighbor_candidates(cid)
+        for cand in hop1:
+            if cand not in seen and self._is_allowed_weakness(cand):
+                seen.add(cand)
+                ordered_allowed.append(cand)
+        if not ordered_allowed:
+            for mid in hop1:
+                for cand in self._neighbor_candidates(mid):
+                    if cand not in seen and self._is_allowed_weakness(cand):
+                        seen.add(cand)
+                        ordered_allowed.append(cand)
+        if not ordered_allowed:
+            return None
+
+        ctx_tokens = {
+            tok
+            for tok in re.findall(r"[a-z0-9]{4,}", (context_text or "").lower())
+            if tok not in _STOPWORDS
+        }
+        if not ctx_tokens or len(ordered_allowed) == 1:
+            return ordered_allowed[0]
+
+        def _score(idx_and_cid: tuple[int, int]) -> tuple[int, int, int]:
+            idx, cand_id = idx_and_cid
+            w = self.weaknesses[cand_id]
+            name_tokens = {
+                tok
+                for tok in re.findall(r"[a-z0-9]{4,}", w.name.lower())
+                if tok not in _STOPWORDS
+            }
+            overlap = len(ctx_tokens & name_tokens)
+            spec_bonus = 1 if (overlap > 0 and w.abstraction in ("Base", "Variant")) else 0
+            return (-overlap, -spec_bonus, idx)
+
+        return min(enumerate(ordered_allowed), key=_score)[1]
+
 
 def load_cwe_database(xml_path: str | Path = DEFAULT_XML_PATH) -> CWEDatabase:
     """Convenience loader returning a CWEDatabase parsed from xml_path."""
     return CWEDatabase.from_xml(xml_path)
+
+
+def extract_prompt_discouraged_cwe_ids(xml_path: str | Path = DEFAULT_XML_PATH) -> list[int]:
+    """Return sorted non-Deprecated, non-Pillar discouraged/suggested Weakness IDs for concise prompt guidance."""
+    return list(CWEDatabase.from_xml(xml_path).prompt_discouraged_ids)
 
 
 def extract_discouraged_cwe_ids(xml_path: str | Path = DEFAULT_XML_PATH) -> list[int]:

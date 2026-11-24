@@ -112,10 +112,10 @@ class CompleteScanTests(unittest.TestCase):
           observed_cmignore_contents,
           [
               "existing_ignore/\n",
-              "existing_ignore/\n/clean.py\n",
-              "existing_ignore/\n/clean.py\n/vuln.py\n",
-              "existing_ignore/\n/clean.py\n/vuln.py\n",
-              "existing_ignore/\n/clean.py\n/vuln.py\n",
+              "existing_ignore/\nclean.py\n",
+              "existing_ignore/\nclean.py\nvuln.py\n",
+              "existing_ignore/\nclean.py\nvuln.py\n",
+              "existing_ignore/\nclean.py\nvuln.py\n",
           ],
       )
       self.assertEqual(
@@ -141,7 +141,7 @@ class CompleteScanTests(unittest.TestCase):
           "Only audit these remaining files:",
           find_cmds[0][find_cmds[0].index("--context") + 1],
       )
-      self.assertEqual(find_cmds[1][find_cmds[1].index("--deep-max-turns") + 1], "12")
+      self.assertEqual(find_cmds[1][find_cmds[1].index("--deep-max-turns") + 1], "8")
       self.assertNotIn("--enable-bash", find_cmds[1])
       self.assertIn(
           "# Initial Pre-Audit Check",
@@ -152,7 +152,7 @@ class CompleteScanTests(unittest.TestCase):
           find_cmds[1][find_cmds[1].index("--context") + 1],
       )
       for cmd in find_cmds[2:]:
-        self.assertEqual(cmd[cmd.index("--deep-max-turns") + 1], "12")
+        self.assertEqual(cmd[cmd.index("--deep-max-turns") + 1], "8")
         self.assertNotIn("--enable-bash", cmd)
         self.assertNotIn(
             "Only audit these remaining files:",
@@ -343,7 +343,7 @@ class CompleteScanTests(unittest.TestCase):
 
       self.assertEqual(res.returncode, 0)
       self.assertEqual(find_scan_num, 2)
-      self.assertEqual(observed_cmignore, [None, "/child_clean.py\n"])
+      self.assertEqual(observed_cmignore, [None, "child_clean.py\n"])
       find_cmds = [
           call.args[0]
           for call in mock_run.call_args_list
@@ -474,7 +474,7 @@ class CompleteScanTests(unittest.TestCase):
       self.assertEqual(find_scan_num, 3)
       self.assertEqual(
           observed_cmignore,
-          [None, "/clean.py\n", "/a.py\n/clean.py\n"],
+          [None, "clean.py\n", "a.py\nclean.py\n"],
       )
       self.assertEqual(
           get_latest_session_finding_counts(cm),
@@ -565,7 +565,7 @@ class CompleteScanTests(unittest.TestCase):
 
       self.assertEqual(res.returncode, 0)
       self.assertEqual(find_scan_num, 2)
-      self.assertEqual(observed_cmignore, [None, "/clean.py\n"])
+      self.assertEqual(observed_cmignore, [None, "clean.py\n"])
       find_cmds = [
           call.args[0]
           for call in mock_run.call_args_list
@@ -789,7 +789,7 @@ class CompleteScanTests(unittest.TestCase):
       self.assertEqual(find_scan_num, 2)
       self.assertEqual(
           observed_cmignore,
-          [None, "/low_only.py\n/med_only.py\n"],
+          [None, "low_only.py\nmed_only.py\n"],
       )
       self.assertEqual(
           get_latest_session_finding_counts(cm, critical_high_only=True),
@@ -1101,7 +1101,7 @@ class CompleteScanTests(unittest.TestCase):
       self.assertEqual(find_scan_num, 2)
       self.assertEqual(
           pass2_report_payloads,
-          ["Already-covered vulnerabilities in app.py:\n- Snippet: cur_sink()"],
+          ["app.py | covered: L10-12"],
       )
 
   def test_preexisting_findings_can_only_increase_severity_never_decrease(self):
@@ -1253,7 +1253,7 @@ class CompleteScanTests(unittest.TestCase):
         ],
     )
     self.assertIn(
-        'read "{report_file}" with `read_file`',
+        'run `grep_search` on "{report_file}"',
         complete_scan._FIND_CONTEXT_FOR_LATER_PASSES,
     )
     self.assertNotIn(
@@ -1551,7 +1551,7 @@ class CompleteScanTests(unittest.TestCase):
             return types.SimpleNamespace(returncode=0, stdout="Success", stderr="")
           # Pass 2: verify `.cmignore` and `_cm_pass_report` are active, then send real SIGTERM
           with open(cmignore_path, "r", encoding="utf-8") as fh:
-            mutated_during_pass2 = "/clean.py\n" in fh.read()
+            mutated_during_pass2 = "clean.py\n" in fh.read()
           report_existed_during_pass2 = os.path.exists(
               os.path.join(repo_dir, *complete_scan._PASS_REPORT_REL_PATH.split("/"))
           )
@@ -1606,19 +1606,26 @@ class CompleteScanTests(unittest.TestCase):
           os.path.exists(complete_scan._workspace_backup_path(repo_dir, cm_home))
       )
 
-  def test_format_cmignore_entry_root_anchors_and_escapes_trailing_spaces(self):
-    self.assertEqual(complete_scan._format_cmignore_entry("index.php"), "/index.php")
-    self.assertEqual(complete_scan._format_cmignore_entry("./src/clean.py"), "/src/clean.py")
-    self.assertEqual(complete_scan._format_cmignore_entry("/src/clean.py"), "/src/clean.py")
+  def test_format_and_filter_cmignore_entries_without_slash_or_root_shadowing(self):
+    self.assertEqual(complete_scan._format_cmignore_entry("index.php"), "index.php")
+    self.assertEqual(complete_scan._format_cmignore_entry("./src/clean.py"), "src/clean.py")
+    self.assertEqual(complete_scan._format_cmignore_entry("/src/clean.py"), "src/clean.py")
     self.assertEqual(
         complete_scan._format_cmignore_entry(".github/workflows/ci.yml"),
-        "/.github/workflows/ci.yml",
+        ".github/workflows/ci.yml",
     )
-    self.assertEqual(complete_scan._format_cmignore_entry("#hash.py"), "/#hash.py")
-    self.assertEqual(complete_scan._format_cmignore_entry("!bang.py"), "/!bang.py")
+    self.assertEqual(complete_scan._format_cmignore_entry("#hash.py"), "\\#hash.py")
+    self.assertEqual(complete_scan._format_cmignore_entry("!bang.py"), "\\!bang.py")
     self.assertEqual(
         complete_scan._format_cmignore_entry("my dir/trailing space.py "),
-        "/my dir/trailing space.py\\ ",
+        "my dir/trailing space.py\\ ",
+    )
+    self.assertEqual(
+        complete_scan._filter_cmignore_entries(
+            ["index.php", "vulnerabilities/cmdi/index.php", "logout.php"],
+            keep_files=["vulnerabilities/fi/index.php"],
+        ),
+        ["logout.php", "vulnerabilities/cmdi/index.php"],
     )
 
   def test_partial_batch_failure_retried_in_pass2_and_succeeds(self):
@@ -1741,7 +1748,7 @@ class CompleteScanTests(unittest.TestCase):
       self.assertEqual(find_scan_num, 3)
       self.assertEqual(
           observed_cmignore,
-          [None, "/Logout.java\n", "/Logout.java\n/Open.java\n"],
+          [None, "Logout.java\n", "Logout.java\nOpen.java\n"],
       )
       self.assertEqual(
           get_latest_session_finding_counts(cm),
@@ -2070,13 +2077,16 @@ class CompleteScanTests(unittest.TestCase):
 
       self.assertEqual(find_scan_num, 3)
       self.assertEqual(len(observed_reports), 2)
-      # Pass 2 report has both active files with resolved line numbers
-      self.assertIn("Already-covered vulnerabilities in src/auth.py:\n- Lines 4-5:", observed_reports[0])
-      self.assertIn("Already-covered vulnerabilities in src/other.py:\n- Line 2:", observed_reports[0])
+      # Pass 2 report has both active files as compact grep-friendly single lines
+      self.assertEqual(
+          observed_reports[0],
+          "src/auth.py | covered: L4-5\nsrc/other.py | covered: L2",
+      )
       # Pass 3 report scopes strictly to remaining active file (`src/auth.py`), omitting converged `src/other.py`
-      self.assertIn("Already-covered vulnerabilities in src/auth.py:", observed_reports[1])
-      self.assertIn("- Lines 4-5:", observed_reports[1])
-      self.assertIn("- Line 8:", observed_reports[1])
+      self.assertEqual(
+          observed_reports[1],
+          "src/auth.py | covered: L4-5, L8",
+      )
       self.assertNotIn("src/other.py", observed_reports[1])
 
   def test_safety_blocked_files_escalate_to_argon_with_scoped_cmignore(self):
@@ -2235,20 +2245,20 @@ class CompleteScanTests(unittest.TestCase):
               {
                   "model": "gemini-4-hydrogen",
                   "disable_fallback": "true",
-                  "cmignore": "/Update/VLAUpdate.cs\n/clean.cs\n",
-                  "max_turns": "12",
-              },
-              {
-                  "model": "gemini-4-argon",
-                  "disable_fallback": None,
-                  "cmignore": "/Controller.cs\n/clean.cs\n",
+                  "cmignore": "Update/VLAUpdate.cs\nclean.cs\n",
                   "max_turns": "8",
               },
               {
                   "model": "gemini-4-argon",
                   "disable_fallback": None,
-                  "cmignore": "/Controller.cs\n/clean.cs\n",
-                  "max_turns": "12",
+                  "cmignore": "Controller.cs\nclean.cs\n",
+                  "max_turns": "8",
+              },
+              {
+                  "model": "gemini-4-argon",
+                  "disable_fallback": None,
+                  "cmignore": "Controller.cs\nclean.cs\n",
+                  "max_turns": "8",
               },
           ],
       )
@@ -2362,6 +2372,85 @@ class CompleteScanTests(unittest.TestCase):
         res_db = run_complete_scan(cm, complete_runs=3)
       self.assertEqual(res_db.returncode, 0)
       self.assertEqual(models_seen_db, ["gemini-4-hydrogen", "gemini-4-argon"])
+
+  def test_normalize_db_finding_cwes_remaps_discouraged_findings_and_preserves_preexisting(self):
+    disc_prompt = complete_scan._load_discouraged_cwes()
+    self.assertLess(len(disc_prompt), 400)
+    self.assertIn("CWE-287", disc_prompt)
+    self.assertNotIn("CWE-1,", disc_prompt)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+      cm_home = os.path.join(tmpdir, "cm_home")
+      os.makedirs(cm_home)
+      db_path = os.path.join(cm_home, "state.db")
+      con = sqlite3.connect(db_path)
+      con.execute(
+          "CREATE TABLE findings ("
+          "finding_id TEXT PRIMARY KEY, "
+          "status TEXT, "
+          "title TEXT, "
+          "analysis TEXT, "
+          "vuln_type TEXT, "
+          "vuln_id TEXT, "
+          "finding_json TEXT)"
+      )
+      con.executemany(
+          "INSERT INTO findings VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [
+              (
+                  "f-pre",
+                  "OPEN",
+                  "Preexisting discouraged finding",
+                  "",
+                  "CWE-287",
+                  "CWE-287",
+                  '{"vuln_id":"CWE-287","vuln_type":"CWE-287"}',
+              ),
+              (
+                  "f-cur-disc",
+                  "OPEN",
+                  "Missing Authentication for Critical Function on /admin",
+                  "Endpoint lacks authentication",
+                  "CWE-287",
+                  "CWE-287",
+                  '{"vuln_id":"CWE-287","vuln_type":"CWE-287"}',
+              ),
+              (
+                  "f-cur-ok",
+                  "OPEN",
+                  "SQL Injection in login",
+                  "",
+                  "SQL INJECTION",
+                  "CWE-89",
+                  "{}",
+              ),
+          ],
+      )
+      con.commit()
+      con.close()
+
+      cm = CodeMender(cm_binary="cm", repo_dir=tmpdir, env={"CM_HOME": cm_home})
+      updated = complete_scan.normalize_db_finding_cwes(
+          cm, exclude_finding_ids={"f-pre"}
+      )
+      self.assertEqual(updated, 1)
+
+      check_con = sqlite3.connect(db_path)
+      rows = dict(
+          check_con.execute(
+              "SELECT finding_id, vuln_id || '|' || vuln_type || '|' || finding_json FROM findings"
+          ).fetchall()
+      )
+      check_con.close()
+      self.assertEqual(
+          rows["f-pre"],
+          'CWE-287|CWE-287|{"vuln_id":"CWE-287","vuln_type":"CWE-287"}',
+      )
+      self.assertEqual(
+          rows["f-cur-disc"],
+          'CWE-306|CWE-306|{"vuln_id": "CWE-306", "vuln_type": "CWE-306"}',
+      )
+      self.assertEqual(rows["f-cur-ok"], "CWE-89|SQL INJECTION|{}")
 
 
 if __name__ == "__main__":

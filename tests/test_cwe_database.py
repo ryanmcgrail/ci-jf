@@ -14,6 +14,7 @@ from cwe_database import (
     CWEDatabase,
     DEFAULT_DISCOURAGED_CWES_PATH,
     extract_discouraged_cwe_ids,
+    extract_prompt_discouraged_cwe_ids,
     load_cwe_database,
     write_discouraged_cwes_file,
 )
@@ -337,6 +338,40 @@ class TestCWEDatabase(unittest.TestCase):
         self.assertIsNone(db.find_parent(300, 200))
         # Also verify in the real catalog that 681 (CanPrecede Pillar 682) cannot step through 682 to reach sibling 1335.
         self.assertIsNone(self.db.find_parent(681, 1335))
+
+    def test_prompt_discouraged_cwes_and_remap_discouraged_cwe(self) -> None:
+        """Verify concise prompt discouraged list and XML-based remapping of discouraged/prohibited CWEs."""
+        prompt_ids = extract_prompt_discouraged_cwe_ids()
+        self.assertEqual(len(prompt_ids), 35)
+        for key_id in (20, 74, 119, 200, 269, 285, 287, 311, 330, 345, 400):
+            self.assertIn(key_id, prompt_ids)
+        # Allowed CWEs pass through unchanged
+        self.assertEqual(self.db.remap_discouraged_cwe(89, "SQL Injection"), 89)
+        self.assertEqual(self.db.remap_discouraged_cwe("CWE-79", "XSS"), 79)
+        # Discouraged CWEs remap to allowed Weaknesses guided by context keywords
+        self.assertEqual(
+            self.db.remap_discouraged_cwe(119, "Out-of-bounds Read in parser"),
+            125,
+        )
+        self.assertEqual(
+            self.db.remap_discouraged_cwe(119, "Stack-based Out-of-bounds Write"),
+            787,
+        )
+        self.assertEqual(
+            self.db.remap_discouraged_cwe(287, "Missing Authentication for Critical Function"),
+            306,
+        )
+        self.assertEqual(
+            self.db.remap_discouraged_cwe(285, "Missing Authorization on admin endpoint"),
+            862,
+        )
+        self.assertEqual(
+            self.db.remap_discouraged_cwe(311, "Cleartext Storage of Passwords in DB"),
+            312,
+        )
+        remapped_200 = self.db.remap_discouraged_cwe(200, "Sensitive information exposure")
+        self.assertIsNotNone(remapped_200)
+        self.assertNotIn(remapped_200, self.db.discouraged_ids)
 
 
 if __name__ == "__main__":

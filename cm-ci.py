@@ -47,6 +47,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from codemender import CodeMender, ScanMode
 from complete_scan import (
+    normalize_db_finding_cwes,
     restore_interrupted_workspace,
     run_complete_scan,
 )
@@ -376,6 +377,7 @@ def cmd_find(argv: List[str]) -> int:
                 find_kwargs["extra_flags"] = extra_cm_flags
             ctx.cm.find(**find_kwargs)
             reconcile_overwritten_findings(ctx.cm, pre_find_rows, restore_session_id=False)
+            normalize_db_finding_cwes(ctx.cm, exclude_finding_ids=before_ids or None)
     except RuntimeError as e:
         print(f"cm-ci: {e}", file=sys.stderr)
         m = re.search(r"exit code (\d+)", str(e))

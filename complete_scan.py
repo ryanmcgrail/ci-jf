@@ -11,7 +11,9 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 import codemender
 from codemender import CodeMender, ScanMode
 import covered_lines
+from cwe_database import parse_cwe_id
 from deduplication import (
+    CWE_DB,
     deduplicate_db_findings,
     reconcile_overwritten_findings,
     snapshot_db_findings,
@@ -34,17 +36,19 @@ _FIND_CONTEXT_FOR_FIRST_PASS = """\
 - Ignore tests, build/package manifests, developer CLI/deployment scripts, `.codemender` files, and vendored or minified third-party libraries (if the target file is third-party/vendored code, stop immediately and report 0).
 
 # CWE Requirements
-- Assign each finding exactly one valid `CWE-<number>` ID, and never use these discouraged/prohibited CWEs: {discouraged_cwes}"""
+- Assign each finding exactly one specific Base/Variant/Class Weakness `CWE-<number>`—never a CWE Category, View, Pillar, Deprecated ID, code-quality metric (`CWE-1041`–`CWE-1127`), or discouraged weakness ({discouraged_cwes})."""
 _FIND_CONTEXT_FOR_LATER_PASSES = f"""\
 # Initial Pre-Audit Check
-- First, read "{{report_file}}" with `read_file` and check this target file's section (if present) for already-covered line ranges and snippets.
+- First, run `grep_search` on "{{report_file}}" for this target file's repo-relative path to check its already-covered line ranges/snippets (if any).
 - Never re-report a covered vulnerability (its covered/sink lines, enclosing declaration/caller, or any intra-file helper/validator/sanitizer whose caller/sink in this file is already covered, or vice versa); audit the remaining uncovered lines and report 0 if no distinct vulnerabilities remain.
 
 {_FIND_CONTEXT_FOR_FIRST_PASS}"""
 
 
 def _load_discouraged_cwes() -> str:
-  """Loads the discouraged CWE IDs from discouraged_cwes.txt as a comma-separated string."""
+  """Returns the concise non-deprecated, non-Pillar discouraged security CWEs for prompt guidance."""
+  if CWE_DB.prompt_discouraged_ids:
+    return ", ".join(f"CWE-{cid}" for cid in CWE_DB.prompt_discouraged_ids)
   if not os.path.exists(_DISCOURAGED_CWES_PATH):
     return ""
   with open(_DISCOURAGED_CWES_PATH, "r", encoding="utf-8") as cwe_f:
@@ -157,18 +161,22 @@ def build_covered_lines_report(
     exclude_finding_ids: Optional[Iterable[str]] = None,
     only_files: Optional[Iterable[str]] = None,
 ) -> str:
-  """Precomputes a compact per-file covered-lines manifest on the host via `covered_lines`."""
-  preprocessed_json = preprocess_report_for_context(
-      raw_report,
-      repo_dir=repo_dir,
-      exclude_finding_ids=exclude_finding_ids,
-  )
-  if preprocessed_json == "[]":
+  """Precomputes a compact, `grep_search`-friendly per-file covered-lines manifest on the host."""
+  text = (raw_report or "").strip()
+  if not text or text == "null":
     return ""
-  items = json.loads(preprocessed_json)
-  if not items:
+  try:
+    raw_items, _ = json.JSONDecoder().raw_decode(text)
+  except json.JSONDecodeError:
+    return ""
+  if not isinstance(raw_items, list) or not raw_items:
     return ""
 
+  excluded = (
+      {str(fid) for fid in exclude_finding_ids if fid}
+      if exclude_finding_ids
+      else set()
+  )
   allowed_exact: Optional[Set[str]] = None
   allowed_lower: Optional[Set[str]] = None
   if only_files is not None:
@@ -182,37 +190,174 @@ def build_covered_lines_report(
       allowed_exact = norm_only
       allowed_lower = {f.lower() for f in norm_only}
 
-  target_files = sorted({
-      str(item.get("file_path") or "")
-      for item in items
-      if isinstance(item, dict) and str(item.get("file_path") or "").strip()
-  })
-  if allowed_exact is not None and allowed_lower is not None:
-    target_files = [
-        fp
-        for fp in target_files
-        if fp in allowed_exact or fp.lower() in allowed_lower
-    ]
-  if not target_files:
+  grouped: Dict[str, List[Finding]] = {}
+  for item in raw_items:
+    if not isinstance(item, dict):
+      continue
+    finding = Finding.from_dict(item)
+    if excluded and str(finding.finding_id or "") in excluded:
+      continue
+    if finding.status not in _ACTIVE_REPORT_STATUSES:
+      continue
+    rel_fp = _normalize_report_file_path(finding.file_path, repo_dir)
+    if not rel_fp:
+      continue
+    if allowed_exact is not None and allowed_lower is not None:
+      if rel_fp not in allowed_exact and rel_fp.lower() not in allowed_lower:
+        continue
+    grouped.setdefault(rel_fp, []).append(finding)
+
+  if not grouped:
     return ""
 
-  tmp_report_path: Optional[str] = None
+  out_lines: List[str] = []
+  for rel_file in sorted(grouped):
+    candidate_path = os.path.join(repo_dir or ".", rel_file)
+    file_lines: List[str] = []
+    if os.path.isfile(candidate_path):
+      try:
+        with open(candidate_path, "r", encoding="utf-8", errors="replace") as fh:
+          file_lines = fh.read().splitlines()
+      except OSError:
+        file_lines = []
+
+    raw_ranges: List[Tuple[int, int]] = []
+    unresolved_previews: List[str] = []
+    seen_previews: Set[str] = set()
+
+    for finding in grouped[rel_file]:
+      snip = str(finding.snippet or "")
+      matched = (
+          covered_lines.find_snippet_line_ranges(file_lines, snip)
+          if (file_lines and snip.strip())
+          else []
+      )
+      if matched:
+        raw_ranges.append(matched[0])
+      elif (finding.start_line or 0) > 0:
+        sl = int(finding.start_line)
+        el = max(int(finding.end_line or sl), sl)
+        raw_ranges.append((sl, el))
+      elif snip.strip():
+        preview = covered_lines._first_meaningful_line(snip.splitlines())
+        if preview and preview not in seen_previews:
+          seen_previews.add(preview)
+          unresolved_previews.append(preview)
+
+    if raw_ranges:
+      raw_ranges.sort(key=lambda r: (r[0], r[1]))
+      merged: List[Tuple[int, int]] = []
+      for sl, el in raw_ranges:
+        if merged and sl <= merged[-1][1] + 1:
+          merged[-1] = (merged[-1][0], max(merged[-1][1], el))
+        else:
+          merged.append((sl, el))
+      labels = [
+          f"L{sl}" if sl == el else f"L{sl}-{el}" for sl, el in merged
+      ]
+      prefix = f"{rel_file} | covered: "
+      cur_labels: List[str] = []
+      cur_len = len(prefix)
+      for lbl in labels:
+        sep_len = 2 if cur_labels else 0
+        if cur_labels and cur_len + sep_len + len(lbl) > 160:
+          out_lines.append(prefix + ", ".join(cur_labels))
+          cur_labels = [lbl]
+          cur_len = len(prefix) + len(lbl)
+        else:
+          cur_labels.append(lbl)
+          cur_len += sep_len + len(lbl)
+      if cur_labels:
+        out_lines.append(prefix + ", ".join(cur_labels))
+
+    for preview in unresolved_previews:
+      out_lines.append(f"{rel_file} | snippet: {preview}")
+
+  return "\n".join(out_lines)
+
+
+def normalize_db_finding_cwes(
+    cm: CodeMender,
+    exclude_finding_ids: Optional[Iterable[str]] = None,
+) -> int:
+  """Remaps any discouraged/prohibited CWE IDs on active findings in `state.db` to allowed Weaknesses."""
+  con = cm.db
+  if con is None or not CWE_DB.discouraged_ids:
+    return 0
   try:
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", delete=False, encoding="utf-8"
-    ) as tmp_f:
-      tmp_f.write(preprocessed_json)
-      tmp_report_path = tmp_f.name
-    sections = [
-        covered_lines.summarize_covered_lines(
-            tmp_report_path, rel_file, repo_dir=repo_dir or "."
+    cur = con.execute("SELECT * FROM findings ORDER BY rowid ASC")
+    col_names = [desc[0] for desc in (cur.description or [])]
+    rows = cur.fetchall()
+  except sqlite3.Error:
+    return 0
+  if not rows or "finding_id" not in col_names:
+    return 0
+
+  cols = set(col_names)
+  excluded = (
+      {str(fid) for fid in exclude_finding_ids if fid}
+      if exclude_finding_ids
+      else set()
+  )
+  updated = 0
+  for row in rows:
+    rd = dict(zip(col_names, row))
+    fid = str(rd.get("finding_id") or "")
+    if not fid or (excluded and fid in excluded):
+      continue
+    status = str(rd.get("status") or "OPEN").upper()
+    if status not in _ACTIVE_REPORT_STATUSES:
+      continue
+    f_obj = Finding.from_dict(rd)
+    cid = parse_cwe_id(f_obj)
+    if cid is None or cid not in CWE_DB.discouraged_ids:
+      continue
+    ctx_text = " ".join(
+        str(rd.get(k) or "") for k in ("title", "vuln_type", "analysis")
+    )
+    new_cid = CWE_DB.remap_discouraged_cwe(cid, context_text=ctx_text)
+    if new_cid is None or new_cid == cid:
+      continue
+    new_cwe_str = f"CWE-{new_cid}"
+    set_clauses: List[str] = []
+    params: List[Any] = []
+    if "vuln_id" in cols:
+      set_clauses.append("vuln_id = ?")
+      params.append(new_cwe_str)
+    if "vuln_type" in cols:
+      old_vt = str(rd.get("vuln_type") or "")
+      vt_cid = parse_cwe_id(old_vt)
+      if not old_vt.strip() or vt_cid == cid:
+        set_clauses.append("vuln_type = ?")
+        params.append(new_cwe_str)
+    if "finding_json" in cols and rd.get("finding_json"):
+      try:
+        fj = json.loads(str(rd["finding_json"]))
+        if isinstance(fj, dict) and fj:
+          if "vuln_id" in fj:
+            fj["vuln_id"] = new_cwe_str
+          if "vuln_type" in fj and parse_cwe_id(str(fj.get("vuln_type") or "")) == cid:
+            fj["vuln_type"] = new_cwe_str
+          set_clauses.append("finding_json = ?")
+          params.append(json.dumps(fj))
+      except (TypeError, ValueError):
+        pass
+    if set_clauses:
+      params.append(fid)
+      try:
+        con.execute(
+            f"UPDATE findings SET {', '.join(set_clauses)} WHERE finding_id = ?",
+            params,
         )
-        for rel_file in target_files
-    ]
-  finally:
-    if tmp_report_path is not None:
-      _safe_remove(tmp_report_path)
-  return "\n\n".join(s for s in sections if s)
+        updated += 1
+      except sqlite3.Error:
+        pass
+  if updated:
+    try:
+      con.commit()
+    except sqlite3.Error:
+      pass
+  return updated
 
 # Matches per-batch completion lines emitted by `cm find --deep`, e.g.:
 #   [1/124 batches] ✅ data/static/codefixes/forgedReviewChallenge_3.ts (1m13.6s) | 14.2k tok - 0 vulnerabilities
@@ -985,6 +1130,9 @@ def run_complete_scan(
         excluded_finding_ids = _active_preexisting_finding_ids(
             cm, pre_scan_finding_ids, pre_scan_session_ids
         )
+        normalize_db_finding_cwes(
+            cm, exclude_finding_ids=excluded_finding_ids or None
+        )
         deduplicate_db_findings(cm, exclude_finding_ids=excluded_finding_ids or None)
         if pass_error is not None:
           raise pass_error
@@ -1034,7 +1182,7 @@ def run_complete_scan(
             has_prior_state=has_prior_state,
             covered_report=covered_report,
             pass_flags=list(cleaned_extra_flags),
-            max_turns=12 if scan_index > 0 else 8,
+            max_turns=8,
             allow_partial_failure=is_non_final_pass,
             allow_all_batches_failed=(scan_index > 0 and has_prior_state),
             allow_safety_block_failure=enable_argon_escalation,
@@ -1134,7 +1282,7 @@ def run_complete_scan(
               has_prior_state=has_prior_state,
               covered_report=covered_report,
               pass_flags=list(flags_without_model),
-              max_turns=12 if has_prior_state else 8,
+              max_turns=8,
               allow_partial_failure=is_non_final_argon,
               allow_all_batches_failed=(argon_index > 0 and is_non_final_argon),
               model_override=_SAFETY_ESCALATION_MODEL,
