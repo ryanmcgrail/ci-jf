@@ -97,8 +97,8 @@ def _build_parser():
   add("--repos", nargs="+")
   add("--project")
   add("--region", default=common.DEFAULT_REGION)
-  add("--cm-version", default="0.18.0")
-  add("--model", default="gemini-4-argon")
+  add("--cm-version", default="0.23.0")
+  add("--model", default="gemini-4-hydrogen")
   add("--mode", choices=["shallow", "deep", "diff", "complete"], default="shallow",
       help="find mode; diff runs `cm find --diff=<diff_ref>` per manifest case")
   add("--extra-cm-args", default="")
