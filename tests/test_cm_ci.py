@@ -1242,6 +1242,30 @@ class TestCmCi(unittest.TestCase):
                     self.assertEqual(os.getcwd(), os.path.realpath(git_repo))
 
                 self.assertEqual(captured_targets, ["src", os.path.join("src", "app.py")])
+
+                # 4) `check-config --yes` cleanly merges missing keys into an existing partial `config.yaml` via PyYAML
+                with open(cfg_path, "w", encoding="utf-8") as fh:
+                    fh.write(
+                        f'project_paths:\n  - "{non_git_repo}"\n'
+                        'vcs:\n  type: git\n'
+                        'scan:\n  exclude_dirs:\n    - "custom_vendor"\n'
+                    )
+                with (
+                    patch.dict(os.environ, {"CM_HOME": cm_home}),
+                    patch.object(cm_ci, "CodeMender", return_value=mock_git_cm),
+                    patch("sys.stdout", new_callable=io.StringIO),
+                ):
+                    rc_cfg = cm_ci.cmd_check_config(["--repo", git_repo, "--yes"])
+                self.assertEqual(rc_cfg, 0)
+                import yaml
+                with open(cfg_path, encoding="utf-8") as fh:
+                    merged_cfg = yaml.safe_load(fh)
+                real_merged_paths = [os.path.realpath(p) for p in merged_cfg["project_paths"]]
+                self.assertIn(os.path.realpath(non_git_repo), real_merged_paths)
+                self.assertIn(os.path.realpath(git_repo), real_merged_paths)
+                self.assertEqual(merged_cfg["vcs"]["commands"]["reset"], "true")
+                self.assertIn("custom_vendor", merged_cfg["scan"]["exclude_dirs"])
+                self.assertIn("venv", merged_cfg["scan"]["exclude_dirs"])
         finally:
             os.chdir(restore_dir)
 

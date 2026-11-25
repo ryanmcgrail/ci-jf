@@ -13,9 +13,9 @@ import complete_scan
 from codemender import CodeMender
 from complete_scan import (
     get_latest_session_finding_counts,
-    preprocess_report_for_context,
     run_complete_scan,
 )
+from pass_report import build_covered_lines_report
 
 
 class CompleteScanTests(unittest.TestCase):
@@ -1210,26 +1210,30 @@ class CompleteScanTests(unittest.TestCase):
       self.assertEqual(sevs["f-prior-crit"], "CRITICAL")
       self.assertEqual(sevs["f0-new-dup"], "CRITICAL")
 
-  def test_preprocess_report_for_context_filters_statuses_and_normalizes_paths(self):
+  def test_build_covered_lines_report_filters_statuses_and_normalizes_paths(self):
     raw = json.dumps([
         {
             "finding_id": "1",
             "status": "OPEN",
             "file_path": "/home/runner/workspace/repo/routes/order.ts",
+            "start_line": 12,
+            "end_line": 14,
             "snippet": "sink1()",
-            "title": "Should be omitted",
-            "analysis": "Should be omitted",
         },
         {
             "finding_id": "2",
             "status": "DISMISSED",
             "file_path": "/home/runner/workspace/repo/routes/b2bOrder.ts",
+            "start_line": 20,
+            "end_line": 22,
             "snippet": "dismissed_sink()",
         },
         {
             "finding_id": "3",
             "status": "VERIFIED",
             "file_path": "/home/runner/workspace/repo/routes/b2bOrder.ts",
+            "start_line": 30,
+            "end_line": 30,
             "snippet": "sink2()",
         },
         {
@@ -1239,17 +1243,13 @@ class CompleteScanTests(unittest.TestCase):
             "snippet": "sink3()",
         },
     ])
-    out = json.loads(
-        preprocess_report_for_context(
-            raw, repo_dir="/home/runner/workspace/repo"
-        )
-    )
+    manifest = build_covered_lines_report(raw, repo_dir="/home/runner/workspace/repo")
     self.assertEqual(
-        out,
+        manifest.splitlines(),
         [
-            {"file_path": "routes/order.ts", "snippet": "sink1()"},
-            {"file_path": "routes/b2bOrder.ts", "snippet": "sink2()"},
-            {"file_path": "order.ts", "snippet": "sink3()"},
+            "order.ts | snippet: sink3()",
+            "routes/b2bOrder.ts | covered: L30",
+            "routes/order.ts | covered: L12-14",
         ],
     )
     self.assertIn(

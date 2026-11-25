@@ -6,7 +6,7 @@ A single script that wraps the CodeMender CLI (`cm`) for use in CI pipelines. It
 2. **Fixes being undone** — running `cm fix` for several findings in a row can silently revert earlier fixes in the same directory. `cm-ci.py fix` applies the required configuration, commits after every fix and stops if the problem is detected.
 3. **Noise from virtual environments** — findings under `venv/`, `.venv/`, `node_modules/` etc. are excluded from scans and skipped when fixing.
 
-**Requirements:** `python3` (3.8 or later, standard library only), `git`, and `cm` on `PATH`.
+**Requirements:** `python3` (3.8 or later) with `PyYAML`, `git`, and `cm` on `PATH`.
 **Package contents:** `README.md`, `cm-ci.py`
 
 ---

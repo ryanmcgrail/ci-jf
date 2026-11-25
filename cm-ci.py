@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """cm-ci.py — CodeMender wrapper for CI: no duplicate findings across runs, no lost fixes.
 
-Single file, standard library only (python3 >= 3.8). Needs `cm` and `git` on PATH.
+Requires python3 >= 3.8, PyYAML, and `cm` + `git` on PATH.
 
   cm-ci.py check-config [--yes]                 detect the config CodeMender needs in CI,
-                                                print the YAML to add, apply it (--yes / prompt)
+                                                print the YAML to merge, apply it (--yes / prompt)
   cm-ci.py find [wrapper opts] <cm find args>   run `cm find` (every cm flag passes through:
                                                 --deep, --context, --diff, --model, -y, ...),
                                                 export this run, drop cross-run duplicates and
@@ -42,35 +42,35 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from codemender import CodeMender, ScanMode
-from complete_scan import (
-    normalize_db_finding_cwes,
-    restore_interrupted_workspace,
-    run_complete_scan,
-)
+from cm_config import cfg_checks, check_config, infer_repo_dir, safe_getcwd
+from codemender import CodeMender, ScanMode, atomic_write_text, resolve_cm_home
+from complete_scan import restore_interrupted_workspace, run_complete_scan
+from cwe_database import parse_cwe_id
 from deduplication import (
     ACTIVE,
     dedup,
     higher_severity,
     is_critical_high,
     load_findings,
-    reconcile_overwritten_findings,
-    remove_duplicates_in_db,
+    norm_rel_path,
     severity_rank,
-    snapshot_db_findings,
     status_of,
     summary_line,
-    upgrade_finding_severity_in_db,
 )
 from finding import Finding
-
-SEV_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+from state_db import (
+    normalize_db_finding_cwes,
+    reconcile_overwritten_findings,
+    remove_duplicates_in_db,
+    snapshot_db_findings,
+    upgrade_finding_severity_in_db,
+)
 
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
+
 
 def die(msg: str, code: int = 1) -> None:
     print(f"cm-ci: {msg}", file=sys.stderr)
@@ -86,188 +86,11 @@ def sh(*cmd: str, check: bool = False, capture: bool = True) -> subprocess.Compl
     return subprocess.run(list(cmd), text=True, capture_output=capture, stdin=subprocess.DEVNULL, check=check)
 
 
-def _strip_yaml_comment(line: str) -> str:
-    in_quote: Optional[str] = None
-    for idx, ch in enumerate(line):
-        if ch in ("'", '"') and (idx == 0 or line[idx - 1] != "\\"):
-            if in_quote is None:
-                in_quote = ch
-            elif in_quote == ch:
-                in_quote = None
-        elif ch == "#" and in_quote is None and (idx == 0 or line[idx - 1].isspace()):
-            return line[:idx].rstrip()
-    return line.rstrip()
-
-
-def _unquote_yaml_scalar(raw: str) -> str:
-    val = raw.strip()
-    if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
-        val = val[1:-1]
-    return os.path.expanduser(val.strip())
-
-
-def _split_yaml_flow_items(inner: str) -> List[str]:
-    items: List[str] = []
-    buf: List[str] = []
-    in_quote: Optional[str] = None
-    for idx, ch in enumerate(inner):
-        if ch in ("'", '"') and (idx == 0 or inner[idx - 1] != "\\"):
-            if in_quote is None:
-                in_quote = ch
-            elif in_quote == ch:
-                in_quote = None
-            buf.append(ch)
-        elif ch == "," and in_quote is None:
-            piece = _unquote_yaml_scalar("".join(buf))
-            if piece:
-                items.append(piece)
-            buf = []
-        else:
-            buf.append(ch)
-    tail = _unquote_yaml_scalar("".join(buf))
-    if tail:
-        items.append(tail)
-    return items
-
-
-def _parse_project_paths(cfg_text: str) -> List[str]:
-    """Extracts existing real directories from `project_paths` in CodeMender's config.yaml."""
-    lines = cfg_text.splitlines()
-    raw_paths: List[str] = []
-    idx = 0
-    while idx < len(lines):
-        cleaned = _strip_yaml_comment(lines[idx])
-        m = re.match(r"^project_paths\s*:\s*(.*)$", cleaned)
-        if not m:
-            idx += 1
-            continue
-        rest = m.group(1).strip()
-        if rest.startswith("["):
-            flow_buf = [rest[1:]]
-            while idx + 1 < len(lines) and "]" not in flow_buf[-1]:
-                idx += 1
-                flow_buf.append(_strip_yaml_comment(lines[idx]))
-            joined = " ".join(flow_buf)
-            inner = joined.split("]", 1)[0]
-            raw_paths.extend(_split_yaml_flow_items(inner))
-            idx += 1
-            continue
-        if rest:
-            raw_paths.append(_unquote_yaml_scalar(rest))
-            idx += 1
-            continue
-        idx += 1
-        while idx < len(lines):
-            sub_raw = lines[idx]
-            sub_clean = _strip_yaml_comment(sub_raw)
-            if not sub_clean.strip():
-                idx += 1
-                continue
-            item_m = re.match(r"^\s+-\s*(.*)$", sub_clean)
-            if not item_m:
-                break
-            val = _unquote_yaml_scalar(item_m.group(1))
-            if val:
-                raw_paths.append(val)
-            idx += 1
-
-    resolved: List[str] = []
-    seen: set = set()
-    for p in raw_paths:
-        if not os.path.isabs(p):
-            continue
-        real_p = os.path.realpath(p)
-        if real_p not in seen and os.path.isdir(real_p):
-            seen.add(real_p)
-            resolved.append(real_p)
-    return resolved
-
-
-def _enclosing_project_path(probe_dir: str, project_paths: List[str]) -> Optional[str]:
-    matches = [
-        p for p in project_paths
-        if probe_dir == p or probe_dir.startswith(p + os.sep)
-    ]
-    return max(matches, key=len) if matches else None
-
-
-def _git_toplevel(probe_dir: str) -> Optional[str]:
-    if not probe_dir or not os.path.isdir(probe_dir):
-        return None
-    r = sh("git", "-C", probe_dir, "rev-parse", "--show-toplevel")
-    if r.returncode != 0 or not r.stdout.strip():
-        return None
-    top = os.path.realpath(r.stdout.strip())
-    return top if os.path.isdir(top) else None
-
-
-def _resolve_probe_dir(probe_dir: str, project_paths: List[str]) -> Optional[str]:
-    cfg_match = _enclosing_project_path(probe_dir, project_paths)
-    git_match = _git_toplevel(probe_dir)
-    if cfg_match and git_match:
-        return git_match if git_match.startswith(cfg_match + os.sep) else cfg_match
-    return cfg_match or git_match
-
-
-def _safe_getcwd() -> Optional[str]:
-    try:
-        return os.path.realpath(os.getcwd())
-    except OSError:
-        return None
-
-
-def _infer_repo_dir(
-    cm_dir: str,
-    target_hint: Optional[str] = None,
-    required: bool = True,
-) -> Optional[str]:
-    """Infers the repository root from `target_hint`, `cwd`, or `$CM_HOME/config.yaml`."""
-    cfg_path = os.path.join(cm_dir, "config.yaml")
-    try:
-        with open(cfg_path, encoding="utf-8") as fh:
-            cfg_paths = _parse_project_paths(fh.read())
-    except OSError:
-        cfg_paths = []
-
-    orig_cwd = _safe_getcwd()
-    if target_hint and target_hint not in (".", "./"):
-        cand_raw = (
-            target_hint
-            if os.path.isabs(target_hint)
-            else (os.path.join(orig_cwd, target_hint) if orig_cwd else None)
-        )
-        if cand_raw:
-            cand = os.path.realpath(cand_raw)
-            if os.path.exists(cand):
-                probe = cand if os.path.isdir(cand) else os.path.dirname(cand)
-                resolved = _resolve_probe_dir(probe, cfg_paths)
-                if resolved:
-                    return resolved
-
-    if orig_cwd:
-        resolved_cwd = _resolve_probe_dir(orig_cwd, cfg_paths)
-        if resolved_cwd:
-            return resolved_cwd
-
-    if len(cfg_paths) == 1:
-        return cfg_paths[0]
-
-    if not required:
-        return None
-    if len(cfg_paths) > 1:
-        die(
-            f"not inside a git repo and {cfg_path} lists multiple project_paths"
-            f" ({len(cfg_paths)}) — use --repo DIR"
-        )
-    die("not inside a git repo (use --repo DIR)")
-    return None
-
-
 class Ctx:
     def __init__(self, repo: Optional[str], target_hint: Optional[str] = None):
-        self.cm_dir = os.environ.get("CM_HOME") or os.path.join(os.path.expanduser("~"), ".codemender")
+        self.cm_dir = resolve_cm_home()
         if not repo:
-            inferred = _infer_repo_dir(self.cm_dir, target_hint=target_hint, required=True)
+            inferred = infer_repo_dir(self.cm_dir, target_hint=target_hint, required=True, die_fn=die)
             assert inferred is not None
             repo = inferred
         self.repo = os.path.realpath(repo)
@@ -284,17 +107,15 @@ class Ctx:
 
 
 def write_json(path: str, payload: Any) -> None:
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(
+    content = (
+        json.dumps(
             payload,
-            fh,
             indent=2,
             default=lambda o: o.to_dict() if isinstance(o, Finding) else o,
         )
-        fh.write("\n")
-    os.replace(tmp, path)
+        + "\n"
+    )
+    atomic_write_text(path, content)
 
 
 class _ArgumentParser(argparse.ArgumentParser):
@@ -309,91 +130,6 @@ class _ArgumentParser(argparse.ArgumentParser):
 
     def error(self, message: str) -> None:
         die(message, 1)
-
-
-# ─── config check ────────────────────────────────────────────────────────────
-
-EXCLUDE_DIRS = '["venv", ".venv", "env", "site-packages", "__pycache__", "node_modules", "vendor", "dist", "bin", "target", "obj", "build", ".gradle"]'
-
-
-def _cfg_text(ctx: Ctx) -> str:
-    try:
-        with open(ctx.cfg, encoding="utf-8") as fh:
-            return fh.read()
-    except OSError:
-        return ""
-
-
-def cfg_checks(ctx: Ctx) -> Dict[str, bool]:
-    t = _cfg_text(ctx)
-    has_proj = ctx.repo in _parse_project_paths(t) or bool(
-        re.search(r"^\s*project_paths:.*[\"']?" + re.escape(ctx.repo) + r"[\"']?", t, re.M)
-    )
-    return {
-        "project_paths": has_proj,
-        "reset": bool(re.search(r"^\s*reset:\s*[\"']?true[\"']?\s*$", t, re.M)),
-        "exclude_dirs": bool(re.search(r"^\s*exclude_dirs:", t, re.M) and re.search(r"(^|[\"' ,\[-])\.?venv([\]\"' ,]|$)", t, re.M)),
-    }
-
-
-def cfg_has_section(ctx: Ctx, name: str) -> bool:
-    return bool(re.search(rf"^{name}:", _cfg_text(ctx), re.M))
-
-
-def check_config(ctx: Ctx, mode: str) -> bool:
-    """mode: report (exit 2 if incomplete) | apply | warn (never exits). Returns True when complete."""
-    ok = cfg_checks(ctx)
-    print(f"cm-ci: config check — {ctx.cfg}")
-    why = {
-        "project_paths": "cm fix/verify resolve the real repo root (no nested temp repo)",
-        "reset": "vcs.commands.reset=\"true\" — no 'git checkout HEAD -- . && git clean -fd' before each fix",
-        "exclude_dirs": "scan.exclude_dirs lists venv/.venv (cm's default list has neither)",
-    }
-    for k in ("project_paths", "reset", "exclude_dirs"):
-        print(f"{k:<15} {'OK' if ok[k] else 'MISSING'}\n    {why[k]}")
-    if all(ok.values()):
-        print("cm-ci: config complete")
-        return True
-    add, manual = "", False
-    if not ok["project_paths"]:
-        manual |= cfg_has_section(ctx, "project_paths")
-        add += f'project_paths: ["{ctx.repo}"]\n'
-    if not ok["reset"]:
-        manual |= cfg_has_section(ctx, "vcs")
-        add += 'vcs:\n  type: git\n  commands:\n    reset: "true"\n'
-    if not ok["exclude_dirs"]:
-        manual |= cfg_has_section(ctx, "scan")
-        add += f"scan:\n  exclude_dirs: {EXCLUDE_DIRS}\n"
-    print(f"\nAdd to {ctx.cfg}:\n\n{add}")
-    if manual:
-        print(f"cm-ci: {ctx.cfg} already has one of these sections — merge the keys above manually (not rewriting your file).", file=sys.stderr)
-        if mode == "warn":
-            return False
-        sys.exit(2)
-    ans = "n"
-    if mode == "apply":
-        ans = "y"
-    elif mode == "report" and sys.stdin.isatty() and sys.stdout.isatty():
-        ans = input(f"Apply to {ctx.cfg} now? [y/N] ").strip()
-    if ans.lower() in ("y", "yes"):
-        os.makedirs(ctx.cm_dir, exist_ok=True)
-        existing = _cfg_text(ctx)
-        with open(ctx.cfg, "a", encoding="utf-8") as fh:
-            if existing and not existing.endswith("\n"):
-                fh.write("\n")
-            if existing.strip():
-                fh.write("\n")
-            fh.write(f"# added by cm-ci.py {datetime.now().date()} — CodeMender CI settings (fix persistence, venv noise)\n{add}")
-        print(f"cm-ci: wrote {ctx.cfg}")
-        if not all(cfg_checks(ctx).values()):
-            die(f"config still incomplete after writing {ctx.cfg}")
-        return True
-    if mode == "warn":
-        print("cm-ci: warning — config incomplete; run 'cm-ci.py check-config --yes' "
-              "(findings under venv/ will be reported; cm fix would revert earlier fixes)", file=sys.stderr)
-        return False
-    die("config incomplete — re-run with --yes to apply", 2)
-    return False
 
 
 def cmd_check_config(argv: List[str]) -> int:
@@ -501,7 +237,7 @@ def _build_find_parser() -> _ArgumentParser:
 def cmd_find(argv: List[str]) -> int:
     args, unknown = _build_find_parser().parse_known_args(argv)
     need("cm")
-    orig_cwd = _safe_getcwd() if not args.repo else None
+    orig_cwd = safe_getcwd() if not args.repo else None
     target_hint: Optional[str] = args.target
     if not args.repo and target_hint is None:
         if args.mode == "diff" and args.diff_ref and os.path.exists(args.diff_ref):
@@ -610,8 +346,6 @@ def cmd_find(argv: List[str]) -> int:
     if args.no_dedup:
         return 0
 
-    # Pool = what CodeMender already knows on this machine (previous sessions in its DB),
-    # plus the repo's known list, plus an explicit export / issue list.
     pool: List[Finding] = []
     seen: set = set()
     sources = [("cm database (previous sessions)", before)]
@@ -621,12 +355,12 @@ def cmd_find(argv: List[str]) -> int:
         sources.append((known_path, known))
     if existing_path:
         sources.append((existing_path, load_findings(existing_path)))
-    for name, items in sources:
+    for _, items in sources:
         for f in items:
             key = str(f.finding_id or f.gh_issue_number or id(f))
-            if key in seen:
-                continue
-            seen.add(key); pool.append(f)
+            if key not in seen:
+                seen.add(key)
+                pool.append(f)
     if critical_high_only:
         print("cm-ci: dedup against " + ", ".join(f"{name} ({sum(1 for f in items if is_critical_high(f))} CRITICAL/HIGH)" for name, items in sources))
     else:
@@ -641,7 +375,7 @@ def cmd_find(argv: List[str]) -> int:
     write_json(new_path, res)
     print(f"cm-ci: → {new_path} (findings = file these; reopened = fixed before, back again; suppressed_duplicates = already known)")
 
-    r = remove_duplicates_in_db(ctx, res["suppressed_duplicates"])
+    r = remove_duplicates_in_db(ctx.cm, res["suppressed_duplicates"])
     if ctx.cm.db is not None:
         try:
             db_cols = {row[1] for row in ctx.cm.db.execute("PRAGMA table_info(findings)")}
@@ -692,12 +426,11 @@ def cmd_find(argv: List[str]) -> int:
     for f in shown_findings:
         print(f"  🆕 NEW      {f.severity or ''} {f.file_path}:{f.start_line or ''} {f.title or ''}")
 
-    fail_on = args.fail_on
-    if fail_on:
-        sevs = {s.strip().upper() for s in fail_on.split(",") if s.strip()}
+    if args.fail_on:
+        sevs = {s.strip().upper() for s in args.fail_on.split(",") if s.strip()}
         hits = [f for f in shown_findings + shown_reopened if str(f.severity or "").upper() in sevs]
         if hits:
-            print(f"cm-ci: {len(hits)} new/reopened finding(s) at severity {fail_on} — failing", file=sys.stderr)
+            print(f"cm-ci: {len(hits)} new/reopened finding(s) at severity {args.fail_on} — failing", file=sys.stderr)
             return 4
     return 0
 
@@ -705,17 +438,7 @@ def cmd_find(argv: List[str]) -> int:
 # ─── fix ─────────────────────────────────────────────────────────────────────
 
 SKIP_DIRS = ("venv/", ".venv/", "site-packages/", "node_modules/")
-
-
-def rel_path(p: str, root: str) -> str:
-    p = str(p or "")
-    return p[len(root) + 1:] if p.startswith(root + "/") else p
-
-
-def vclass(f: Finding) -> str:
-    s = f"{f.vuln_id or ''} {f.vuln_type or ''}"
-    m = re.search(r"cwe-?\s*(\d+)", s, re.I)
-    return f"cwe-{m.group(1)}" if m else re.sub(r"\s+", " ", str(f.vuln_type or "")).strip().lower()
+CM_MARKER = ".cm_project"
 
 
 def select_findings(findings: List[Finding], root: str, max_n: int) -> Tuple[List[Finding], int]:
@@ -723,26 +446,28 @@ def select_findings(findings: List[Finding], root: str, max_n: int) -> Tuple[Lis
     for f in findings:
         if status_of(f) not in ACTIVE:
             continue
-        rel = rel_path(f.file_path or "", root)
+        rel = norm_rel_path(f.file_path or "", root, case_sensitive=True)
         if any(s in rel + "/" for s in SKIP_DIRS):
             continue
-        rows.append((SEV_RANK.get(str(f.severity or "").upper(), 9), rel, f))
+        rows.append((severity_rank(f.severity), rel, f))
     rows.sort(key=lambda r: r[0])
     seen, dups, out = set(), 0, []
     for _, rel, f in rows:
-        key = (rel, vclass(f), re.sub(r"\s+", " ", str(f.snippet or "")).strip())
+        cid = parse_cwe_id(f)
+        vcls = f"cwe-{cid}" if cid is not None else re.sub(r"\s+", " ", str(f.vuln_type or "")).strip().lower()
+        key = (rel, vcls, re.sub(r"\s+", " ", str(f.snippet or "")).strip())
         if key in seen:
             dups += 1
             continue
-        seen.add(key); out.append(Finding(f.to_dict(), _rel=rel))
+        seen.add(key)
+        out.append(Finding(f.to_dict(), _rel=rel))
     return out[:max_n], dups
 
 
 def nested_git(root: str) -> List[str]:
     hits = []
     for dirpath, dirnames, _ in os.walk(root):
-        depth = dirpath[len(root):].count(os.sep)
-        if depth > 6:
+        if dirpath[len(root):].count(os.sep) > 6:
             dirnames[:] = []
             continue
         if ".git" in dirnames or os.path.islink(os.path.join(dirpath, ".git")):
@@ -753,12 +478,8 @@ def nested_git(root: str) -> List[str]:
     return sorted(hits)
 
 
-CM_MARKER = ".cm_project"
-
-
 def exclude_cm_marker(repo: str) -> None:
-    """cm writes a `.cm_project` marker at the repo root. Keep it out of git via the
-    repo-local exclude file (does not touch the project's own .gitignore)."""
+    """Keeps CodeMender's `.cm_project` marker out of git via `.git/info/exclude`."""
     git_dir = sh("git", "rev-parse", "--git-dir").stdout.strip()
     if not git_dir:
         return
@@ -772,7 +493,7 @@ def exclude_cm_marker(repo: str) -> None:
     except OSError:
         pass
     if sh("git", "ls-files", "--error-unmatch", CM_MARKER).returncode == 0:
-        sh("git", "rm", "-q", "--cached", CM_MARKER)  # was staged/tracked by cm; untrack, keep on disk
+        sh("git", "rm", "-q", "--cached", CM_MARKER)
 
 
 def cmd_fix(argv: List[str]) -> int:
@@ -799,7 +520,7 @@ def cmd_fix(argv: List[str]) -> int:
             check_config(ctx, "warn")
         finally:
             sys.stdout = real_stdout
-        die("refusing to fix — without project_paths + reset:\"true\" every 'cm fix' reverts earlier fixes. Run: cm-ci.py check-config --yes", 2)
+        die('refusing to fix — without project_paths + reset:"true" every \'cm fix\' reverts earlier fixes. Run: cm-ci.py check-config --yes', 2)
 
     if not ids:
         sel, dups = select_findings(ctx.report(), ctx.repo, max_n)
@@ -807,7 +528,7 @@ def cmd_fix(argv: List[str]) -> int:
         note = f"; {dups} duplicate(s) collapsed (same file/class/snippet)" if dups else ""
         print(f"cm-ci: selected {len(ids)} finding(s) (cap {max_n}){note}:")
         for f in sel:
-            rel = f._get("_rel") or rel_path(f.file_path or "", ctx.repo)
+            rel = f._get("_rel") or norm_rel_path(f.file_path or "", ctx.repo, case_sensitive=True)
             print(f"  {f.finding_id}  {f.severity or ''}  {rel}  {f.title or ''}")
     else:
         print(f"cm-ci: fixing {len(ids)} finding(s):")
@@ -830,15 +551,19 @@ def cmd_fix(argv: List[str]) -> int:
         rc = subprocess.call(cmd, stdin=subprocess.DEVNULL)
         n = nested_git(ctx.repo)
         if n:
-            print("cm-ci: cm fix created a nested git repo — config not honoured:\n  " + "\n  ".join(n) +
-                  f"\naborting; remove the .git link(s) above, check {ctx.cfg}, and inspect 'git status'.", file=sys.stderr)
+            print(
+                "cm-ci: cm fix created a nested git repo — config not honoured:\n  "
+                + "\n  ".join(n)
+                + f"\naborting; remove the .git link(s) above, check {ctx.cfg}, and inspect 'git status'.",
+                file=sys.stderr,
+            )
             return 3
         if rc != 0:
             print(f"cm-ci: cm fix {fid} exited {rc} — not committing")
             failed += 1
             continue
         exclude_cm_marker(ctx.repo)
-        sh("git", "reset", "-q")  # drop whatever cm staged itself (e.g. its .cm_project marker)
+        sh("git", "reset", "-q")
         sh("git", "add", "-A" if args.include_new_files else "-u")
         if sh("git", "diff", "--cached", "--quiet").returncode == 0:
             print(f"cm-ci: {fid} produced no tracked changes")
@@ -874,6 +599,7 @@ def cmd_fix(argv: List[str]) -> int:
 
 # ─── dedup (standalone) ──────────────────────────────────────────────────────
 
+
 def cmd_dedup(argv: List[str]) -> int:
     parser = _ArgumentParser(prog="cm-ci.py dedup")
     parser.add_argument("--existing", required=True)
@@ -881,11 +607,11 @@ def cmd_dedup(argv: List[str]) -> int:
     parser.add_argument("--out")
     parser.add_argument("--repo", "--repo-root", dest="repo")
     args = parser.parse_args(argv)
-    cm_dir = os.environ.get("CM_HOME") or os.path.join(os.path.expanduser("~"), ".codemender")
+    cm_dir = resolve_cm_home()
     root = (
         os.path.realpath(args.repo)
         if args.repo
-        else (_infer_repo_dir(cm_dir, required=False) or "")
+        else (infer_repo_dir(cm_dir, required=False, die_fn=die) or "")
     )
     existing = load_findings(args.existing)
     current = load_findings(args.new)
@@ -897,6 +623,7 @@ def cmd_dedup(argv: List[str]) -> int:
 
 
 # ─── main ────────────────────────────────────────────────────────────────────
+
 
 def main(argv: List[str]) -> int:
     if not argv or argv[0] in ("-h", "--help"):

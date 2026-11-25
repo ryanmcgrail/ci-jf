@@ -260,6 +260,15 @@ def resolve_cm_home(env: Optional[Dict[str, str]] = None) -> str:
   )
 
 
+def atomic_write_text(path: str, content: str) -> None:
+  """Writes `content` atomically via a sibling `.tmp` file."""
+  os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+  tmp_path = f"{path}.tmp"
+  with open(tmp_path, "w", encoding="utf-8") as fh:
+    fh.write(content)
+  os.replace(tmp_path, path)
+
+
 def resolve_subprocess_env(
     env: Optional[Dict[str, str]] = None,
 ) -> Dict[str, str]:
