@@ -56,7 +56,7 @@ trap 'rm -rf "$CTX"' EXIT
 cp -a "$ROOT/container/." "$CTX/"
 mkdir -p "$CTX/config" "$CTX/cm-ci"
 cp "$ROOT/config/cm_config.yaml" "$ROOT/config/verify_context.md" "$CTX/config/"
-for f in cm-ci.py cm_config.py codemender.py complete_scan.py covered_lines.py deduplication.py finding.py pass_report.py state_db.py cwe_database.py cwec_v4.20.xml discouraged_cwes.txt; do
+for f in cm-ci.py cm_config.py codemender.py complete_scan.py cost.py covered_lines.py deduplication.py finding.py pass_report.py state_db.py cwe_database.py cwec_v4.20.xml discouraged_cwes.txt; do
   if [ -f "$ROOT/../$f" ]; then
     cp "$ROOT/../$f" "$CTX/cm-ci/"
   fi

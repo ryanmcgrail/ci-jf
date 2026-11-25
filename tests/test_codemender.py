@@ -641,20 +641,28 @@ class CodeMenderTests(unittest.TestCase):
       self.assertEqual(stats.llm_turns, 7)
       self.assertAlmostEqual(stats.duration_seconds, 185.4)
       self.assertEqual(stats.models, ["gemini-4-hydrogen", "gemini-4-argon"])
-      # Hydrogen: 150k uncached * $1.50/1M ($0.225) + 150k cached * $0.075/1M ($0.01125) + 15k out/think * $7.50/1M ($0.1125) = $0.34875
-      # Argon:    75k uncached * $4.00/1M ($0.30) + 25k cached * $0.20/1M ($0.005) + 5k out/think * $20.00/1M ($0.10) = $0.405
+      # Hydrogen: 150k uncached * $1.50/1M ($0.225) + 150k cached * $0.075/1M ($0.01125)
+      #           + 3k out * $7.50/1M ($0.0225) + 12k think * $7.50/1M ($0.09) = $0.34875
+      # Argon:    75k uncached * $4.00/1M ($0.30) + 25k cached * $0.20/1M ($0.005)
+      #           + 1k out * $20.00/1M ($0.02) + 4k think * $20.00/1M ($0.08) = $0.405
       # Total = $0.75375
+      self.assertIsNotNone(stats.cost_breakdown)
+      assert stats.cost_breakdown is not None
+      self.assertAlmostEqual(stats.cost_breakdown.uncached_input_usd, 0.525, places=6)
+      self.assertAlmostEqual(stats.cost_breakdown.cached_input_usd, 0.01625, places=6)
+      self.assertAlmostEqual(stats.cost_breakdown.output_usd, 0.0425, places=6)
+      self.assertAlmostEqual(stats.cost_breakdown.thought_usd, 0.17, places=6)
       self.assertAlmostEqual(stats.estimated_cost_usd or 0.0, 0.75375, places=6)
       summary = stats.format_summary()
-      self.assertIn("cm-ci: scan cost — ~$0.75", summary)
-      self.assertIn("420.0k tokens", summary)
-      self.assertIn("7 turn(s)", summary)
-      self.assertIn("3m 05s", summary)
-      self.assertIn("gemini-4-hydrogen, gemini-4-argon", summary)
-
-      # Unknown custom model omits dollar estimate cleanly rather than guessing
-      self.assertIsNone(
-          codemender.estimate_token_cost_usd("custom-private-model", 10_000, 0, 500, 0)
+      self.assertEqual(
+          summary.splitlines(),
+          [
+              "cm-ci: scan cost — ~$0.75 | 420.0k tokens | 7 turn(s) | 3m 05s | model: gemini-4-hydrogen, gemini-4-argon",
+              "  Uncached input : 225.0k tokens (~$0.52)",
+              "  Cached input   : 175.0k tokens (~$0.02, 43.8% cache hit)",
+              "  Output         :   4.0k tokens (~$0.04)",
+              "  Thinking       :  16.0k tokens (~$0.17)",
+          ],
       )
 
 

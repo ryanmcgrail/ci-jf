@@ -1349,11 +1349,17 @@ class TestCmCi(unittest.TestCase):
                 [["cm", "stats", "--json", "--session", "ChScanJustRun001"]],
             )
             out_lines = [ln for ln in stdout_buf.getvalue().splitlines() if ln.strip()]
-            # Expense line is printed at the end of the scan summary
-            self.assertTrue(out_lines[-1].startswith("cm-ci: scan cost — ~$0.47 | 520.0k tokens"))
-            self.assertIn("6 turn(s)", out_lines[-1])
-            self.assertIn("1m 22s", out_lines[-1])
-            self.assertIn("model: gemini-4-hydrogen", out_lines[-1])
+            # Multi-line expense summary is printed at the end of the scan summary
+            self.assertEqual(
+                out_lines[-5:],
+                [
+                    "cm-ci: scan cost — ~$0.47 | 520.0k tokens | 6 turn(s) | 1m 22s | model: gemini-4-hydrogen",
+                    "  Uncached input : 200.0k tokens (~$0.30)",
+                    "  Cached input   : 300.0k tokens (~$0.02, 60.0% cache hit)",
+                    "  Output         :   5.0k tokens (~$0.04)",
+                    "  Thinking       :  15.0k tokens (~$0.11)",
+                ],
+            )
 
             # JSON output files retain their exact schema
             with open(os.path.join(out_dir, "new_findings.json"), encoding="utf-8") as fh:
