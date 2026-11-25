@@ -839,7 +839,7 @@ def _extract_safety_blocked_files(
           if (
               not mdl_low
               or mdl_low == primary_low
-              or mdl_low.startswith("gemini-4-argon")
+              or mdl_low.startswith(("gemini-4-argon", "gemini-4-carbon"))
           ):
             continue
           target_str = str(target or "")
@@ -1007,7 +1007,9 @@ def run_complete_scan(
           default_model="gemini-4-hydrogen",
       )
       enable_argon_escalation = (
-          not primary_model.lower().startswith("gemini-4-argon")
+          not primary_model.lower().startswith(
+              ("gemini-4-argon", "gemini-4-carbon")
+          )
           and not _is_model_fallback_disabled(cleaned_extra_flags, cm.env)
       )
       user_contexts: List[str] = []

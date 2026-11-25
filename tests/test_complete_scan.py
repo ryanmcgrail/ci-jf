@@ -2317,11 +2317,16 @@ class CompleteScanTests(unittest.TestCase):
       self.assertEqual(res.returncode, 0)
       self.assertEqual(models_seen, ["gemini-4-hydrogen", "gemini-4-argon"])
 
-      # 2) Opt-out via --no-model-fallback disables wrapper Argon escalation
+      # 2) Opt-out via --no-model-fallback or primary gemini-4-carbon disables wrapper Argon escalation
       models_seen.clear()
       with patch("codemender.run_command", side_effect=fake_single_file):
         with self.assertRaises(RuntimeError):
           run_complete_scan(cm, extra_flags=["--no-model-fallback"], complete_runs=3)
+      models_seen.clear()
+      with patch("codemender.run_command", side_effect=fake_single_file):
+        with self.assertRaises(RuntimeError):
+          run_complete_scan(cm, extra_flags=["--model=gemini-4-carbon"], complete_runs=3)
+      self.assertEqual(models_seen, ["gemini-4-carbon"])
 
     # 3) state.db fallback model (`gemini-3.8-flash-cyber`) also triggers Argon escalation
     with tempfile.TemporaryDirectory() as tmpdir:
