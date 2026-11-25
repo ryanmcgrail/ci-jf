@@ -1156,6 +1156,95 @@ class TestCmCi(unittest.TestCase):
             self.assertFalse(os.path.exists(report_path))
             self.assertFalse(os.path.exists(backup_path))
 
+    def test_repo_inference_from_config_yaml_target_and_cwd(self) -> None:
+        restore_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                outside_dir = os.path.join(tmpdir, "outside")
+                non_git_repo = os.path.join(tmpdir, "hg_repo")
+                non_git_sub = os.path.join(non_git_repo, "pkg")
+                second_repo = os.path.join(tmpdir, "second_repo")
+                git_repo = os.path.join(tmpdir, "git_repo")
+                git_sub = os.path.join(git_repo, "src")
+                cm_home = os.path.join(tmpdir, "cm_home")
+                for d in (outside_dir, non_git_sub, second_repo, git_sub, cm_home):
+                    os.makedirs(d, exist_ok=True)
+                with open(os.path.join(git_sub, "app.py"), "w", encoding="utf-8") as fh:
+                    fh.write("x = 1\n")
+
+                subprocess.run(["git", "init", "-q", git_repo], check=True)
+
+                cfg_path = os.path.join(cm_home, "config.yaml")
+
+                # 1) Single `project_paths` entry (block YAML) inferred when running from outside any repo
+                with open(cfg_path, "w", encoding="utf-8") as fh:
+                    fh.write(f'project_paths:\n  # main project\n  - "{non_git_repo}"\nreset: "true"\n')
+
+                os.chdir(outside_dir)
+                mock_cm = MockCodeMender(repo_dir=os.path.realpath(non_git_repo))
+                with (
+                    patch.dict(os.environ, {"CM_HOME": cm_home}),
+                    patch.object(cm_ci, "CodeMender", return_value=mock_cm),
+                ):
+                    ctx_single = cm_ci.Ctx(None)
+                self.assertEqual(ctx_single.repo, os.path.realpath(non_git_repo))
+                self.assertTrue(cm_ci.cfg_checks(ctx_single)["project_paths"])
+
+                # 2) Multiple `project_paths` entries (flow YAML):
+                #    - fails cleanly when outside all of them with no target
+                #    - succeeds when cwd is inside a configured non-git project_path
+                #    - succeeds when `cmd_find` passes a positional target inside a repo from outside or subdir
+                with open(cfg_path, "w", encoding="utf-8") as fh:
+                    fh.write(f'project_paths: ["{non_git_repo}", \'{second_repo}\']\n')
+
+                os.chdir(outside_dir)
+                with (
+                    patch.dict(os.environ, {"CM_HOME": cm_home}),
+                    patch("sys.stderr", new_callable=io.StringIO) as err_buf,
+                ):
+                    with self.assertRaises(SystemExit) as ambig_err:
+                        cm_ci.Ctx(None)
+                self.assertEqual(ambig_err.exception.code, 1)
+                self.assertIn("multiple project_paths", err_buf.getvalue())
+
+                os.chdir(non_git_sub)
+                with (
+                    patch.dict(os.environ, {"CM_HOME": cm_home}),
+                    patch.object(cm_ci, "CodeMender", return_value=mock_cm),
+                ):
+                    ctx_enclosing = cm_ci.Ctx(None)
+                self.assertEqual(ctx_enclosing.repo, os.path.realpath(non_git_repo))
+
+                # 3) Positional target from outside (`../git_repo/src`) and from subdirectory (`app.py` inside `src/`)
+                mock_git_cm = MockCodeMender(repo_dir=os.path.realpath(git_repo))
+                captured_targets: list[Any] = []
+                with (
+                    patch.dict(os.environ, {"CM_HOME": cm_home}),
+                    patch.object(cm_ci, "need"),
+                    patch.object(cm_ci, "check_config", return_value=True),
+                    patch.object(cm_ci, "CodeMender", return_value=mock_git_cm),
+                    patch.object(
+                        cm_ci,
+                        "run_complete_scan",
+                        side_effect=lambda _cm, **kw: captured_targets.append(kw.get("target_or_id")),
+                    ),
+                    patch("sys.stdout", new_callable=io.StringIO),
+                    patch("sys.stderr", new_callable=io.StringIO),
+                ):
+                    os.chdir(outside_dir)
+                    rc1 = cm_ci.cmd_find(["../git_repo/src", "--complete"])
+                    self.assertEqual(rc1, 0)
+                    self.assertEqual(os.getcwd(), os.path.realpath(git_repo))
+
+                    os.chdir(git_sub)
+                    rc2 = cm_ci.cmd_find(["app.py", "--complete"])
+                    self.assertEqual(rc2, 0)
+                    self.assertEqual(os.getcwd(), os.path.realpath(git_repo))
+
+                self.assertEqual(captured_targets, ["src", os.path.join("src", "app.py")])
+        finally:
+            os.chdir(restore_dir)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -15,7 +15,7 @@ Single file, standard library only (python3 >= 3.8). Needs `cm` and `git` on PAT
   cm-ci.py dedup --existing A --new B [--out F] standalone dedup of two exports
 
 find wrapper options (everything else is forwarded to `cm find` unchanged):
-  --repo DIR        repo root (default: git toplevel of cwd)
+  --repo DIR        repo root (default: inferred from target/cwd git root or config.yaml project_paths)
   --existing FILE   previous `cm report --format json` export OR
                     `gh issue list --state all --json number,title,state,body` output
   --known FILE      running list of known findings (default .codemender/known_findings.json)
@@ -86,16 +86,192 @@ def sh(*cmd: str, check: bool = False, capture: bool = True) -> subprocess.Compl
     return subprocess.run(list(cmd), text=True, capture_output=capture, stdin=subprocess.DEVNULL, check=check)
 
 
+def _strip_yaml_comment(line: str) -> str:
+    in_quote: Optional[str] = None
+    for idx, ch in enumerate(line):
+        if ch in ("'", '"') and (idx == 0 or line[idx - 1] != "\\"):
+            if in_quote is None:
+                in_quote = ch
+            elif in_quote == ch:
+                in_quote = None
+        elif ch == "#" and in_quote is None and (idx == 0 or line[idx - 1].isspace()):
+            return line[:idx].rstrip()
+    return line.rstrip()
+
+
+def _unquote_yaml_scalar(raw: str) -> str:
+    val = raw.strip()
+    if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+        val = val[1:-1]
+    return os.path.expanduser(val.strip())
+
+
+def _split_yaml_flow_items(inner: str) -> List[str]:
+    items: List[str] = []
+    buf: List[str] = []
+    in_quote: Optional[str] = None
+    for idx, ch in enumerate(inner):
+        if ch in ("'", '"') and (idx == 0 or inner[idx - 1] != "\\"):
+            if in_quote is None:
+                in_quote = ch
+            elif in_quote == ch:
+                in_quote = None
+            buf.append(ch)
+        elif ch == "," and in_quote is None:
+            piece = _unquote_yaml_scalar("".join(buf))
+            if piece:
+                items.append(piece)
+            buf = []
+        else:
+            buf.append(ch)
+    tail = _unquote_yaml_scalar("".join(buf))
+    if tail:
+        items.append(tail)
+    return items
+
+
+def _parse_project_paths(cfg_text: str) -> List[str]:
+    """Extracts existing real directories from `project_paths` in CodeMender's config.yaml."""
+    lines = cfg_text.splitlines()
+    raw_paths: List[str] = []
+    idx = 0
+    while idx < len(lines):
+        cleaned = _strip_yaml_comment(lines[idx])
+        m = re.match(r"^project_paths\s*:\s*(.*)$", cleaned)
+        if not m:
+            idx += 1
+            continue
+        rest = m.group(1).strip()
+        if rest.startswith("["):
+            flow_buf = [rest[1:]]
+            while idx + 1 < len(lines) and "]" not in flow_buf[-1]:
+                idx += 1
+                flow_buf.append(_strip_yaml_comment(lines[idx]))
+            joined = " ".join(flow_buf)
+            inner = joined.split("]", 1)[0]
+            raw_paths.extend(_split_yaml_flow_items(inner))
+            idx += 1
+            continue
+        if rest:
+            raw_paths.append(_unquote_yaml_scalar(rest))
+            idx += 1
+            continue
+        idx += 1
+        while idx < len(lines):
+            sub_raw = lines[idx]
+            sub_clean = _strip_yaml_comment(sub_raw)
+            if not sub_clean.strip():
+                idx += 1
+                continue
+            item_m = re.match(r"^\s+-\s*(.*)$", sub_clean)
+            if not item_m:
+                break
+            val = _unquote_yaml_scalar(item_m.group(1))
+            if val:
+                raw_paths.append(val)
+            idx += 1
+
+    resolved: List[str] = []
+    seen: set = set()
+    for p in raw_paths:
+        if not os.path.isabs(p):
+            continue
+        real_p = os.path.realpath(p)
+        if real_p not in seen and os.path.isdir(real_p):
+            seen.add(real_p)
+            resolved.append(real_p)
+    return resolved
+
+
+def _enclosing_project_path(probe_dir: str, project_paths: List[str]) -> Optional[str]:
+    matches = [
+        p for p in project_paths
+        if probe_dir == p or probe_dir.startswith(p + os.sep)
+    ]
+    return max(matches, key=len) if matches else None
+
+
+def _git_toplevel(probe_dir: str) -> Optional[str]:
+    if not probe_dir or not os.path.isdir(probe_dir):
+        return None
+    r = sh("git", "-C", probe_dir, "rev-parse", "--show-toplevel")
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    top = os.path.realpath(r.stdout.strip())
+    return top if os.path.isdir(top) else None
+
+
+def _resolve_probe_dir(probe_dir: str, project_paths: List[str]) -> Optional[str]:
+    cfg_match = _enclosing_project_path(probe_dir, project_paths)
+    git_match = _git_toplevel(probe_dir)
+    if cfg_match and git_match:
+        return git_match if git_match.startswith(cfg_match + os.sep) else cfg_match
+    return cfg_match or git_match
+
+
+def _safe_getcwd() -> Optional[str]:
+    try:
+        return os.path.realpath(os.getcwd())
+    except OSError:
+        return None
+
+
+def _infer_repo_dir(
+    cm_dir: str,
+    target_hint: Optional[str] = None,
+    required: bool = True,
+) -> Optional[str]:
+    """Infers the repository root from `target_hint`, `cwd`, or `$CM_HOME/config.yaml`."""
+    cfg_path = os.path.join(cm_dir, "config.yaml")
+    try:
+        with open(cfg_path, encoding="utf-8") as fh:
+            cfg_paths = _parse_project_paths(fh.read())
+    except OSError:
+        cfg_paths = []
+
+    orig_cwd = _safe_getcwd()
+    if target_hint and target_hint not in (".", "./"):
+        cand_raw = (
+            target_hint
+            if os.path.isabs(target_hint)
+            else (os.path.join(orig_cwd, target_hint) if orig_cwd else None)
+        )
+        if cand_raw:
+            cand = os.path.realpath(cand_raw)
+            if os.path.exists(cand):
+                probe = cand if os.path.isdir(cand) else os.path.dirname(cand)
+                resolved = _resolve_probe_dir(probe, cfg_paths)
+                if resolved:
+                    return resolved
+
+    if orig_cwd:
+        resolved_cwd = _resolve_probe_dir(orig_cwd, cfg_paths)
+        if resolved_cwd:
+            return resolved_cwd
+
+    if len(cfg_paths) == 1:
+        return cfg_paths[0]
+
+    if not required:
+        return None
+    if len(cfg_paths) > 1:
+        die(
+            f"not inside a git repo and {cfg_path} lists multiple project_paths"
+            f" ({len(cfg_paths)}) — use --repo DIR"
+        )
+    die("not inside a git repo (use --repo DIR)")
+    return None
+
+
 class Ctx:
-    def __init__(self, repo: Optional[str]):
+    def __init__(self, repo: Optional[str], target_hint: Optional[str] = None):
+        self.cm_dir = os.environ.get("CM_HOME") or os.path.join(os.path.expanduser("~"), ".codemender")
         if not repo:
-            r = sh("git", "rev-parse", "--show-toplevel")
-            if r.returncode != 0:
-                die("not inside a git repo (use --repo DIR)")
-            repo = r.stdout.strip()
+            inferred = _infer_repo_dir(self.cm_dir, target_hint=target_hint, required=True)
+            assert inferred is not None
+            repo = inferred
         self.repo = os.path.realpath(repo)
         os.chdir(self.repo)
-        self.cm_dir = os.environ.get("CM_HOME") or os.path.join(os.path.expanduser("~"), ".codemender")
         restore_interrupted_workspace(self.repo, cm_dir=self.cm_dir)
         self.cfg = os.path.join(self.cm_dir, "config.yaml")
         self.cm = CodeMender(repo_dir=self.repo)
@@ -150,8 +326,11 @@ def _cfg_text(ctx: Ctx) -> str:
 
 def cfg_checks(ctx: Ctx) -> Dict[str, bool]:
     t = _cfg_text(ctx)
+    has_proj = ctx.repo in _parse_project_paths(t) or bool(
+        re.search(r"^\s*project_paths:.*[\"']?" + re.escape(ctx.repo) + r"[\"']?", t, re.M)
+    )
     return {
-        "project_paths": bool(re.search(r"^\s*project_paths:.*[\"']?" + re.escape(ctx.repo) + r"[\"']?", t, re.M)),
+        "project_paths": has_proj,
         "reset": bool(re.search(r"^\s*reset:\s*[\"']?true[\"']?\s*$", t, re.M)),
         "exclude_dirs": bool(re.search(r"^\s*exclude_dirs:", t, re.M) and re.search(r"(^|[\"' ,\[-])\.?venv([\]\"' ,]|$)", t, re.M)),
     }
@@ -322,7 +501,18 @@ def _build_find_parser() -> _ArgumentParser:
 def cmd_find(argv: List[str]) -> int:
     args, unknown = _build_find_parser().parse_known_args(argv)
     need("cm")
-    ctx = Ctx(args.repo)
+    orig_cwd = _safe_getcwd() if not args.repo else None
+    target_hint: Optional[str] = args.target
+    if not args.repo and target_hint is None:
+        if args.mode == "diff" and args.diff_ref and os.path.exists(args.diff_ref):
+            target_hint = args.diff_ref
+        elif (
+            args.critical_high_only is not None
+            and args.critical_high_only.strip().lower() not in _BOOL_LITERALS
+            and os.path.exists(args.critical_high_only)
+        ):
+            target_hint = args.critical_high_only
+    ctx = Ctx(args.repo, target_hint=target_hint)
     out_dir = args.out_dir or ".codemender"
     known_path = args.known or os.path.join(out_dir, "known_findings.json")
     existing_path = args.existing
@@ -336,7 +526,12 @@ def cmd_find(argv: List[str]) -> int:
     target: Optional[str] = args.target
     extra_cm_flags: List[str] = []
     if args.mode == "diff" and args.diff_ref:
-        if target is None and os.path.exists(args.diff_ref):
+        cand_diff = (
+            os.path.join(orig_cwd, args.diff_ref)
+            if orig_cwd and not os.path.isabs(args.diff_ref)
+            else args.diff_ref
+        )
+        if target is None and (os.path.exists(args.diff_ref) or os.path.exists(cand_diff)):
             target = args.diff_ref
         else:
             extra_cm_flags.append(f"--diff={args.diff_ref}")
@@ -344,11 +539,31 @@ def cmd_find(argv: List[str]) -> int:
     critical_high_flag: Optional[bool] = None
     if args.critical_high_only is not None:
         raw_ch = args.critical_high_only
-        if raw_ch.strip().lower() not in _BOOL_LITERALS and target is None and os.path.exists(raw_ch):
+        cand_ch = (
+            os.path.join(orig_cwd, raw_ch)
+            if orig_cwd and not os.path.isabs(raw_ch)
+            else raw_ch
+        )
+        if raw_ch.strip().lower() not in _BOOL_LITERALS and target is None and (
+            os.path.exists(raw_ch) or os.path.exists(cand_ch)
+        ):
             target = raw_ch
             critical_high_flag = True
         else:
             critical_high_flag = _parse_bool_flag("--critical-high-only", raw_ch)
+
+    if (
+        orig_cwd
+        and target
+        and target not in (".", "./")
+        and not os.path.isabs(target)
+        and orig_cwd != ctx.repo
+    ):
+        cand_target = os.path.realpath(os.path.join(orig_cwd, target))
+        if os.path.exists(cand_target) and (
+            cand_target == ctx.repo or cand_target.startswith(ctx.repo + os.sep)
+        ):
+            target = os.path.relpath(cand_target, ctx.repo)
 
     if args.passthrough:
         extra_cm_flags.extend(args.passthrough)
@@ -666,7 +881,12 @@ def cmd_dedup(argv: List[str]) -> int:
     parser.add_argument("--out")
     parser.add_argument("--repo", "--repo-root", dest="repo")
     args = parser.parse_args(argv)
-    root = os.path.realpath(args.repo) if args.repo else ""
+    cm_dir = os.environ.get("CM_HOME") or os.path.join(os.path.expanduser("~"), ".codemender")
+    root = (
+        os.path.realpath(args.repo)
+        if args.repo
+        else (_infer_repo_dir(cm_dir, required=False) or "")
+    )
     existing = load_findings(args.existing)
     current = load_findings(args.new)
     res = dedup(existing, current, root)
