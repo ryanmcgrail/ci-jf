@@ -485,6 +485,178 @@ class CodeMenderTests(unittest.TestCase):
       res_all = cm.find(allow_partial_failure=True, allow_all_batches_failed=True)
       self.assertEqual(res_all.returncode, 1)
 
+  def test_get_scan_stats_uses_session_filter_deduplicates_turns_and_prices_models(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      db_path = os.path.join(tmpdir, "state.db")
+      con = sqlite3.connect(db_path)
+      con.execute(
+          "CREATE TABLE sessions ("
+          "session_id TEXT PRIMARY KEY, "
+          "session_type TEXT, "
+          "parent_session_id TEXT)"
+      )
+      con.execute("INSERT INTO sessions VALUES ('old-session', 'FIND', '')")
+      con.commit()
+      con.close()
+
+      cm = CodeMender(cm_binary="cm", repo_dir="/tmp/test_repo", env={"CM_HOME": tmpdir})
+      before_sids = cm.snapshot_session_ids()
+      self.assertEqual(before_sids, {"old-session"})
+
+      # Simulate a 2-pass scan: Pass 1 (parent-1 + child-1) on Hydrogen, Pass 2 (parent-2) escalated to Argon
+      con2 = sqlite3.connect(db_path)
+      con2.executemany(
+          "INSERT INTO sessions VALUES (?, 'FIND', ?)",
+          [
+              ("parent-1", ""),
+              ("child-1", "parent-1"),
+              ("parent-2", ""),
+          ],
+      )
+      con2.commit()
+      con2.close()
+
+      new_sids = cm.new_scan_session_ids(before_session_ids=before_sids)
+      # `child-1` is omitted because its parent `parent-1` is already in the new session set
+      self.assertEqual(new_sids, ["parent-1", "parent-2"])
+
+      stats_payloads = {
+          "parent-1": {
+              "session_id": "parent-1",
+              "command_type": "find --deep",
+              "total_turns": 2,
+              "tool_turns": 3,
+              "model": "gemini-4-hydrogen",
+              "duration_seconds": 120.4,
+              "turns": [
+                  {
+                      "turn": "parent-1",
+                      "interaction_id": "parent-1",
+                      "model": "gemini-4-hydrogen",
+                      "input_tokens": 200_000,
+                      "cached_tokens": 100_000,
+                      "output_tokens": 2_000,
+                      "thought_tokens": 8_000,
+                      "total_tokens": 210_000,
+                      "duration_seconds": 40.0,
+                  },
+                  {
+                      "turn": "child-1",
+                      "interaction_id": "child-1",
+                      "model": "gemini-4-hydrogen",
+                      "input_tokens": 100_000,
+                      "cached_tokens": 50_000,
+                      "output_tokens": 1_000,
+                      "thought_tokens": 4_000,
+                      "total_tokens": 105_000,
+                      "duration_seconds": 115.0,
+                  },
+              ],
+          },
+          # Even if `child-1` were passed explicitly, `interaction_id` dedup prevents double-counting
+          "child-1": {
+              "session_id": "child-1",
+              "command_type": "find --deep",
+              "total_turns": 2,
+              "tool_turns": 3,
+              "model": "gemini-4-hydrogen",
+              "duration_seconds": 120.4,
+              "turns": [
+                  {
+                      "turn": "parent-1",
+                      "interaction_id": "parent-1",
+                      "model": "gemini-4-hydrogen",
+                      "input_tokens": 200_000,
+                      "cached_tokens": 100_000,
+                      "output_tokens": 2_000,
+                      "thought_tokens": 8_000,
+                      "total_tokens": 210_000,
+                  },
+                  {
+                      "turn": "child-1",
+                      "interaction_id": "child-1",
+                      "model": "gemini-4-hydrogen",
+                      "input_tokens": 100_000,
+                      "cached_tokens": 50_000,
+                      "output_tokens": 1_000,
+                      "thought_tokens": 4_000,
+                      "total_tokens": 105_000,
+                  },
+              ],
+          },
+          "parent-2": {
+              "session_id": "parent-2",
+              "command_type": "find --deep",
+              "total_turns": 1,
+              "tool_turns": 1,
+              "model": "gemini-4-argon",
+              "duration_seconds": 65.0,
+              "turns": [
+                  {
+                      "turn": "parent-2",
+                      "interaction_id": "parent-2",
+                      "model": "gemini-4-argon",
+                      "input_tokens": 100_000,
+                      "cached_tokens": 25_000,
+                      "output_tokens": 1_000,
+                      "thought_tokens": 4_000,
+                      "total_tokens": 105_000,
+                  },
+              ],
+          },
+      }
+
+      observed_cmds = []
+
+      def fake_stats_run(cmd, **_kwargs):
+        observed_cmds.append(cmd)
+        sid = cmd[cmd.index("--session") + 1]
+        return types.SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(stats_payloads[sid]),
+            stderr="",
+        )
+
+      with patch("codemender.run_command", side_effect=fake_stats_run):
+        stats = cm.get_scan_stats(before_session_ids=before_sids)
+        stats_with_dup = cm.get_scan_stats(session_ids=["parent-1", "child-1", "parent-2"])
+
+      self.assertEqual(
+          observed_cmds[:2],
+          [
+              ["cm", "stats", "--json", "--session", "parent-1"],
+              ["cm", "stats", "--json", "--session", "parent-2"],
+          ],
+      )
+      self.assertIsNotNone(stats)
+      assert stats is not None
+      assert stats_with_dup is not None
+      self.assertEqual(stats.total_tokens, 420_000)
+      self.assertEqual(stats_with_dup.total_tokens, 420_000)
+      self.assertEqual(stats.input_tokens, 400_000)
+      self.assertEqual(stats.cached_tokens, 175_000)
+      self.assertEqual(stats.uncached_input_tokens, 225_000)
+      self.assertEqual(stats.output_tokens, 4_000)
+      self.assertEqual(stats.thought_tokens, 16_000)
+      self.assertEqual(stats.llm_turns, 7)
+      self.assertAlmostEqual(stats.duration_seconds, 185.4)
+      self.assertEqual(stats.models, ["gemini-4-hydrogen", "gemini-4-argon"])
+      # Hydrogen: 150k uncached * $1.50/1M ($0.225) + 150k cached * $0.075/1M ($0.01125) + 15k out/think * $7.50/1M ($0.1125) = $0.34875
+      # Argon:    75k uncached * $4.00/1M ($0.30) + 25k cached * $0.20/1M ($0.005) + 5k out/think * $20.00/1M ($0.10) = $0.405
+      # Total = $0.75375
+      self.assertAlmostEqual(stats.estimated_cost_usd or 0.0, 0.75375, places=6)
+      summary = stats.format_summary()
+      self.assertIn("cm-ci: scan cost — ~$0.75", summary)
+      self.assertIn("420.0k tokens", summary)
+      self.assertIn("7 turn(s)", summary)
+      self.assertIn("3m 05s", summary)
+      self.assertIn("gemini-4-hydrogen, gemini-4-argon", summary)
+
+      # Unknown custom model omits dollar estimate cleanly rather than guessing
+      self.assertIsNone(
+          codemender.estimate_token_cost_usd("custom-private-model", 10_000, 0, 500, 0)
+      )
+
 
 if __name__ == "__main__":
   unittest.main()

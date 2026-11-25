@@ -1269,6 +1269,100 @@ class TestCmCi(unittest.TestCase):
         finally:
             os.chdir(restore_dir)
 
+    def test_cmd_find_prints_scan_cost_summary_from_cm_stats_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_dir = os.path.join(tmpdir, ".codemender")
+            cm_home = os.path.join(tmpdir, "cm_home")
+            os.makedirs(cm_home, exist_ok=True)
+
+            stats_calls: list[list[str]] = []
+
+            def fake_run_command(cmd: list[str], **_kwargs: Any) -> Any:
+                if cmd[:2] == ["cm", "report"]:
+                    return subprocess.CompletedProcess(
+                        cmd,
+                        0,
+                        json.dumps([
+                            {
+                                "finding_id": "f-new-1",
+                                "file_path": "src/auth.py",
+                                "vuln_type": "CWE-89",
+                                "severity": "HIGH",
+                                "start_line": 10,
+                                "end_line": 12,
+                                "title": "SQL Injection",
+                                "status": "OPEN",
+                            }
+                        ]),
+                        "",
+                    )
+                if cmd[:2] == ["cm", "find"]:
+                    return subprocess.CompletedProcess(
+                        cmd,
+                        0,
+                        "Deep scan complete.\n  Session: ChScanJustRun001\n",
+                        "",
+                    )
+                if cmd[:2] == ["cm", "stats"]:
+                    stats_calls.append(cmd)
+                    return subprocess.CompletedProcess(
+                        cmd,
+                        0,
+                        json.dumps({
+                            "session_id": "ChScanJustRun001",
+                            "command_type": "find --deep",
+                            "total_turns": 2,
+                            "tool_turns": 4,
+                            "model": "gemini-4-hydrogen",
+                            "duration_seconds": 82.0,
+                            "turns": [
+                                {
+                                    "turn": "ChScanJustRun001",
+                                    "interaction_id": "ChScanJustRun001",
+                                    "model": "gemini-4-hydrogen",
+                                    "input_tokens": 500_000,
+                                    "cached_tokens": 300_000,
+                                    "output_tokens": 5_000,
+                                    "thought_tokens": 15_000,
+                                    "total_tokens": 520_000,
+                                }
+                            ],
+                        }),
+                        "",
+                    )
+                raise AssertionError(f"Unexpected command: {cmd}")
+
+            stdout_buf = io.StringIO()
+            with (
+                patch.object(cm_ci, "need"),
+                patch.object(cm_ci, "check_config", return_value=True),
+                patch.dict(os.environ, {"CM_HOME": cm_home}),
+                patch("codemender.run_command", side_effect=fake_run_command),
+                patch("sys.stdout", stdout_buf),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                rc = cm_ci.cmd_find(["--repo", tmpdir, "--out-dir", out_dir, "--deep"])
+
+            self.assertEqual(rc, 0)
+            self.assertEqual(
+                stats_calls,
+                [["cm", "stats", "--json", "--session", "ChScanJustRun001"]],
+            )
+            out_lines = [ln for ln in stdout_buf.getvalue().splitlines() if ln.strip()]
+            # Expense line is printed at the end of the scan summary
+            self.assertTrue(out_lines[-1].startswith("cm-ci: scan cost — ~$0.47 | 520.0k tokens"))
+            self.assertIn("6 turn(s)", out_lines[-1])
+            self.assertIn("1m 22s", out_lines[-1])
+            self.assertIn("model: gemini-4-hydrogen", out_lines[-1])
+
+            # JSON output files retain their exact schema
+            with open(os.path.join(out_dir, "new_findings.json"), encoding="utf-8") as fh:
+                new_json = json.load(fh)
+            self.assertEqual(
+                sorted(new_json.keys()),
+                ["findings", "reopened", "suppressed_duplicates"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

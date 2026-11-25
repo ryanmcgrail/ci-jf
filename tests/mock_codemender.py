@@ -6,7 +6,7 @@ import sqlite3
 import subprocess
 from typing import Any
 
-from codemender import ScanMode
+from codemender import ScanMode, ScanStats
 from finding import Finding
 
 _FINDING_COLUMNS = (
@@ -56,6 +56,7 @@ class MockCodeMender:
         self._init_db()
         self._insert_findings(initial_findings)
         self._scheduled_batches: deque[list[Finding]] = deque()
+        self._scheduled_stats: deque[ScanStats | None] = deque()
         self._scheduled_error: Exception | None = None
         self.find_calls: list[tuple[str | None, ScanMode]] = []
         self.list_findings_calls: int = 0
@@ -124,6 +125,18 @@ class MockCodeMender:
     def schedule_findings(self, findings: Iterable[Finding]) -> None:
         """Schedule findings to be discovered the next time find() is called."""
         self._scheduled_batches.append(list(findings))
+
+    def schedule_scan_stats(self, stats: ScanStats | None) -> None:
+        """Schedule ScanStats to be returned the next time get_scan_stats() is called."""
+        self._scheduled_stats.append(stats)
+
+    def snapshot_session_ids(self) -> set[str]:
+        return set()
+
+    def get_scan_stats(self, *_args: Any, **_kwargs: Any) -> ScanStats | None:
+        if self._scheduled_stats:
+            return self._scheduled_stats.popleft()
+        return None
 
     def schedule_find_error(self, error: Exception) -> None:
         """Schedule an exception to be raised the next time find() is called."""

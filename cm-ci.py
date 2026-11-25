@@ -258,6 +258,7 @@ def cmd_find(argv: List[str]) -> int:
     before = ctx.report()
     before_ids = {str(f.finding_id or "") for f in before}
     pre_find_rows = snapshot_db_findings(ctx.cm)
+    before_session_ids = ctx.cm.snapshot_session_ids()
 
     target: Optional[str] = args.target
     extra_cm_flags: List[str] = []
@@ -312,7 +313,7 @@ def cmd_find(argv: List[str]) -> int:
     print(f"cm-ci: cm find {' '.join(preview_parts)}".rstrip(), flush=True)
     try:
         if is_complete_scan:
-            run_complete_scan(
+            scan_res = run_complete_scan(
                 ctx.cm,
                 target_or_id=target,
                 extra_flags=extra_cm_flags or None,
@@ -326,13 +327,18 @@ def cmd_find(argv: List[str]) -> int:
             }
             if extra_cm_flags:
                 find_kwargs["extra_flags"] = extra_cm_flags
-            ctx.cm.find(**find_kwargs)
+            scan_res = ctx.cm.find(**find_kwargs)
             reconcile_overwritten_findings(ctx.cm, pre_find_rows, restore_session_id=False)
             normalize_db_finding_cwes(ctx.cm, exclude_finding_ids=before_ids or None)
     except RuntimeError as e:
         print(f"cm-ci: {e}", file=sys.stderr)
         m = re.search(r"exit code (\d+)", str(e))
         return int(m.group(1)) if m else 1
+
+    scan_stats = ctx.cm.get_scan_stats(
+        before_session_ids=before_session_ids,
+        find_stdout=getattr(scan_res, "stdout", "") or "",
+    )
 
     after = ctx.report()
     this_run = [f for f in after if str(f.finding_id or "") not in before_ids and status_of(f) in ACTIVE]
@@ -344,6 +350,8 @@ def cmd_find(argv: List[str]) -> int:
     else:
         print(f"cm-ci: this run → {findings_path} ({len(this_run)} active finding(s))")
     if args.no_dedup:
+        if scan_stats is not None:
+            print(scan_stats.format_summary())
         return 0
 
     pool: List[Finding] = []
@@ -425,6 +433,9 @@ def cmd_find(argv: List[str]) -> int:
         print(f"  ♻ REOPENED {f.severity or ''} {f.file_path}:{f.start_line or ''} {f.title or ''} (was {f.duplicate_of})")
     for f in shown_findings:
         print(f"  🆕 NEW      {f.severity or ''} {f.file_path}:{f.start_line or ''} {f.title or ''}")
+
+    if scan_stats is not None:
+        print(scan_stats.format_summary())
 
     if args.fail_on:
         sevs = {s.strip().upper() for s in args.fail_on.split(",") if s.strip()}

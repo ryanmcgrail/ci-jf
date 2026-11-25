@@ -1,6 +1,7 @@
 """CodeMender CLI wrapper class and helpers."""
 
 import contextlib
+import dataclasses
 import enum
 import json
 import logging
@@ -12,11 +13,29 @@ import sqlite3
 import subprocess
 import sys
 import threading
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Tuple
 
 from finding import Finding
 
 logger = logging.getLogger("codemender")
+
+_STDOUT_SESSION_ID_RE = re.compile(r"^\s*Session:\s+([A-Za-z0-9_-]{4,})\s*$", re.MULTILINE)
+_LOG_FILENAME_SESSION_RE = re.compile(r"^\d{8}T\d{6}Z_(.+)\.log$")
+
+# Standard-tier USD pricing per 1,000,000 tokens:
+#   (uncached_input_usd, cached_input_usd, output_and_thinking_usd)
+MODEL_PRICING_PER_1M: Dict[str, Tuple[float, float, float]] = {
+    "gemini-4-hydrogen": (1.50, 0.075, 7.50),
+    "gemini-4-neon": (3.00, 0.15, 15.00),
+    "gemini-4-argon": (4.00, 0.20, 20.00),
+    "gemini-4-carbon": (4.00, 0.20, 20.00),
+    "gemini-3.8-flash": (0.50, 0.05, 3.00),
+    "gemini-3.7-flash": (0.50, 0.05, 3.00),
+    "gemini-3-flash": (0.50, 0.05, 3.00),
+    "gemini-3.1-pro": (2.00, 0.20, 12.00),
+    "gemini-2.5-pro": (1.25, 0.125, 10.00),
+    "gemini-2.5-flash": (0.30, 0.03, 2.50),
+}
 
 _CI_GATE_BLOCKING = re.compile(r"CI Gate Failure:\s*\d+ blocking finding")
 _CI_GATE_TRUNCATED = re.compile(r"CI Gate Failure:\s*Impact expansion truncated")
@@ -281,6 +300,116 @@ def resolve_subprocess_env(
   return resolved
 
 
+def resolve_model_pricing(model: str) -> Optional[Tuple[float, float, float]]:
+  """Returns `(uncached_in, cached_in, out_plus_thinking)` USD per 1M tokens for `model`."""
+  norm = (model or "").strip().lower()
+  if not norm:
+    return None
+  for prefix in sorted(MODEL_PRICING_PER_1M, key=len, reverse=True):
+    if norm == prefix or norm.startswith((f"{prefix}-", f"{prefix}_", f"{prefix}.")):
+      return MODEL_PRICING_PER_1M[prefix]
+  return None
+
+
+def estimate_token_cost_usd(
+    model: str,
+    input_tokens: int,
+    cached_tokens: int,
+    output_tokens: int,
+    thought_tokens: int = 0,
+) -> Optional[float]:
+  """Estimates Standard-tier USD cost for a turn or session, or None if model pricing is unknown."""
+  in_tok = max(0, int(input_tokens or 0))
+  cached_tok = max(0, min(int(cached_tokens or 0), in_tok))
+  uncached_tok = in_tok - cached_tok
+  out_tok = max(0, int(output_tokens or 0)) + max(0, int(thought_tokens or 0))
+  if in_tok == 0 and out_tok == 0:
+    return 0.0
+  rates = resolve_model_pricing(model)
+  if rates is None:
+    return None
+  in_rate, cache_rate, out_rate = rates
+  return (
+      uncached_tok * in_rate + cached_tok * cache_rate + out_tok * out_rate
+  ) / 1_000_000.0
+
+
+def _format_tokens_short(n: int) -> str:
+  if n >= 1_000_000:
+    return f"{n / 1_000_000:.2f}M"
+  if n >= 1_000:
+    return f"{n / 1_000:.1f}k"
+  return str(n)
+
+
+def _format_duration_short(seconds: float) -> str:
+  sec = max(0.0, float(seconds or 0.0))
+  if 0.0 < sec < 10.0:
+    return f"{sec:.1f}s"
+  total_sec = int(round(sec))
+  h, rem = divmod(total_sec, 3600)
+  m, s = divmod(rem, 60)
+  if h > 0:
+    return f"{h}h {m:02d}m {s:02d}s"
+  if m > 0:
+    return f"{m}m {s:02d}s"
+  return f"{s}s"
+
+
+def _format_usd(cost: float) -> str:
+  if cost <= 0.0:
+    return "$0.00"
+  if cost < 0.01:
+    return f"~${cost:.4f}"
+  return f"~${cost:.2f}"
+
+
+@dataclasses.dataclass
+class ScanStats:
+  """Aggregated `cm stats --json --session` token, timing, and cost metrics for a scan."""
+
+  session_ids: List[str]
+  models: List[str]
+  total_turns: int = 0
+  tool_turns: int = 0
+  input_tokens: int = 0
+  cached_tokens: int = 0
+  output_tokens: int = 0
+  thought_tokens: int = 0
+  total_tokens: int = 0
+  duration_seconds: float = 0.0
+  estimated_cost_usd: Optional[float] = None
+
+  @property
+  def uncached_input_tokens(self) -> int:
+    return max(0, self.input_tokens - self.cached_tokens)
+
+  @property
+  def cache_hit_percent(self) -> float:
+    return (self.cached_tokens / self.input_tokens * 100.0) if self.input_tokens > 0 else 0.0
+
+  @property
+  def llm_turns(self) -> int:
+    return self.total_turns + self.tool_turns
+
+  def format_summary(self) -> str:
+    cost_part = (
+        f"{_format_usd(self.estimated_cost_usd)} | "
+        if self.estimated_cost_usd is not None
+        else ""
+    )
+    models_part = f" | model: {', '.join(self.models)}" if self.models else ""
+    return (
+        f"cm-ci: scan cost — {cost_part}{_format_tokens_short(self.total_tokens)} tokens "
+        f"({_format_tokens_short(self.uncached_input_tokens)} uncached in, "
+        f"{_format_tokens_short(self.cached_tokens)} cached [{self.cache_hit_percent:.1f}%], "
+        f"{_format_tokens_short(self.output_tokens)} out, "
+        f"{_format_tokens_short(self.thought_tokens)} thinking) | "
+        f"{self.llm_turns} turn(s) | "
+        f"{_format_duration_short(self.duration_seconds)}{models_part}"
+    )
+
+
 class CodeMender:
   """Encapsulates CodeMender CLI configuration and operations for a repository."""
 
@@ -294,6 +423,7 @@ class CodeMender:
     self.repo_dir = repo_dir
     self.env = env
     self._db: Optional[sqlite3.Connection] = None
+    self._stdout_session_ids: List[str] = []
 
   @property
   def db(self) -> Optional[sqlite3.Connection]:
@@ -382,6 +512,11 @@ class CodeMender:
       returncode = getattr(result, "returncode", 0)
       stdout = getattr(result, "stdout", "")
 
+    for sid_match in _STDOUT_SESSION_ID_RE.finditer(stdout or ""):
+      sid_val = sid_match.group(1)
+      if sid_val not in self._stdout_session_ids:
+        self._stdout_session_ids.append(sid_val)
+
     if (
         returncode
         and not is_ci_gate_exit(returncode, stdout or "")
@@ -400,6 +535,245 @@ class CodeMender:
     ):
       raise RuntimeError(f"cm find failed with exit code {returncode}")
     return result
+
+  def _log_dir_session_ids(self) -> List[str]:
+    logs_dir = os.path.join(resolve_cm_home(self.env), "logs")
+    if not os.path.isdir(logs_dir):
+      return []
+    out: List[str] = []
+    try:
+      entries = sorted(os.listdir(logs_dir))
+    except OSError:
+      return []
+    for fname in entries:
+      m = _LOG_FILENAME_SESSION_RE.match(fname)
+      if m and m.group(1) != "pending" and m.group(1) not in out:
+        out.append(m.group(1))
+    return out
+
+  def snapshot_session_ids(self) -> Set[str]:
+    """Captures all currently known CodeMender session IDs prior to starting a scan."""
+    known: Set[str] = set(self._stdout_session_ids)
+    known.update(self._log_dir_session_ids())
+    con = self.db
+    if con is not None:
+      try:
+        rows = con.execute("SELECT session_id FROM sessions").fetchall()
+        known.update(str(r[0]) for r in rows if r and r[0])
+      except sqlite3.Error:
+        pass
+    return known
+
+  def new_scan_session_ids(
+      self,
+      before_session_ids: Optional[Iterable[str]] = None,
+      find_stdout: Optional[str] = None,
+  ) -> List[str]:
+    """Returns root session IDs created during the scan (excluding preexisting and child sessions)."""
+    before_set = {str(s) for s in (before_session_ids or ()) if s}
+    ordered: List[str] = []
+    new_db_all: Set[str] = set()
+
+    con = self.db
+    if con is not None:
+      try:
+        cols = {
+            desc[1] for desc in con.execute("PRAGMA table_info(sessions)").fetchall()
+        }
+        if "session_id" in cols:
+          has_parent = "parent_session_id" in cols
+          has_type = "session_type" in cols
+          select_parent = "parent_session_id" if has_parent else "''"
+          where_type = " WHERE session_type = 'FIND'" if has_type else ""
+          rows = con.execute(
+              f"SELECT session_id, {select_parent} FROM sessions{where_type} ORDER BY rowid ASC"
+          ).fetchall()
+          new_rows = [
+              (str(r[0]), str(r[1] or ""))
+              for r in rows
+              if r and r[0] and str(r[0]) not in before_set
+          ]
+          new_db_all = {sid for sid, _ in new_rows}
+          for sid, parent_id in new_rows:
+            if (not parent_id or parent_id not in new_db_all) and sid not in ordered:
+              ordered.append(sid)
+      except sqlite3.Error:
+        pass
+
+    for sid in self._log_dir_session_ids():
+      if sid not in before_set and sid not in new_db_all and sid not in ordered:
+        ordered.append(sid)
+
+    stdout_candidates = list(self._stdout_session_ids)
+    if find_stdout:
+      for m in _STDOUT_SESSION_ID_RE.finditer(find_stdout):
+        stdout_candidates.append(m.group(1))
+    for sid in stdout_candidates:
+      if sid not in before_set and sid not in new_db_all and sid not in ordered:
+        ordered.append(sid)
+
+    return ordered
+
+  def get_session_stats(self, session_id: str) -> Optional[Dict[str, Any]]:
+    """Queries `cm stats --json --session <session_id>` and returns the parsed JSON dict."""
+    sid = (session_id or "").strip()
+    if not sid:
+      return None
+    stats_cmd = build_cm_command(
+        self.cm_binary,
+        "stats",
+        extra_flags=["--json", "--session", sid],
+    )
+    res = run_command(
+        stats_cmd,
+        cwd=self.repo_dir,
+        env=resolve_subprocess_env(self.env),
+        check=False,
+    )
+    if getattr(res, "returncode", 1) != 0:
+      return None
+    raw = (getattr(res, "stdout", "") or "").strip()
+    if not raw or raw == "null":
+      return None
+    try:
+      parsed, _ = json.JSONDecoder().raw_decode(raw)
+    except json.JSONDecodeError:
+      return None
+    return parsed if isinstance(parsed, dict) else None
+
+  def get_scan_stats(
+      self,
+      session_ids: Optional[Iterable[str]] = None,
+      *,
+      before_session_ids: Optional[Iterable[str]] = None,
+      find_stdout: Optional[str] = None,
+  ) -> Optional[ScanStats]:
+    """Aggregates `cm stats --json --session` metrics across all sessions of a scan."""
+    target_sids = (
+        [str(s).strip() for s in session_ids if s and str(s).strip()]
+        if session_ids is not None
+        else self.new_scan_session_ids(
+            before_session_ids=before_session_ids,
+            find_stdout=find_stdout,
+        )
+    )
+    if not target_sids:
+      return None
+
+    included_sessions: List[str] = []
+    seen_session_ids: Set[str] = set()
+    seen_turn_ids: Set[str] = set()
+    models: List[str] = []
+    total_turns = 0
+    tool_turns = 0
+    input_tokens = 0
+    cached_tokens = 0
+    output_tokens = 0
+    thought_tokens = 0
+    total_tokens = 0
+    duration_seconds = 0.0
+    cost_sum = 0.0
+    has_unpriced_tokens = False
+
+    def _record_model(m: Any) -> str:
+      m_str = str(m or "").strip()
+      if m_str and m_str not in models:
+        models.append(m_str)
+      return m_str
+
+    for sid in target_sids:
+      payload = self.get_session_stats(sid)
+      if not payload:
+        continue
+      resp_sid = str(payload.get("session_id") or sid)
+      session_model = str(payload.get("model") or "").strip()
+      raw_turns = payload.get("turns")
+
+      if isinstance(raw_turns, list) and raw_turns:
+        new_turns: List[Dict[str, Any]] = []
+        for t in raw_turns:
+          if not isinstance(t, dict):
+            continue
+          tid = str(t.get("interaction_id") or t.get("turn") or "").strip()
+          if tid:
+            if tid in seen_turn_ids:
+              continue
+            seen_turn_ids.add(tid)
+          new_turns.append(t)
+        if not new_turns:
+          continue
+        if resp_sid not in seen_session_ids:
+          seen_session_ids.add(resp_sid)
+          included_sessions.append(resp_sid)
+        for t in new_turns:
+          t_model = _record_model(t.get("model") or session_model)
+          t_in = int(t.get("input_tokens") or 0)
+          t_ca = int(t.get("cached_tokens") or 0)
+          t_out = int(t.get("output_tokens") or 0)
+          t_th = int(t.get("thought_tokens") or 0)
+          t_tot = int(t.get("total_tokens") or (t_in + t_out + t_th))
+          input_tokens += t_in
+          cached_tokens += t_ca
+          output_tokens += t_out
+          thought_tokens += t_th
+          total_tokens += t_tot
+          t_cost = estimate_token_cost_usd(t_model, t_in, t_ca, t_out, t_th)
+          if t_cost is None:
+            has_unpriced_tokens = True
+          else:
+            cost_sum += t_cost
+
+        if len(new_turns) == len(raw_turns):
+          total_turns += int(payload.get("total_turns") or len(new_turns))
+          tool_turns += int(payload.get("tool_turns") or 0)
+          duration_seconds += float(payload.get("duration_seconds") or 0.0)
+        else:
+          total_turns += len(new_turns)
+          duration_seconds += max(
+              (float(t.get("duration_seconds") or 0.0) for t in new_turns),
+              default=0.0,
+          )
+      else:
+        if resp_sid in seen_session_ids:
+          continue
+        seen_session_ids.add(resp_sid)
+        included_sessions.append(resp_sid)
+        s_model = _record_model(session_model)
+        s_in = int(payload.get("input_tokens") or 0)
+        s_ca = int(payload.get("cached_tokens") or 0)
+        s_out = int(payload.get("output_tokens") or 0)
+        s_th = int(payload.get("thought_tokens") or 0)
+        s_tot = int(payload.get("total_tokens") or (s_in + s_out + s_th))
+        input_tokens += s_in
+        cached_tokens += s_ca
+        output_tokens += s_out
+        thought_tokens += s_th
+        total_tokens += s_tot
+        total_turns += int(payload.get("total_turns") or 0)
+        tool_turns += int(payload.get("tool_turns") or 0)
+        duration_seconds += float(payload.get("duration_seconds") or 0.0)
+        s_cost = estimate_token_cost_usd(s_model, s_in, s_ca, s_out, s_th)
+        if s_cost is None:
+          has_unpriced_tokens = True
+        else:
+          cost_sum += s_cost
+
+    if not included_sessions:
+      return None
+
+    return ScanStats(
+        session_ids=included_sessions,
+        models=models,
+        total_turns=total_turns,
+        tool_turns=tool_turns,
+        input_tokens=input_tokens,
+        cached_tokens=cached_tokens,
+        output_tokens=output_tokens,
+        thought_tokens=thought_tokens,
+        total_tokens=total_tokens,
+        duration_seconds=duration_seconds,
+        estimated_cost_usd=None if has_unpriced_tokens else cost_sum,
+    )
 
   def list_findings(
       self,
