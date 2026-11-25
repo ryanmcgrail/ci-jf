@@ -82,20 +82,6 @@ def estimate_token_cost_breakdown(
   )
 
 
-def estimate_token_cost_usd(
-    model: str,
-    input_tokens: int,
-    cached_tokens: int,
-    output_tokens: int,
-    thought_tokens: int = 0,
-) -> Optional[float]:
-  """Estimates total Standard-tier USD cost for a turn or session, or None if unknown."""
-  breakdown = estimate_token_cost_breakdown(
-      model, input_tokens, cached_tokens, output_tokens, thought_tokens
-  )
-  return breakdown.total_usd if breakdown is not None else None
-
-
 def format_tokens_short(n: int) -> str:
   if n >= 1_000_000:
     return f"{n / 1_000_000:.2f}M"
@@ -153,10 +139,6 @@ class ScanStats:
   @property
   def llm_turns(self) -> int:
     return self.total_turns + self.tool_turns
-
-  @property
-  def estimated_cost_usd(self) -> Optional[float]:
-    return self.cost_breakdown.total_usd if self.cost_breakdown is not None else None
 
   def format_summary(self) -> str:
     bd = self.cost_breakdown

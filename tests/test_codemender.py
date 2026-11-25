@@ -652,7 +652,7 @@ class CodeMenderTests(unittest.TestCase):
       self.assertAlmostEqual(stats.cost_breakdown.cached_input_usd, 0.01625, places=6)
       self.assertAlmostEqual(stats.cost_breakdown.output_usd, 0.0425, places=6)
       self.assertAlmostEqual(stats.cost_breakdown.thought_usd, 0.17, places=6)
-      self.assertAlmostEqual(stats.estimated_cost_usd or 0.0, 0.75375, places=6)
+      self.assertAlmostEqual(stats.cost_breakdown.total_usd, 0.75375, places=6)
       summary = stats.format_summary()
       self.assertEqual(
           summary.splitlines(),

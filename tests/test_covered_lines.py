@@ -7,7 +7,6 @@ import unittest
 
 from covered_lines import (
     find_snippet_line_range,
-    find_snippet_line_ranges,
     summarize_covered_lines,
 )
 

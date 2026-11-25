@@ -14,7 +14,7 @@ import sys
 import threading
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Tuple
 
-from cost import ScanStats, TokenCostBreakdown, aggregate_scan_stats
+from cost import ScanStats, aggregate_scan_stats
 from finding import Finding
 
 logger = logging.getLogger("codemender")

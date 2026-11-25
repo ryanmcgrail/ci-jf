@@ -13,7 +13,6 @@ from pass_report import PASS_REPORT_REL_PATH, build_covered_lines_report
 from state_db import (
     active_preexisting_finding_ids,
     deduplicate_db_findings,
-    extract_batch_files_from_stdout,
     extract_failed_batch_files_from_stdout,
     extract_safety_blocked_files,
     get_latest_session_finding_counts,
@@ -29,13 +28,7 @@ _DISCOURAGED_CWES_PATH = os.path.join(
     "discouraged_cwes.txt",
 )
 _SAFETY_ESCALATION_MODEL = "gemini-4-argon"
-_PASS_REPORT_REL_PATH = PASS_REPORT_REL_PATH
 _WORKSPACE_BACKUPS_DIR = "workspace_backups"
-
-# Re-exported internal aliases used by unit tests
-_atomic_write_text = atomic_write_text
-_extract_batch_files_from_stdout = extract_batch_files_from_stdout
-_extract_failed_batch_files_from_stdout = extract_failed_batch_files_from_stdout
 
 _FIND_CONTEXT_FOR_FIRST_PASS = """\
 # Audit Strategy

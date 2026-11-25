@@ -10,12 +10,16 @@ import unittest
 from unittest.mock import patch
 
 import complete_scan
-from codemender import CodeMender
+from codemender import CodeMender, atomic_write_text
 from complete_scan import (
     get_latest_session_finding_counts,
     run_complete_scan,
 )
-from pass_report import build_covered_lines_report
+from pass_report import PASS_REPORT_REL_PATH, build_covered_lines_report
+from state_db import (
+    extract_batch_files_from_stdout,
+    extract_failed_batch_files_from_stdout,
+)
 
 
 class CompleteScanTests(unittest.TestCase):
@@ -1078,7 +1082,7 @@ class CompleteScanTests(unittest.TestCase):
             self.assertNotIn("--enable-bash", cmd)
             self.assertIn("# Initial Pre-Audit Check", ctx_arg)
             report_path = os.path.join(
-                repo_dir, *complete_scan._PASS_REPORT_REL_PATH.split("/")
+                repo_dir, *PASS_REPORT_REL_PATH.split("/")
             )
             if os.path.exists(report_path):
               with open(report_path, "r", encoding="utf-8") as fh:
@@ -1273,11 +1277,11 @@ class CompleteScanTests(unittest.TestCase):
         "[4/4 batches] ❌ routes/slow route.ts (10.5s): context deadline exceeded\n"
     )
     self.assertEqual(
-        complete_scan._extract_batch_files_from_stdout(stdout),
+        extract_batch_files_from_stdout(stdout),
         ["src/my folder/clean file.py", "app/(admin)/user settings.tsx"],
     )
     self.assertEqual(
-        complete_scan._extract_failed_batch_files_from_stdout(stdout),
+        extract_failed_batch_files_from_stdout(stdout),
         {"src/my folder/flaky handler.js", "routes/slow route.ts"},
     )
 
@@ -1403,9 +1407,9 @@ class CompleteScanTests(unittest.TestCase):
             # Verify preprocessed report is stored at the deterministic scratch path (not tmpXXXXXX in repo root)
             ctx_val = cmd[cmd.index("--context") + 1]
             expected_path = os.path.join(
-                repo_dir, *complete_scan._PASS_REPORT_REL_PATH.split("/")
+                repo_dir, *PASS_REPORT_REL_PATH.split("/")
             )
-            if os.path.exists(expected_path) and complete_scan._PASS_REPORT_REL_PATH in ctx_val:
+            if os.path.exists(expected_path) and PASS_REPORT_REL_PATH in ctx_val:
               observed_report_files.append(expected_path)
             self.assertEqual(
                 [n for n in os.listdir(repo_dir) if n.startswith("tmp")],
@@ -1448,7 +1452,7 @@ class CompleteScanTests(unittest.TestCase):
       )
 
       self.assertEqual(len(observed_report_files), 1)
-      report_ref = complete_scan._PASS_REPORT_REL_PATH
+      report_ref = PASS_REPORT_REL_PATH
       self.assertFalse(os.path.exists(observed_report_files[0]))
       self.assertEqual(os.listdir(repo_dir), [])
       expected_pass2 = (
@@ -1553,7 +1557,7 @@ class CompleteScanTests(unittest.TestCase):
           with open(cmignore_path, "r", encoding="utf-8") as fh:
             mutated_during_pass2 = "clean.py\n" in fh.read()
           report_existed_during_pass2 = os.path.exists(
-              os.path.join(repo_dir, *complete_scan._PASS_REPORT_REL_PATH.split("/"))
+              os.path.join(repo_dir, *PASS_REPORT_REL_PATH.split("/"))
           )
           os.kill(os.getpid(), signal.SIGTERM)
         raise AssertionError(f"Unexpected command: {cmd}")
@@ -1568,7 +1572,7 @@ class CompleteScanTests(unittest.TestCase):
       with open(cmignore_path, "r", encoding="utf-8") as fh:
         self.assertEqual(fh.read(), "vendor/\n")
       self.assertFalse(
-          os.path.exists(os.path.join(repo_dir, complete_scan._PASS_REPORT_REL_PATH))
+          os.path.exists(os.path.join(repo_dir, PASS_REPORT_REL_PATH))
       )
       self.assertFalse(
           os.path.exists(complete_scan._workspace_backup_path(repo_dir, cm_home))
@@ -1582,7 +1586,7 @@ class CompleteScanTests(unittest.TestCase):
       os.makedirs(cm_home)
 
       # Simulate state left behind on disk if SIGKILL strikes mid-Pass-2 (no `.cmignore` existed originally)
-      complete_scan._atomic_write_text(
+      atomic_write_text(
           complete_scan._workspace_backup_path(repo_dir, cm_home),
           json.dumps({
               "repo_dir": os.path.realpath(repo_dir),
@@ -1590,9 +1594,9 @@ class CompleteScanTests(unittest.TestCase):
               "content": "",
           }),
       )
-      complete_scan._atomic_write_text(os.path.join(repo_dir, ".cmignore"), "clean.py\n")
-      complete_scan._atomic_write_text(
-          os.path.join(repo_dir, complete_scan._PASS_REPORT_REL_PATH),
+      atomic_write_text(os.path.join(repo_dir, ".cmignore"), "clean.py\n")
+      atomic_write_text(
+          os.path.join(repo_dir, PASS_REPORT_REL_PATH),
           "[]",
       )
 
@@ -1600,7 +1604,7 @@ class CompleteScanTests(unittest.TestCase):
       complete_scan.restore_interrupted_workspace(repo_dir, cm_dir=cm_home)
       self.assertFalse(os.path.exists(os.path.join(repo_dir, ".cmignore")))
       self.assertFalse(
-          os.path.exists(os.path.join(repo_dir, complete_scan._PASS_REPORT_REL_PATH))
+          os.path.exists(os.path.join(repo_dir, PASS_REPORT_REL_PATH))
       )
       self.assertFalse(
           os.path.exists(complete_scan._workspace_backup_path(repo_dir, cm_home))
@@ -2027,7 +2031,7 @@ class CompleteScanTests(unittest.TestCase):
           )
         if cmd[:2] == ["cm", "find"]:
           self.assertNotIn("--enable-bash", cmd)
-          report_path = os.path.join(repo_dir, complete_scan._PASS_REPORT_REL_PATH)
+          report_path = os.path.join(repo_dir, PASS_REPORT_REL_PATH)
           if os.path.exists(report_path):
             with open(report_path, "r", encoding="utf-8") as fh:
               observed_reports.append(fh.read())

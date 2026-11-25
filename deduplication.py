@@ -89,9 +89,6 @@ def strip_dot_slash(path: str) -> str:
     return p.lstrip("/")
 
 
-_strip_dot_slash = strip_dot_slash
-
-
 def norm_rel_path(
     file_path: str,
     repo_root: str = "",
@@ -139,18 +136,6 @@ def as_int(v: Any, default: int = 0) -> int:
         return int(v or default)
     except (TypeError, ValueError):
         return default
-
-
-_int = as_int
-
-
-def has_disjoint_positive_lines(a: Finding, b: Finding) -> bool:
-    """Returns True when both findings have positive line numbers and their ranges do not overlap."""
-    sla = as_int(a.start_line)
-    ela = max(as_int(a.end_line, sla), sla)
-    slb = as_int(b.start_line)
-    elb = max(as_int(b.end_line, slb), slb)
-    return sla > 0 and slb > 0 and (ela < slb or elb < sla)
 
 
 def is_duplicate(
